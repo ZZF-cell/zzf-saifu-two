@@ -2,6 +2,7 @@
 // Access Token: 15min 无状态 JWT
 // Refresh Token: 7d，DB 存 SHA-256 Hash，Header 内编码 userId（解决无状态查找）
 
+import crypto from "crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { prisma } from "@/shared/db/client";
 import {
@@ -25,46 +26,22 @@ const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 天
 // ── 短信验证码（DB 存储，Serverless 多实例共享）──
 
 function generateCode(): string {
-  return String(Math.floor(100000 + Math.random() * 900000));
-}
-
-async function storeCode(phone: string, code: string): Promise<void> {
-  // 清理该号码旧的未使用验证码
-  await prisma.verificationCode.deleteMany({
-    where: { phone, used: false },
-  });
-  await prisma.verificationCode.create({
-    data: {
-      phone,
-      code,
-      expiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5 分钟有效
-    },
-  });
+  return String(crypto.randomInt(100000, 999999));
 }
 
 async function verifyAndConsumeCode(
   phone: string,
   code: string,
 ): Promise<boolean> {
-  // 用 updateMany + id + used:false 条件防止 TOCTOU 竞态
-  // 两条并发请求带同一验证码时，只有一条的 count > 0
-  const record = await prisma.verificationCode.findFirst({
+  // 原子删除：只有未消费且未过期的验证码才会被删除，deleted.count 唯一确定是否消费成功
+  const result = await prisma.verificationCode.deleteMany({
     where: {
       phone,
       code,
       used: false,
       expiresAt: { gt: new Date() },
     },
-    orderBy: { createdAt: "desc" },
   });
-
-  if (!record) return false;
-
-  const result = await prisma.verificationCode.updateMany({
-    where: { id: record.id, used: false },
-    data: { used: true },
-  });
-
   return result.count > 0;
 }
 
@@ -147,9 +124,21 @@ export async function sendVerificationCode(phone: string): Promise<void> {
   }
 
   const code = generateCode();
-  await storeCode(phone, code);
 
-  // 仅在开发环境打印验证码，生产环境通过 Inngest 异步发送短信
+  // 在同一事务中：清旧码 + 写新码，保证原子性
+  await prisma.$transaction(async (tx) => {
+    await tx.verificationCode.deleteMany({
+      where: { phone, used: false },
+    });
+    await tx.verificationCode.create({
+      data: {
+        phone,
+        code,
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+      },
+    });
+  });
+
   if (process.env.NODE_ENV !== "production") {
     console.log(`[SMS] ${phone}: ${code}`);
   }
@@ -300,15 +289,47 @@ export async function refreshAccessToken(
     throw new AppError(ERROR_CODES.TOKEN_EXPIRED, "登录已过期，请重新登录");
   }
 
-  // Rotation：删除旧 Token
-  await prisma.refreshToken.delete({ where: { id: token.id } });
+  // Rotation：删除旧 Token + 签发新 Token 在同一事务中
+  // 必须在事务开头立即 atomic delete，防止其他并发 Refresh 重用同一 Token
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      // Atomic delete：other concurrent Refresh on the same token will get 0 rows
+      const deleted = await tx.refreshToken.deleteMany({
+        where: { id: token.id, userId: decoded.userId },
+      });
+      if (deleted.count === 0) {
+        throw new AppError(ERROR_CODES.TOKEN_EXPIRED, "登录已过期，请重新登录");
+      }
 
-  const user = await prisma.user.findUnique({
-    where: { id: decoded.userId },
-  });
-  if (!user) throw new AppError(ERROR_CODES.UNAUTHORIZED, "用户不存在");
+      const u = await tx.user.findUnique({
+        where: { id: decoded.userId },
+      });
+      if (!u) throw new AppError(ERROR_CODES.UNAUTHORIZED, "用户不存在");
 
-  return issueTokens(user);
+      const newRawToken = encodeRefreshToken(u.id);
+      const newHash = sha256(newRawToken);
+      await tx.refreshToken.create({
+        data: {
+          userId: u.id,
+          tokenHash: newHash,
+          expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
+        },
+      });
+
+      return { user: u, newRefreshToken: newRawToken };
+    });
+
+    const accessToken = await signAccessToken({
+      userId: result.user.id,
+      role: result.user.role as AuthUser["role"],
+    });
+
+    return { accessToken, refreshToken: result.newRefreshToken };
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    // 事务冲突时（P2025 RecordNotFound 或 deleteMany count=0）→ TOKEN_EXPIRED
+    throw new AppError(ERROR_CODES.TOKEN_EXPIRED, "登录已过期，请重新登录");
+  }
 }
 
 /** 退出登录 — 吊销所有 Refresh Token */

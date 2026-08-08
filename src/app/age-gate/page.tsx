@@ -9,8 +9,9 @@ function AgeGateContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const rawRedirect = searchParams.get("redirect") || "/";
-  // 防止 Open Redirect 攻击：只允许站内相对路径
-  const redirect = rawRedirect.startsWith("/") ? rawRedirect : "/";
+  // 防止 Open Redirect：只允许站内路径，阻止 //evil.com 协议相对 URL 和 https:// 绝对 URL
+  const redirect =
+    rawRedirect.startsWith("/") && !rawRedirect.startsWith("//") ? rawRedirect : "/";
 
   const handleConfirm = () => {
     // 设置年龄验证 Cookie（1 年有效），生产环境加 Secure 标志
