@@ -1,17 +1,20 @@
 // Edge Middleware — 路由保护 + JWT 校验
 // 在 Next.js middleware.ts 中调用
+// 注意：此模块可能运行在 Edge Runtime，process.env 私有变量不可在模块顶层访问
 
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || "dev-secret-change-me",
-);
-
 export interface AuthUser {
   userId: string;
   role: "USER" | "BRAND" | "ADMIN";
-  phoneHash: string;
+}
+
+// JWT 公钥对端（注意：JWT 仅 base64 编码，载荷对任何人可见。phoneHash 已从载荷中移除。）
+
+function getJwtSecret(): Uint8Array {
+  const secret = process.env.JWT_SECRET || "dev-secret-change-in-production";
+  return new TextEncoder().encode(secret);
 }
 
 /**
@@ -25,7 +28,7 @@ export async function getAuthUser(
   if (!token) return null;
 
   try {
-    const { payload } = await jwtVerify(token, JWT_SECRET);
+    const { payload } = await jwtVerify(token, getJwtSecret());
     return payload as unknown as AuthUser;
   } catch {
     return null;
@@ -44,9 +47,6 @@ export function requireRole(authUser: AuthUser | null, roles: string[] = []): bo
 
 /**
  * 路由保护配置
- * 在 middleware.ts 中调用:
- *   const result = checkRoutePermission(req, authUser);
- *   if (result) return result;
  */
 export function checkRoutePermission(
   req: NextRequest,

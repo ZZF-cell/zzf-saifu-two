@@ -1,5 +1,4 @@
 // Next.js Edge Middleware — 全局路由守卫
-// 运行在 Edge Runtime，不能 import Prisma
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser, checkRoutePermission } from "@/shared/auth/middleware";
@@ -8,7 +7,7 @@ export async function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
 
   // 公开路由 — 不拦截
-  const publicPaths = ["/login", "/register", "/age-gate", "/api/auth"];
+  const publicPaths = ["/login", "/register", "/age-gate"];
   if (publicPaths.some((p) => path.startsWith(p))) {
     return NextResponse.next();
   }
@@ -40,6 +39,7 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|api/).*)",
+    // 排除 Next.js 内部资源、静态文件、API 路由（API 层自行校验 JWT）
+    "/((?!_next/static|_next/image|api/|icons/|favicon\\.ico|manifest\\.json|sw\\.js).*)",
   ],
 };

@@ -46,6 +46,8 @@ async function verifyAndConsumeCode(
   phone: string,
   code: string,
 ): Promise<boolean> {
+  // 用 updateMany + id + used:false 条件防止 TOCTOU 竞态
+  // 两条并发请求带同一验证码时，只有一条的 count > 0
   const record = await prisma.verificationCode.findFirst({
     where: {
       phone,
@@ -58,11 +60,12 @@ async function verifyAndConsumeCode(
 
   if (!record) return false;
 
-  await prisma.verificationCode.update({
-    where: { id: record.id },
+  const result = await prisma.verificationCode.updateMany({
+    where: { id: record.id, used: false },
     data: { used: true },
   });
-  return true;
+
+  return result.count > 0;
 }
 
 // ── Refresh Token ──
@@ -91,7 +94,7 @@ function decodeRefreshToken(token: string): { userId: string } | null {
 // ── Token 签发 ──
 
 async function signAccessToken(user: AuthUser): Promise<string> {
-  return new SignJWT({ ...user })
+  return new SignJWT({ userId: user.userId, role: user.role })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(ACCESS_TTL)
@@ -113,12 +116,10 @@ async function persistRefreshToken(userId: string, rawToken: string): Promise<vo
 async function issueTokens(user: {
   id: string;
   role: string;
-  phoneHash: string;
 }): Promise<AuthTokens> {
   const accessToken = await signAccessToken({
     userId: user.id,
     role: user.role as AuthUser["role"],
-    phoneHash: user.phoneHash,
   });
   const refreshToken = encodeRefreshToken(user.id);
   await persistRefreshToken(user.id, refreshToken);
@@ -148,8 +149,10 @@ export async function sendVerificationCode(phone: string): Promise<void> {
   const code = generateCode();
   await storeCode(phone, code);
 
-  // 短信发送在 API 层投递 Inngest（此处仅生成验证码）
-  console.log(`[SMS] ${phone}: ${code}`);
+  // 仅在开发环境打印验证码，生产环境通过 Inngest 异步发送短信
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`[SMS] ${phone}: ${code}`);
+  }
 }
 
 /** 短信验证码登录（新用户自动注册） */
@@ -192,6 +195,8 @@ export async function registerWithPassword(
 
   const phoneHash = hashPhone(phone);
   const existing = await prisma.user.findUnique({ where: { phoneHash } });
+
+  // 已存在且有密码 → 拒绝
   if (existing?.passwordHash) {
     throw new AppError(
       ERROR_CODES.PHONE_ALREADY_EXISTS,
@@ -200,16 +205,34 @@ export async function registerWithPassword(
   }
 
   const passwordHash = hashPassword(password);
-  const user = existing
-    ? await prisma.user.update({
-        where: { id: existing.id },
-        data: { passwordHash },
-      })
-    : await prisma.user.create({
-        data: { phoneHash, passwordHash, role: "USER" },
-      });
 
-  return issueTokens(user);
+  if (existing) {
+    // 已有短信登录用户 → 补设密码
+    await prisma.user.update({
+      where: { id: existing.id },
+      data: { passwordHash },
+    });
+    return issueTokens(existing);
+  }
+
+  // 新用户 → 创建（防止并发唯一约束冲突）
+  try {
+    const user = await prisma.user.create({
+      data: { phoneHash, passwordHash, role: "USER" },
+    });
+    return issueTokens(user);
+  } catch {
+    const user = await prisma.user.findUnique({ where: { phoneHash } });
+    if (!user) throw new AppError(ERROR_CODES.INTERNAL_ERROR, "注册失败");
+    // 并发场景下另一个请求已创建，补设密码
+    if (!user.passwordHash) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { passwordHash },
+      });
+    }
+    return issueTokens(user);
+  }
 }
 
 /** 密码登录 */

@@ -125,7 +125,8 @@ export const refreshHandler = async (req: Request) => {
     const response = NextResponse.json({ success: true });
     setTokenCookies(response, tokens);
     return response;
-  } catch {
+  } catch (err) {
+    console.error("[auth/refresh] 刷新失败:", err);
     const response = NextResponse.json({ error: "TOKEN_EXPIRED" }, { status: 401 });
     clearTokenCookies(response);
     return response;
