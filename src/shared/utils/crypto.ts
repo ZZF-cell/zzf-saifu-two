@@ -96,6 +96,13 @@ export function verifyPassword(password: string, storedHash: string): boolean {
 }
 
 /**
+ * 简单 SHA-256 哈希（用于 Token 哈希等不需要 salt 的场景）
+ */
+export function sha256(data: string): string {
+  return crypto.createHash("sha256").update(data).digest("hex");
+}
+
+/**
  * 生成随机 Token（Refresh Token 用）
  */
 export function generateToken(length = 32): string {

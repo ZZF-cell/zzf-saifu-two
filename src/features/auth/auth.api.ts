@@ -57,14 +57,11 @@ function clearTokenCookies(response: NextResponse): void {
   response.cookies.set("refresh_token", "", { ...COOKIE_OPTIONS, path: "/api/auth", maxAge: 0 });
 }
 
-/** 从请求中提取 Access Token */
 function extractAccessToken(req: Request): string | null {
   return req.headers.get("cookie")?.match(/access_token=([^;]+)/)?.[1] ?? null;
 }
 
-/** 从请求中提取 Refresh Token */
 function extractRefreshToken(req: Request): string | null {
-  const body = req.headers.get("content-type")?.includes("json") ? null : null;
   return req.headers.get("cookie")?.match(/refresh_token=([^;]+)/)?.[1] ?? null;
 }
 
@@ -119,9 +116,9 @@ export const setPassword = withValidation(setPasswordSchema, async ({ password }
 
 /** POST /api/auth/refresh */
 export const refreshHandler = async (req: Request) => {
-  const token = extractRefreshToken(req) ?? extractAccessToken(req);
+  const token = extractRefreshToken(req);
   if (!token) {
-    return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
+    return NextResponse.json({ error: "TOKEN_EXPIRED" }, { status: 401 });
   }
   try {
     const tokens = await authService.refreshAccessToken(token);

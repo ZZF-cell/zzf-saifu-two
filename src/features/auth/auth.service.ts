@@ -1,10 +1,16 @@
 // 认证服务 — JWT 双 Token 签发/验证/Refresh Rotation
 // Access Token: 15min 无状态 JWT
-// Refresh Token: 7d，DB 存 SHA-256 Hash，支持 Rotation
+// Refresh Token: 7d，DB 存 SHA-256 Hash，Header 内编码 userId（解决无状态查找）
 
 import { SignJWT, jwtVerify } from "jose";
 import { prisma } from "@/shared/db/client";
-import { hashPassword, verifyPassword, hashPhone, generateToken } from "@/shared/utils/crypto";
+import {
+  hashPassword,
+  verifyPassword,
+  hashPhone,
+  sha256,
+  generateToken,
+} from "@/shared/utils/crypto";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import type { AuthUser } from "@/shared/auth/middleware";
 
@@ -16,28 +22,70 @@ const JWT_SECRET = new TextEncoder().encode(
 const ACCESS_TTL = "15m";
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 天
 
-// ── 短信验证码（内存存储，生产换 Redis）──
-
-const codeStore = new Map<string, { code: string; expiresAt: number }>();
+// ── 短信验证码（DB 存储，Serverless 多实例共享）──
 
 function generateCode(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 
-function storeCode(phone: string, code: string): void {
-  codeStore.set(phone, { code, expiresAt: Date.now() + 5 * 60 * 1000 }); // 5 分钟有效
+async function storeCode(phone: string, code: string): Promise<void> {
+  // 清理该号码旧的未使用验证码
+  await prisma.verificationCode.deleteMany({
+    where: { phone, used: false },
+  });
+  await prisma.verificationCode.create({
+    data: {
+      phone,
+      code,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5 分钟有效
+    },
+  });
 }
 
-function verifyCode(phone: string, code: string): boolean {
-  const stored = codeStore.get(phone);
-  if (!stored) return false;
-  if (Date.now() > stored.expiresAt) {
-    codeStore.delete(phone);
-    return false;
-  }
-  if (stored.code !== code) return false;
-  codeStore.delete(phone); // 一次性消费
+async function verifyAndConsumeCode(
+  phone: string,
+  code: string,
+): Promise<boolean> {
+  const record = await prisma.verificationCode.findFirst({
+    where: {
+      phone,
+      code,
+      used: false,
+      expiresAt: { gt: new Date() },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (!record) return false;
+
+  await prisma.verificationCode.update({
+    where: { id: record.id },
+    data: { used: true },
+  });
   return true;
+}
+
+// ── Refresh Token ──
+
+/**
+ * Refresh Token 格式: base64url(userId:randomBytes)
+ * 将 userId 编码进 Token 中，避免验证时全库扫描
+ */
+function encodeRefreshToken(userId: string): string {
+  const random = generateToken(32);
+  const payload = `${userId}:${random}`;
+  return Buffer.from(payload).toString("base64url");
+}
+
+function decodeRefreshToken(token: string): { userId: string } | null {
+  try {
+    const payload = Buffer.from(token, "base64url").toString("utf8");
+    const colonIdx = payload.indexOf(":");
+    if (colonIdx === -1) return null;
+    return { userId: payload.slice(0, colonIdx) };
+  } catch {
+    return null;
+  }
 }
 
 // ── Token 签发 ──
@@ -50,9 +98,8 @@ async function signAccessToken(user: AuthUser): Promise<string> {
     .sign(JWT_SECRET);
 }
 
-async function signRefreshToken(userId: string): Promise<string> {
-  const raw = generateToken(32);
-  const tokenHash = hashPassword(raw); // 复用 salt+hash 逻辑存储
+async function persistRefreshToken(userId: string, rawToken: string): Promise<void> {
+  const tokenHash = sha256(rawToken);
   await prisma.refreshToken.create({
     data: {
       userId,
@@ -60,24 +107,22 @@ async function signRefreshToken(userId: string): Promise<string> {
       expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
     },
   });
-  return raw;
 }
 
-async function rotateRefreshToken(
-  userId: string,
-  oldTokenId?: string,
-): Promise<string> {
-  // 删除旧 Refresh Token（如果提供了 ID）
-  if (oldTokenId) {
-    // 找到并删除该用户的所有过期 token + 当前 token
-    await prisma.refreshToken.deleteMany({
-      where: {
-        userId,
-        expiresAt: { lt: new Date() },
-      },
-    });
-  }
-  return signRefreshToken(userId);
+/** 签发一对新 Token */
+async function issueTokens(user: {
+  id: string;
+  role: string;
+  phoneHash: string;
+}): Promise<AuthTokens> {
+  const accessToken = await signAccessToken({
+    userId: user.id,
+    role: user.role as AuthUser["role"],
+    phoneHash: user.phoneHash,
+  });
+  const refreshToken = encodeRefreshToken(user.id);
+  await persistRefreshToken(user.id, refreshToken);
+  return { accessToken, refreshToken };
 }
 
 // ── 公开 API ──
@@ -90,21 +135,30 @@ export interface AuthTokens {
 /** 发送短信验证码 */
 export async function sendVerificationCode(phone: string): Promise<void> {
   // 频率限制：60 秒内同号码不可重复发送
-  const existing = codeStore.get(phone);
-  if (existing && Date.now() - (existing.expiresAt - 5 * 60 * 1000) < 60000) {
+  const recent = await prisma.verificationCode.findFirst({
+    where: {
+      phone,
+      createdAt: { gt: new Date(Date.now() - 60 * 1000) },
+    },
+  });
+  if (recent) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "请 60 秒后再试");
   }
 
   const code = generateCode();
-  storeCode(phone, code);
+  await storeCode(phone, code);
 
   // 短信发送在 API 层投递 Inngest（此处仅生成验证码）
   console.log(`[SMS] ${phone}: ${code}`);
 }
 
 /** 短信验证码登录（新用户自动注册） */
-export async function loginWithCode(phone: string, code: string): Promise<AuthTokens> {
-  if (!verifyCode(phone, code)) {
+export async function loginWithCode(
+  phone: string,
+  code: string,
+): Promise<AuthTokens> {
+  const valid = await verifyAndConsumeCode(phone, code);
+  if (!valid) {
     throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "验证码错误或已过期");
   }
 
@@ -112,26 +166,17 @@ export async function loginWithCode(phone: string, code: string): Promise<AuthTo
   let user = await prisma.user.findUnique({ where: { phoneHash } });
 
   if (!user) {
-    // 新用户自动注册
     try {
       user = await prisma.user.create({
         data: { phoneHash, role: "USER" },
       });
     } catch {
-      // 并发注册时可能冲突，重新查询
       user = await prisma.user.findUnique({ where: { phoneHash } });
       if (!user) throw new AppError(ERROR_CODES.INTERNAL_ERROR, "注册失败");
     }
   }
 
-  const accessToken = await signAccessToken({
-    userId: user.id,
-    role: user.role as AuthUser["role"],
-    phoneHash: user.phoneHash,
-  });
-  const refreshToken = await signRefreshToken(user.id);
-
-  return { accessToken, refreshToken };
+  return issueTokens(user);
 }
 
 /** 密码注册 */
@@ -140,30 +185,31 @@ export async function registerWithPassword(
   password: string,
   code: string,
 ): Promise<AuthTokens> {
-  // 先验证短信验证码（防止机器人注册）
-  if (!verifyCode(phone, code)) {
+  const valid = await verifyAndConsumeCode(phone, code);
+  if (!valid) {
     throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "验证码错误或已过期");
   }
 
   const phoneHash = hashPhone(phone);
   const existing = await prisma.user.findUnique({ where: { phoneHash } });
   if (existing?.passwordHash) {
-    throw new AppError(ERROR_CODES.PHONE_ALREADY_EXISTS, "该手机号已注册密码登录");
+    throw new AppError(
+      ERROR_CODES.PHONE_ALREADY_EXISTS,
+      "该手机号已注册密码登录",
+    );
   }
 
   const passwordHash = hashPassword(password);
   const user = existing
-    ? await prisma.user.update({ where: { id: existing.id }, data: { passwordHash } })
-    : await prisma.user.create({ data: { phoneHash, passwordHash, role: "USER" } });
+    ? await prisma.user.update({
+        where: { id: existing.id },
+        data: { passwordHash },
+      })
+    : await prisma.user.create({
+        data: { phoneHash, passwordHash, role: "USER" },
+      });
 
-  const accessToken = await signAccessToken({
-    userId: user.id,
-    role: user.role as AuthUser["role"],
-    phoneHash: user.phoneHash,
-  });
-  const refreshToken = await signRefreshToken(user.id);
-
-  return { accessToken, refreshToken };
+  return issueTokens(user);
 }
 
 /** 密码登录 */
@@ -175,21 +221,17 @@ export async function loginWithPassword(
   const user = await prisma.user.findUnique({ where: { phoneHash } });
 
   if (!user || !user.passwordHash) {
-    throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "该手机号未注册密码登录，请使用验证码登录");
+    throw new AppError(
+      ERROR_CODES.INVALID_CREDENTIALS,
+      "该手机号未注册密码登录，请使用验证码登录",
+    );
   }
 
   if (!verifyPassword(password, user.passwordHash)) {
     throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "密码错误");
   }
 
-  const accessToken = await signAccessToken({
-    userId: user.id,
-    role: user.role as AuthUser["role"],
-    phoneHash: user.phoneHash,
-  });
-  const refreshToken = await signRefreshToken(user.id);
-
-  return { accessToken, refreshToken };
+  return issueTokens(user);
 }
 
 /** 为短信登录用户设置密码 */
@@ -204,43 +246,46 @@ export async function setPassword(
   });
 }
 
+/** 设置年龄已验证 */
+export async function setAgeVerified(userId: string): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: { ageVerified: true },
+  });
+}
+
 /** Refresh Token 轮换 */
 export async function refreshAccessToken(
   rawRefreshToken: string,
 ): Promise<AuthTokens> {
-  // 遍历查找匹配的 Refresh Token（因为 tokenHash 是 salted）
-  const tokens = await prisma.refreshToken.findMany({
-    where: { expiresAt: { gt: new Date() } },
-    orderBy: { createdAt: "desc" },
-    take: 10,
-  });
-
-  let matchedToken: { id: string; userId: string } | null = null;
-  for (const t of tokens) {
-    if (verifyPassword(rawRefreshToken, t.tokenHash)) {
-      matchedToken = { id: t.id, userId: t.userId };
-      break;
-    }
-  }
-
-  if (!matchedToken) {
+  // 从 Token 中 decode 出 userId，直接定位 DB 记录（O(1) 查找）
+  const decoded = decodeRefreshToken(rawRefreshToken);
+  if (!decoded) {
     throw new AppError(ERROR_CODES.TOKEN_EXPIRED, "登录已过期，请重新登录");
   }
 
-  // 删除当前 Refresh Token
-  await prisma.refreshToken.delete({ where: { id: matchedToken.id } });
+  const expectedHash = sha256(rawRefreshToken);
+  const token = await prisma.refreshToken.findFirst({
+    where: {
+      userId: decoded.userId,
+      tokenHash: expectedHash,
+      expiresAt: { gt: new Date() },
+    },
+  });
 
-  const user = await prisma.user.findUnique({ where: { id: matchedToken.userId } });
+  if (!token) {
+    throw new AppError(ERROR_CODES.TOKEN_EXPIRED, "登录已过期，请重新登录");
+  }
+
+  // Rotation：删除旧 Token
+  await prisma.refreshToken.delete({ where: { id: token.id } });
+
+  const user = await prisma.user.findUnique({
+    where: { id: decoded.userId },
+  });
   if (!user) throw new AppError(ERROR_CODES.UNAUTHORIZED, "用户不存在");
 
-  const accessToken = await signAccessToken({
-    userId: user.id,
-    role: user.role as AuthUser["role"],
-    phoneHash: user.phoneHash,
-  });
-  const refreshToken = await signRefreshToken(user.id);
-
-  return { accessToken, refreshToken };
+  return issueTokens(user);
 }
 
 /** 退出登录 — 吊销所有 Refresh Token */
@@ -249,26 +294,13 @@ export async function logout(userId: string): Promise<void> {
 }
 
 /** 验证 Access Token，返回当前用户 */
-export async function verifyAccessToken(token: string): Promise<AuthUser | null> {
+export async function verifyAccessToken(
+  token: string,
+): Promise<AuthUser | null> {
   try {
     const { payload } = await jwtVerify(token, JWT_SECRET);
     return payload as unknown as AuthUser;
   } catch {
     return null;
   }
-}
-
-/** 获取用户信息（用于查询） */
-export async function getUserById(userId: string) {
-  return prisma.user.findUnique({
-    where: { id: userId },
-    select: {
-      id: true,
-      phoneHash: true,
-      nickname: true,
-      role: true,
-      ageVerified: true,
-      createdAt: true,
-    },
-  });
 }

@@ -5,8 +5,6 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { CodeLoginForm, PasswordLoginForm } from "./auth.components";
 
-// ── API helpers ──
-
 async function apiCall(url: string, body: Record<string, unknown>) {
   const res = await fetch(url, {
     method: "POST",
@@ -18,8 +16,6 @@ async function apiCall(url: string, body: Record<string, unknown>) {
   if (!res.ok) throw new Error(data.message || "请求失败");
   return data;
 }
-
-// ── 登录页 ──
 
 export function LoginPage() {
   const [mode, setMode] = useState<"code" | "password">("code");
@@ -36,6 +32,7 @@ export function LoginPage() {
 
   const handlePasswordLogin = async (phone: string, password: string) => {
     await apiCall("/api/auth/login", { phone, password });
+    router.push("/");
   };
 
   return (
@@ -45,7 +42,6 @@ export function LoginPage() {
           赛夫严选
         </h1>
 
-        {/* 切换 Tab */}
         <div className="mb-6 flex rounded-lg bg-gray-100 p-1">
           <button
             onClick={() => setMode("code")}
@@ -81,8 +77,6 @@ export function LoginPage() {
   );
 }
 
-// ── 注册页 ──
-
 export function RegisterPage() {
   const router = useRouter();
   const [password, setPassword] = useState("");
@@ -116,7 +110,11 @@ export function RegisterPage() {
           />
         </div>
 
-        <CodeLoginForm onSubmit={handleRegister} onSendCode={handleSendCode} />
+        <CodeLoginForm
+          onSubmit={handleRegister}
+          onSendCode={handleSendCode}
+          submitLabel="注册"
+        />
 
         <p className="mt-6 text-center text-sm text-gray-500">
           已有账号？

@@ -2,25 +2,44 @@
 // 运行在 Edge Runtime，不能 import Prisma
 
 import { NextRequest, NextResponse } from "next/server";
+import { getAuthUser, checkRoutePermission } from "@/shared/auth/middleware";
 
 export async function middleware(req: NextRequest) {
-  // PWA Service Worker 和静态资源不拦截
   const path = req.nextUrl.pathname;
 
-  // 管理后台：重定向到 auth 页面（中间件不做 JWT 校验，API 层做）
-  if (path.startsWith("/admin")) {
-    const accessToken = req.cookies.get("access_token")?.value;
-    if (!accessToken) {
-      return NextResponse.redirect(new URL("/login", req.url));
-    }
+  // 公开路由 — 不拦截
+  const publicPaths = ["/login", "/register", "/age-gate", "/api/auth"];
+  if (publicPaths.some((p) => path.startsWith(p))) {
+    return NextResponse.next();
   }
+
+  // 静态资源和 PWA 不拦截
+  if (
+    path.startsWith("/_next") ||
+    path.startsWith("/icons") ||
+    path === "/favicon.ico" ||
+    path === "/manifest.json" ||
+    path === "/sw.js"
+  ) {
+    return NextResponse.next();
+  }
+
+  // 年龄验证门禁
+  const ageVerified = req.cookies.get("age_verified")?.value;
+  if (!ageVerified && path !== "/") {
+    return NextResponse.redirect(new URL("/age-gate?redirect=" + encodeURIComponent(path), req.url));
+  }
+
+  // 路由权限校验
+  const authUser = await getAuthUser(req);
+  const redirect = checkRoutePermission(req, authUser);
+  if (redirect) return redirect;
 
   return NextResponse.next();
 }
 
 export const config = {
   matcher: [
-    // 排除公共资源
-    "/((?!_next/static|_next/image|icons|favicon.ico|manifest.json|sw.js).*)",
+    "/((?!_next/static|_next/image|api/).*)",
   ],
 };

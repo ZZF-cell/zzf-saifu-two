@@ -4,6 +4,7 @@
 export const ERROR_CODES = {
   // 认证 1xxx
   UNAUTHORIZED: { status: 401, code: "UNAUTHORIZED" },
+  AGE_VERIFICATION_REQUIRED: { status: 403, code: "AGE_VERIFICATION_REQUIRED" },
   FORBIDDEN: { status: 403, code: "FORBIDDEN" },
   TOKEN_EXPIRED: { status: 401, code: "TOKEN_EXPIRED" },
   INVALID_CREDENTIALS: { status: 401, code: "INVALID_CREDENTIALS" },

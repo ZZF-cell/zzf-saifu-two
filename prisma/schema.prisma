@@ -150,6 +150,20 @@ model CategoryAuditTemplate {
 }
 
 // ═══════════════════════════════════
+// 短信验证码（Serverless 兼容，DB 存储替代内存 Map）
+// ═══════════════════════════════════
+model VerificationCode {
+  id        String   @id @default(cuid())
+  phone     String
+  code      String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([phone, createdAt])
+}
+
+// ═══════════════════════════════════
 // 审计日志
 // ═══════════════════════════════════
 model AuditLog {
