@@ -1,7 +1,18 @@
 // 订单查询 — 列表/详情（只读）
 import { prisma } from "@/shared/db/client";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
+import { decrypt } from "@/shared/utils/crypto";
 import type { Prisma } from "@prisma/client";
+
+function decryptAddress(shippingAddress: string): string {
+  if (!process.env.ENCRYPTION_KEYS) return shippingAddress; // 开发环境明文
+  try {
+    return decrypt(shippingAddress);
+  } catch {
+    // 解密失败返回原始字符串（可能是旧数据或明文）
+    return shippingAddress;
+  }
+}
 
 // ── 类型 ──
 
@@ -126,8 +137,8 @@ export async function getOrderDetail(
     id: order.id,
     total: order.total,
     status: order.status,
-    // 已销毁订单不展示收货地址
-    shippingAddress: destroyed ? "[DESTROYED]" : order.shippingAddress,
+    // 已销毁订单不展示收货地址；正常订单先尝试解密
+    shippingAddress: destroyed ? "[DESTROYED]" : decryptAddress(order.shippingAddress),
     privacy: order.privacy,
     outTradeNo: order.outTradeNo,
     paidAt: order.paidAt,

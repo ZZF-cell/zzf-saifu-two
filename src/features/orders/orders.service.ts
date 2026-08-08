@@ -13,6 +13,7 @@ import {
   isDestroyable,
 } from "./orders.state-machine";
 import type { OrderStatus } from "./orders.state-machine";
+import { encrypt } from "@/shared/utils/crypto";
 
 // ── 类型 ──
 
@@ -81,8 +82,11 @@ export function calculateOrderItems(
 // ── 序列化配送地址 ──
 
 function serializeAddress(addr: CreateOrderInput["shippingAddress"]): string {
-  // 现阶段 JSON 序列化，后续接入 AES-256-GCM 加密
-  return JSON.stringify(addr);
+  // AES-256-GCM 加密配送地址
+  // ENCRYPTION_KEYS 未配置时回退到 JSON 序列化（开发环境）
+  const json = JSON.stringify(addr);
+  if (!process.env.ENCRYPTION_KEYS) return json;
+  return encrypt(json);
 }
 
 // ── 创建订单（核心事务 + 乐观锁） ──

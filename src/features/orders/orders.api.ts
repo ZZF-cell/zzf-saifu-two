@@ -2,21 +2,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withValidation, apiError } from "@/shared/utils/api";
-import { ERROR_CODES, AppError } from "@/shared/errors/errors";
+import { ERROR_CODES } from "@/shared/errors/errors";
+import { authenticate } from "@/shared/api/auth";
 import * as ordersService from "./orders.service";
 import * as ordersQueries from "./orders.queries";
-import * as authService from "@/features/auth/auth.service";
-
-// ── Auth helper ──
-
-async function authenticate(req: Request): Promise<string> {
-  const token =
-    req.headers.get("cookie")?.match(/access_token=([^;]+)/)?.[1] ?? null;
-  if (!token) throw new AppError(ERROR_CODES.UNAUTHORIZED, "请先登录");
-  const user = await authService.verifyAccessToken(token);
-  if (!user) throw new AppError(ERROR_CODES.TOKEN_EXPIRED, "登录已过期");
-  return user.userId;
-}
 
 // ── Schemas ──
 
@@ -159,10 +148,21 @@ export async function paidCallback(
 ) {
   try {
     const { id } = await ctx.params;
-    // 支付宝回调不校验用户登录，校验签名（payment 模块负责）
-    // 此处仅做状态更新
-    const body = await req.json().catch(() => ({}));
-    const outTradeNo = body.outTradeNo || body.out_trade_no || String(Date.now());
+
+    // 支付宝回调签名验证（通过 payment 模块 adapter）
+    const body = await req.json().catch(() => null);
+    if (!body) {
+      return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
+    }
+
+    // TODO: payment 模块接入后启用签名验证
+    // const verified = await paymentService.verifyCallbackSignature(body);
+    // if (!verified) {
+    //   return NextResponse.json({ error: "INVALID_SIGNATURE" }, { status: 400 });
+    // }
+
+    const outTradeNo =
+      body.outTradeNo || body.out_trade_no || String(Date.now());
     const result = await ordersService.markOrderPaid(id, outTradeNo);
     if (result.conflict) {
       return NextResponse.json(

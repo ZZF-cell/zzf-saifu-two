@@ -2,6 +2,7 @@
 import { prisma } from "@/shared/db/client";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import { multiplyFen, sumFen } from "@/shared/utils/money";
+import { toJsonStringArray } from "@/shared/utils/format";
 
 export interface CartItemRow {
   id: string;
@@ -44,7 +45,7 @@ export async function getCart(userId: string): Promise<CartData> {
     const product = productMap.get(item.productId);
     const availableStock = product?.status === "APPROVED" ? product.stock : 0;
     const effectiveQty = Math.min(item.qty, availableStock || 0);
-    const images = (product?.images as string[] | undefined) || [];
+    const images = toJsonStringArray(product?.images);
     return {
       id: item.id,
       productId: item.productId,
@@ -132,7 +133,7 @@ export async function updateCartQty(
     throw new AppError(ERROR_CODES.PRODUCT_NOT_FOUND, "购物车中未找到该商品");
   }
 
-  // 校验库存
+  // 读取实时库存（购物车数量修改是 best-effort，下单时有乐观锁严格校验）
   const product = await prisma.product.findUnique({
     where: { id: productId },
     select: { stock: true, status: true },

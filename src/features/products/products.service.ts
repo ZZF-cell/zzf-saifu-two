@@ -1,6 +1,7 @@
 // 商品模块 — 业务逻辑 + 查询
 import { prisma } from "@/shared/db/client";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
+import { toJsonStringArray } from "@/shared/utils/format";
 import type { Prisma } from "@prisma/client";
 
 // ── 类型 ──
@@ -93,7 +94,7 @@ export async function getProductList(
   return {
     items: items.map((item) => ({
       ...item,
-      images: item.images as string[],
+      images: toJsonStringArray(item.images),
     })),
     total,
     page,
@@ -118,7 +119,7 @@ export async function getProductById(
 
   return {
     ...product,
-    images: product.images as string[],
+    images: toJsonStringArray(product.images),
     specs: product.specs as unknown,
   };
 }

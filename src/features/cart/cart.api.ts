@@ -2,20 +2,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withValidation, apiError } from "@/shared/utils/api";
-import { ERROR_CODES, AppError } from "@/shared/errors/errors";
+import { authenticate } from "@/shared/api/auth";
 import * as cartService from "./cart.service";
-import * as authService from "@/features/auth/auth.service";
-
-// ── Auth helper ──
-
-async function authenticate(req: Request): Promise<string> {
-  const token =
-    req.headers.get("cookie")?.match(/access_token=([^;]+)/)?.[1] ?? null;
-  if (!token) throw new AppError(ERROR_CODES.UNAUTHORIZED, "请先登录");
-  const user = await authService.verifyAccessToken(token);
-  if (!user) throw new AppError(ERROR_CODES.TOKEN_EXPIRED, "登录已过期");
-  return user.userId;
-}
 
 // ── Schemas ──
 
