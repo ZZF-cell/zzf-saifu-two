@@ -2,9 +2,7 @@
 /node_modules
 /.pnp
 .pnp.js
-
-# testing
-/coverage
+.pnp.*
 
 # next.js
 /.next/
@@ -12,6 +10,13 @@
 
 # production
 /build
+
+# testing
+/coverage
+/.nyc_output
+/test-results
+/playwright-report
+/playwright/.cache
 
 # misc
 .DS_Store
@@ -25,6 +30,7 @@ yarn-error.log*
 # local env files
 .env*.local
 .env
+.env.production
 
 # vercel
 .vercel
@@ -44,3 +50,10 @@ next-env.d.ts
 .idea/
 *.swp
 *.swo
+.vscode/settings.json
+
+# turbo
+.turbo
+
+# backup files
+*.bak

@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+/* 设计令牌 — 自定义 CSS 变量 */
+@theme {
+  --color-primary: #1a1a2e;
+  --color-primary-light: #16213e;
+  --color-accent: #e94560;
+  --color-surface: #ffffff;
+  --color-muted: #a0a0a0;
+  --color-border: #e5e5e5;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-error: #dc2626;
+  --color-safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* 全局基础样式 */
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  padding-bottom: var(--color-safe-bottom);
+}
+
+/* 年龄确认门禁遮罩 */
+.age-gate-overlay {
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}

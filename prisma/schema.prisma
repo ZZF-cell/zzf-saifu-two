@@ -1,0 +1,163 @@
+// 赛夫严选 — Prisma Schema
+// 数据库: PostgreSQL (Neon)
+// ORM 版本: Prisma 6.x
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ═══════════════════════════════════
+// 用户
+// ═══════════════════════════════════
+model User {
+  id           String   @id @default(cuid())
+  phoneHash    String   @unique
+  passwordHash String?
+  nickname     String?
+  role         String   @default("USER") // USER | BRAND | ADMIN
+  ageVerified  Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  cartItems      CartItem[]
+  orders         Order[]
+  brand          Brand?           @relation("BrandOwner")
+  refreshTokens  RefreshToken[]
+}
+
+// ═══════════════════════════════════
+// JWT Refresh Token 轮换
+// ═══════════════════════════════════
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ═══════════════════════════════════
+// 品牌
+// ═══════════════════════════════════
+model Brand {
+  id         String   @id @default(cuid())
+  name       String
+  logo       String?
+  status     String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  inviteCode String   @unique
+  ownerId    String   @unique // 一个用户只能拥有一个品牌
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  owner    User       @relation("BrandOwner", fields: [ownerId], references: [id])
+  products Product[]
+}
+
+// ═══════════════════════════════════
+// 商品
+// ═══════════════════════════════════
+model Product {
+  id          String   @id @default(cuid())
+  brandId     String
+  name        String
+  description String?
+  category    String
+  images      Json     @default("[]")  // 图片列表 JSON: ["url1", "url2"]
+  specs       Json?                    // 规格参数 JSONB
+  price       Int                      // 价格（分）
+  stock       Int                      // 库存
+  version     Int      @default(0)     // 乐观锁版本号
+  status      String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  sales       Int      @default(0)     // 销量
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  brand Brand    @relation(fields: [brandId], references: [id])
+}
+
+// ═══════════════════════════════════
+// 购物车
+// ═══════════════════════════════════
+model CartItem {
+  id          String   @id @default(cuid())
+  userId      String
+  productId   String
+  productName String   // 展示冗余（下单时对最新价格进行校验）
+  price       Int      // 展示冗余（下单时从 Product 实时校验）
+  qty         Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+}
+
+// ═══════════════════════════════════
+// 订单
+// ═══════════════════════════════════
+model Order {
+  id              String   @id @default(cuid())
+  userId          String
+  total           Int                      // 下单快照总价（分）
+  status          String   @default("PENDING")
+  // PENDING → PAID → SHIPPED → DELIVERED → COMPLETED
+  // PENDING → CANCELLED
+  // PAID    → REFUND_REQUESTED → REFUNDED
+  outTradeNo      String?  @unique         // 支付宝流水号（回调幂等）
+  privacy         Json     @default("{}")  // 隐私选项
+  shippingAddress String   // AES-256-GCM 加密后的配送地址
+  paidAt          DateTime?
+  shippedAt       DateTime?
+  deliveredAt     DateTime?
+  completedAt     DateTime?
+  cancelledAt     DateTime?
+  refundedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user  User        @relation(fields: [userId], references: [id])
+  items OrderItem[]
+}
+
+model OrderItem {
+  id          String @id @default(cuid())
+  orderId     String
+  productName String // 下单时快照
+  price       Int    // 实付分摊价（分），已含优惠券/满减分摊
+  qty         Int
+  productId   String? // 仅作参考外键，商品下架不影响历史订单
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+// ═══════════════════════════════════
+// 品类质检模板（二期）
+// ═══════════════════════════════════
+model CategoryAuditTemplate {
+  id           String @id @default(cuid())
+  categoryId   String @unique
+  requiredDocs Json   @default("[]")  // 文档列表
+  checkPoints  Json   @default("[]")  // 质检项 JSONB
+}
+
+// ═══════════════════════════════════
+// 审计日志
+// ═══════════════════════════════════
+model AuditLog {
+  id         String   @id @default(cuid())
+  targetType String   // Order | Product | Brand | User
+  targetId   String
+  action     String
+  snapshot   Json?                    // 操作前数据快照 JSONB
+  operatorId String?
+  createdAt  DateTime @default(now())
+}
