@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect, useRef } from "react";
 
 // ── 验证码输入 ──
 
@@ -63,6 +63,14 @@ export function CodeLoginForm({ onSubmit, onSendCode, submitLabel = "登录 / �
   const [countdown, setCountdown] = useState(0);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState("");
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // 组件卸载时清理 setInterval
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
 
   const handleSend = () => {
     if (!/^1[3-9]\d{9}$/.test(phone)) return;
@@ -70,8 +78,15 @@ export function CodeLoginForm({ onSubmit, onSendCode, submitLabel = "登录 / �
       try {
         await onSendCode(phone);
         setCountdown(60);
-        const timer = setInterval(() => {
-          setCountdown((c) => (c <= 1 ? (clearInterval(timer), 0) : c - 1));
+        if (timerRef.current) clearInterval(timerRef.current);
+        timerRef.current = setInterval(() => {
+          setCountdown((c) => {
+            if (c <= 1) {
+              if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+              return 0;
+            }
+            return c - 1;
+          });
         }, 1000);
         setError("");
       } catch {

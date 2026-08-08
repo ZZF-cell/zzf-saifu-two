@@ -8,11 +8,16 @@ function AgeGateContent() {
   const [showContent, setShowContent] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirect = searchParams.get("redirect") || "/";
+  const rawRedirect = searchParams.get("redirect") || "/";
+  // 防止 Open Redirect 攻击：只允许站内相对路径
+  const redirect = rawRedirect.startsWith("/") ? rawRedirect : "/";
 
   const handleConfirm = () => {
-    // 设置年龄验证 Cookie（1 年有效）
-    document.cookie = `age_verified=1; path=/; max-age=${365 * 24 * 60 * 60}; SameSite=Strict`;
+    // 设置年龄验证 Cookie（1 年有效），生产环境加 Secure 标志
+    const secure = location.protocol === "https:" ? "; Secure" : "";
+    document.cookie = `age_verified=1; path=/; max-age=${365 * 24 * 60 * 60}; SameSite=Strict${secure}`;
+    // 如果已登录，同步更新 DB 中的 ageVerified（best-effort，不阻塞跳转）
+    fetch("/api/user/age-verify", { method: "POST", credentials: "include" }).catch(() => {});
     setConfirmed(true);
     setTimeout(() => router.push(redirect), 600);
   };
@@ -32,7 +37,7 @@ function AgeGateContent() {
           <>
             <h1 className="text-2xl font-bold tracking-tight">年龄确认</h1>
             <p className="mt-4 text-sm leading-relaxed text-white/80">
-              本品台仅面向年满 18 周岁的成年人开放。
+              本平台仅面向年满 18 周岁的成年人开放。
               <br />
               您已年满 18 周岁吗？
             </p>
