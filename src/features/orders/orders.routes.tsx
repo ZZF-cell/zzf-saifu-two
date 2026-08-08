@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { OrderCard, OrderStatusBadge, OrderTimeline, AddressForm } from "./orders.components";
 import type { OrderSummary, OrderDetail } from "./orders.queries";
-import { fenToYuan } from "@/shared/utils/money";
+import { fenToYuan, multiplyFen } from "@/shared/utils/money";
 
 // ── helpers ──
 
@@ -261,7 +261,6 @@ export function OrderListPage() {
 // ── 订单详情页 ──
 
 export function OrderDetailPage({ id }: { id: string }) {
-  const router = useRouter();
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
@@ -370,7 +369,7 @@ export function OrderDetailPage({ id }: { id: string }) {
                   </p>
                 </div>
                 <span className="text-sm font-medium text-gray-900">
-                  ¥{fenToYuan(item.price * item.qty)}
+                  ¥{fenToYuan(multiplyFen(item.price, item.qty))}
                 </span>
               </div>
             ))}

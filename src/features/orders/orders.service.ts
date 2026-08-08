@@ -6,10 +6,8 @@ import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import { multiplyFen, sumFen, distributeDiscount } from "@/shared/utils/money";
 import {
   ORDER_STATUS,
-  canTransitionTo,
   isCancellable,
   isRefundable,
-  isPayable,
   isDestroyable,
 } from "./orders.state-machine";
 import type { OrderStatus } from "./orders.state-machine";
@@ -239,6 +237,11 @@ export async function cancelOrder(
     throw new AppError(ERROR_CODES.ORDER_STATUS_INVALID, `订单状态「${currentStatus}」不允许取消`);
   }
 
+  // PAID 订单取消 → 同时发起退款
+  const targetStatus =
+    currentStatus === ORDER_STATUS.PAID ? ORDER_STATUS.REFUNDED : ORDER_STATUS.CANCELLED;
+  const refundedAt = currentStatus === ORDER_STATUS.PAID ? new Date() : null;
+
   await prisma.$transaction(async (tx) => {
     // 恢复库存
     for (const item of order.items) {
@@ -254,7 +257,11 @@ export async function cancelOrder(
 
     await tx.order.update({
       where: { id: orderId },
-      data: { status: ORDER_STATUS.CANCELLED, cancelledAt: new Date() },
+      data: {
+        status: targetStatus,
+        cancelledAt: new Date(),
+        refundedAt,
+      },
     });
   });
 }
