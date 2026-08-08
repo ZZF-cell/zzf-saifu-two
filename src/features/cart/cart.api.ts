@@ -51,7 +51,7 @@ export const addToCart = withValidation(
   addSchema,
   async ({ productId, qty }, req) => {
     const userId = await authenticate(req);
-    await cartService.addToCart(userId, productId, qty || 1);
+    await cartService.addToCart(userId, productId, qty ?? 1);
     return NextResponse.json({ success: true });
   },
 );

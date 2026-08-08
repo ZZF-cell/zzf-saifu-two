@@ -297,7 +297,7 @@ export function ProductDetailPage({ id }: { id: string }) {
             disabled={product.stock === 0}
             className="flex-1 rounded-lg bg-primary py-3 text-center text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
           >
-            {product.stock === 0 ? "已售罄" : "立即购买"}
+            {product.stock === 0 ? "已售罄" : "加入购物车"}
           </button>
         </div>
       </div>

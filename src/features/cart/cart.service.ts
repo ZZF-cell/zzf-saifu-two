@@ -57,10 +57,13 @@ export async function getCart(userId: string): Promise<CartData> {
     };
   });
 
+  // 过滤掉库存为零的商品（返回前端前移除，不自动删 DB 记录）
+  const visibleItems = cartItems.filter((i) => i.qty > 0);
+
   return {
-    items: cartItems,
-    totalCount: cartItems.reduce((sum, i) => sum + i.qty, 0),
-    totalAmount: sumFen(cartItems.map((i) => i.subtotal)),
+    items: visibleItems,
+    totalCount: visibleItems.reduce((sum, i) => sum + i.qty, 0),
+    totalAmount: sumFen(visibleItems.map((i) => i.subtotal)),
   };
 }
 

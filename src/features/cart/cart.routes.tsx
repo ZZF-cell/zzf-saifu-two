@@ -9,14 +9,17 @@ import { fenToYuan } from "@/shared/utils/money";
 interface CartData {
   items: CartItemData[];
   totalCount: number;
-  totalAmount: number; // 分
+  totalAmount: number;
 }
+
+type ApiError = { error?: string; message?: string };
 
 export function CartPage() {
   const router = useRouter();
   const [cart, setCart] = useState<CartData | null>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
 
   const fetchCart = useCallback(async () => {
     try {
@@ -27,7 +30,10 @@ export function CartPage() {
       }
       const data = await res.json();
       if (res.ok) setCart(data);
-    } catch { /* 静默失败 */ } finally {
+      else setErrorMsg(data.message || "加载购物车失败");
+    } catch {
+      setErrorMsg("网络错误，请稍后重试");
+    } finally {
       setLoading(false);
     }
   }, [router]);
@@ -39,6 +45,7 @@ export function CartPage() {
   const patchCart = async (url: string, body: Record<string, unknown>) => {
     if (updating) return;
     setUpdating(true);
+    setErrorMsg("");
     try {
       const res = await fetch(url, {
         method: "PATCH",
@@ -47,11 +54,14 @@ export function CartPage() {
         credentials: "include",
       });
       if (!res.ok) {
-        const data = await res.json();
-        if (data.error === "UNAUTHORIZED") router.push("/login");
+        const data = (await res.json().catch(() => ({}))) as ApiError;
+        if (res.status === 401 || data.error === "UNAUTHORIZED") { router.push("/login"); return; }
+        setErrorMsg(data.message || "操作失败，请重试");
         return;
       }
       await fetchCart();
+    } catch {
+      setErrorMsg("网络错误，请稍后重试");
     } finally {
       setUpdating(false);
     }
@@ -60,6 +70,7 @@ export function CartPage() {
   const deleteItem = async (productId: string) => {
     if (updating) return;
     setUpdating(true);
+    setErrorMsg("");
     try {
       const res = await fetch("/api/cart", {
         method: "DELETE",
@@ -67,7 +78,15 @@ export function CartPage() {
         body: JSON.stringify({ productId }),
         credentials: "include",
       });
-      if (res.ok) await fetchCart();
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as ApiError;
+        if (res.status === 401 || data.error === "UNAUTHORIZED") { router.push("/login"); return; }
+        setErrorMsg(data.message || "删除失败，请重试");
+        return;
+      }
+      await fetchCart();
+    } catch {
+      setErrorMsg("网络错误，请稍后重试");
     } finally {
       setUpdating(false);
     }
@@ -95,7 +114,6 @@ export function CartPage() {
 
   return (
     <main className="mx-auto min-h-screen max-w-lg bg-white pb-32">
-      {/* Header */}
       <div className="sticky top-0 z-10 border-b bg-white/90 backdrop-blur px-4 py-3">
         <h1 className="text-center text-base font-bold">
           购物车 ({cart?.totalCount || 0})
@@ -103,6 +121,13 @@ export function CartPage() {
       </div>
 
       <div className="p-4">
+        {errorMsg && (
+          <div className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
+            {errorMsg}
+            <button onClick={() => setErrorMsg("")} className="ml-2 underline">关闭</button>
+          </div>
+        )}
+
         {!cart || cart.items.length === 0 ? (
           <EmptyCart />
         ) : (
@@ -120,20 +145,15 @@ export function CartPage() {
         )}
       </div>
 
-      {/* 底部结算栏 */}
       {cart && cart.items.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 border-t bg-white px-4 py-3">
           <div className="mx-auto flex max-w-lg items-center justify-between">
             <div>
-              <p className="text-xs text-gray-500">
-                共 {cart.totalCount} 件
-              </p>
+              <p className="text-xs text-gray-500">共 {cart.totalCount} 件</p>
               <p className="text-xl font-bold text-primary">
                 ¥{fenToYuan(cart.totalAmount)}
               </p>
-              <p className="text-xs text-gray-400">
-                价格以结算时为准
-              </p>
+              <p className="text-xs text-gray-400">价格以结算时为准</p>
             </div>
             <button
               onClick={() => router.push("/checkout")}
