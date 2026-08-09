@@ -33,7 +33,7 @@ export function withValidation<T>(
           { status: 422 },
         );
       }
-      return handler(parsed.data, req);
+      return await handler(parsed.data, req);
     } catch (error) {
       return apiError(error);
     }
