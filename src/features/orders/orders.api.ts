@@ -166,9 +166,10 @@ export async function destroyOrder(
  * POST /api/orders/[id]/paid — 支付宝异步回调（幂等）
  *
  * 支付宝异步通知要求响应体为纯文本 "success"（停止重试）或 "failure"（重试）
- * 验签失败 / 状态异常均返回 "failure" 前的安全处理：
- * - 签名无效 → 记录日志返回 "failure"
- * - 订单状态异常（支付到达但已取消/退款）→ 告警但返回 "success" 停止重试，避免无限重试
+ * 安全处理原则：
+ * - 签名无效 / 终态必需字段缺失（out_trade_no、total_amount）→ 记录日志返回 "failure" 让支付宝重试
+ * - 持久性异常（out_trade_no 与订单不符、金额不匹配、支付到达但订单已取消/退款）→
+ *   重试不会改变结果，告警后返回 "success" 停止重试，交由人工处理
  */
 export async function paidCallback(
   req: Request,
@@ -197,16 +198,30 @@ export async function paidCallback(
     }
 
     const outTradeNo = body.out_trade_no || body.outTradeNo;
+    // 终态通知的必需字段：out_trade_no 缺失说明解析/上游异常，
+    // 不标记 PAID（否则写入 NULL 破坏 @unique 幂等键），返回 failure 让支付宝重试
+    if (!outTradeNo) {
+      console.error(`[orders] 回调缺少 out_trade_no: 订单 ${id}`);
+      return new NextResponse("failure", { status: 200 });
+    }
     // out_trade_no 与订单号必须一致（pageExec 时 outTradeNo 即订单 id）
-    if (outTradeNo && outTradeNo !== id) {
+    if (outTradeNo !== id) {
       console.error(
         `[orders] 回调 out_trade_no 不匹配: 订单 ${id} out_trade_no=${outTradeNo}`,
       );
       return new NextResponse("success", { status: 200 });
     }
 
-    // 回调金额（元）→ 分，与订单快照校验
-    const amountFen = body.total_amount ? yuanToFen(body.total_amount) : undefined;
+    // 终态通知的必需字段：total_amount（元）缺失则不做金额核验，
+    // 一律不标记 PAID（防止绕过订单快照金额校验），返回 failure 让支付宝重试
+    if (!body.total_amount) {
+      console.error(
+        `[orders] 回调缺少 total_amount: 订单 ${id} out_trade_no=${outTradeNo}`,
+      );
+      return new NextResponse("failure", { status: 200 });
+    }
+    // 回调金额（元）→ 分，与订单快照校验（markOrderPaid 内强校验）
+    const amountFen = yuanToFen(body.total_amount);
 
     const result = await ordersService.markOrderPaid(id, outTradeNo, amountFen);
     if (result.conflict) {

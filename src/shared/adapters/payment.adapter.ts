@@ -71,11 +71,11 @@ function getAlipaySdk(): AlipaySdk | null {
   return alipaySdk;
 }
 
-function getBaseUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_BASE_URL ||
-    `http://localhost:${process.env.PORT || 3000}`
-  );
+// 回调基础地址 — README 标 NEXT_PUBLIC_BASE_URL 为必填
+// 缺失时返回 null（createPayment 报错），不静默回退 localhost——
+// 否则生产环境 notifyUrl 指向 localhost，回调永远收不到、订单卡 PENDING
+function getBaseUrl(): string | null {
+  return process.env.NEXT_PUBLIC_BASE_URL ?? null;
 }
 
 // ── 支付宝沙箱适配器 ──
@@ -92,6 +92,12 @@ export function createAlipayAdapter(): PaymentAdapter {
         // 金额（分 → 元字符串）必须经 money 工具，禁止原生除法
         const totalYuan = fenToYuan(params.total);
         const baseUrl = getBaseUrl();
+        if (!baseUrl) {
+          return {
+            success: false,
+            error: "缺少 NEXT_PUBLIC_BASE_URL（支付回调地址基础域名），请在环境变量中配置",
+          };
+        }
 
         // 页面支付：method:'GET' 返回带 RSA2 签名的网关跳转 URL
         // ⚠️ 不传 method 时 pageExec 默认返回 POST 自动提交的 HTML 表单，不是 URL
@@ -120,6 +126,12 @@ export function createAlipayAdapter(): PaymentAdapter {
       const sdk = getAlipaySdk();
       // 未配置无法验签 — 一律拒绝（安全默认：宁可不处理也不放过伪造回调）
       if (!sdk) return false;
+
+      // 二次核验 app_id：必须等于自身配置，防止跨应用伪造回调
+      // （appId 属 adapter 配置域，统一在此读取 env，feature 层不再直读 process.env）
+      if (body.app_id && body.app_id !== process.env.ALIPAY_APP_ID) {
+        return false;
+      }
       try {
         // raw=true：异步通知是 POST 表单，值已被 URLSearchParams 标准解码，
         // raw=false 会对值二次 decodeURIComponent（值含 % 时会抛错/验签失败）

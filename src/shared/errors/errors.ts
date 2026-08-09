@@ -23,6 +23,7 @@ export const ERROR_CODES = {
   // 支付 4xxx
   PAYMENT_FAILED: { status: 402, code: "PAYMENT_FAILED" },
   PAYMENT_SIGNATURE_INVALID: { status: 400, code: "PAYMENT_SIGNATURE_INVALID" },
+  PAYMENT_NOT_CONFIGURED: { status: 503, code: "PAYMENT_NOT_CONFIGURED" },
 
   // 通用
   VALIDATION_ERROR: { status: 422, code: "VALIDATION_ERROR" },

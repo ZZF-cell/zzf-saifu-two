@@ -1,13 +1,10 @@
 // 支付模块 — 业务逻辑（支付宝对接 + 幂等校验）
-// 模块边界：orders → payment（单向），payment 只依赖 shared
-// 订单状态值使用字面量「PENDING」——避免跨模块 import orders 的状态机常量（boundaries 禁止）
+// 模块边界：orders → payment（单向）；payment → orders 仅经 Public API 取状态常量
 
 import { prisma } from "@/shared/db/client";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import { paymentAdapter } from "@/shared/adapters/payment.adapter";
-
-// 对应 orders.state-machine.ts 的 ORDER_STATUS.PENDING，此处保持字面量一致
-const ORDER_STATUS_PENDING = "PENDING";
+import { ORDER_STATUS } from "@/features/orders";
 
 export interface CreatePaymentResult {
   payUrl: string | null;
@@ -33,7 +30,7 @@ export async function createPayment(
 
   if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
   if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_OWNED, "无权操作该订单");
-  if (order.status !== ORDER_STATUS_PENDING) {
+  if (order.status !== ORDER_STATUS.PENDING) {
     throw new AppError(
       ERROR_CODES.ORDER_STATUS_INVALID,
       `订单状态「${order.status}」不允许支付`,

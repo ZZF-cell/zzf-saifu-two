@@ -1,5 +1,6 @@
 // 支付 API Route Handlers
 import { NextResponse } from "next/server";
+import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import { apiError } from "@/shared/utils/api";
 import { authenticate } from "@/shared/api/auth";
 import * as paymentService from "./payment.service";
@@ -19,10 +20,8 @@ export async function getPay(
     const { payUrl } = await paymentService.createPayment(userId, orderId);
 
     if (!payUrl) {
-      return NextResponse.json(
-        { error: "PAYMENT_NOT_CONFIGURED", message: "支付功能暂未配置" },
-        { status: 503 },
-      );
+      // 走统一 ERROR_CODES + apiError，避免散落裸字符串错误码
+      throw new AppError(ERROR_CODES.PAYMENT_NOT_CONFIGURED, "支付功能暂未配置");
     }
 
     return NextResponse.json({ payUrl });

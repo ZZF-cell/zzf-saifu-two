@@ -1,5 +1,6 @@
 // 支付回调 — 支付宝异步回调签名校验
 // 回调请求体为 application/x-www-form-urlencoded 表单，验签对象为完整表单字段（含 sign / sign_type）
+// app_id 二次核验在 adapter 内完成（config 域归属 adapter，feature 层不直读 process.env）
 
 import { paymentAdapter } from "@/shared/adapters/payment.adapter";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
@@ -15,15 +16,6 @@ export async function verifyNotifySignature(
 ): Promise<void> {
   if (!body.sign) {
     throw new AppError(ERROR_CODES.PAYMENT_SIGNATURE_INVALID, "回调缺少签名");
-  }
-
-  // 二次核验 app_id：必须等于自身配置，防止跨应用伪造回调
-  const appId = process.env.ALIPAY_APP_ID;
-  if (appId && body.app_id && body.app_id !== appId) {
-    throw new AppError(
-      ERROR_CODES.PAYMENT_SIGNATURE_INVALID,
-      "回调 app_id 与配置不匹配",
-    );
   }
 
   const valid = await paymentAdapter.verifyCallback(body);

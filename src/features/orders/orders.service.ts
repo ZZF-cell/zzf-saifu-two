@@ -295,18 +295,20 @@ export async function requestRefund(
 /**
  * 支付宝异步回调 — 幂等处理
  *
- * 仅 PENDING 状态的订单可更新为 PAID
- * 使用 updateMany 保证并发安全 + 幂等
- * 回调金额（分）可选传入，与订单快照 total 不一致时拒绝（防资损）
+ * 支付回调的状态更新必须整体在 $transaction 内完成（README 同步策略：
+ * "幂等性需和状态更新在同一事务"），金额核验的读取与状态写入同事务，避免读到过期快照。
+ *
+ * 仅 PENDING 状态的订单可更新为 PAID（updateMany 保证并发安全 + 幂等）
+ * 回调金额（分）必传，必须与订单快照 total 一致，否则拒绝标记（防资损）
  */
 export async function markOrderPaid(
   orderId: string,
   outTradeNo: string,
-  paidAmountFen?: number,
+  paidAmountFen: number,
 ): Promise<{ success: boolean; conflict: boolean }> {
-  // 金额核验：回调金额必须与下单时快照一致，否则视为异常拒绝标记
-  if (paidAmountFen !== undefined) {
-    const order = await prisma.order.findUnique({
+  return prisma.$transaction(async (tx) => {
+    // 金额核验：回调金额必须与下单时快照一致，否则视为异常拒绝标记
+    const order = await tx.order.findUnique({
       where: { id: orderId },
       select: { total: true },
     });
@@ -317,42 +319,45 @@ export async function markOrderPaid(
       );
       return { success: false, conflict: true };
     }
-  }
 
-  const result = await prisma.order.updateMany({
-    where: {
-      id: orderId,
-      status: ORDER_STATUS.PENDING,
-    },
-    data: {
-      status: ORDER_STATUS.PAID,
-      outTradeNo,
-      paidAt: new Date(),
-    },
+    const result = await tx.order.updateMany({
+      where: {
+        id: orderId,
+        status: ORDER_STATUS.PENDING,
+      },
+      data: {
+        status: ORDER_STATUS.PAID,
+        outTradeNo,
+        paidAt: new Date(),
+      },
+    });
+
+    if (result.count > 0) {
+      return { success: true, conflict: false };
+    }
+
+    // 未更新 — 检查是否已支付（幂等正常）还是状态冲突
+    const current = await tx.order.findUnique({
+      where: { id: orderId },
+      select: { status: true },
+    });
+
+    if (!current) {
+      throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
+    }
+
+    if (current.status === ORDER_STATUS.PAID) {
+      // 已支付，幂等返回成功
+      return { success: true, conflict: false };
+    }
+
+    // CANCELLED / REFUNDED 等异常状态 — 支付成功但订单不可支付（需人工退款）
+    // README 监控章节将该场景列为告警（Sentry 集成后由 captureMessage 接管此日志）
+    console.error(
+      `[orders] 支付回调异常: 订单=${orderId} 状态=${current.status} 无法标记为 PAID（支付成功但订单已不可支付，需人工退款）`,
+    );
+    return { success: false, conflict: true };
   });
-
-  if (result.count > 0) {
-    return { success: true, conflict: false };
-  }
-
-  // 未更新 — 检查是否已支付（幂等正常）还是状态冲突
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    select: { status: true },
-  });
-
-  if (!order) {
-    throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
-  }
-
-  if (order.status === ORDER_STATUS.PAID) {
-    // 已支付，幂等返回成功
-    return { success: true, conflict: false };
-  }
-
-  // CANCELLED / REFUNDED 等异常状态 — 支付成功但订单不可支付
-  console.error(`[orders] 支付回调异常: ${orderId} 状态=${order.status} 无法标记为 PAID`);
-  return { success: false, conflict: true };
 }
 
 // ── 查询支付状态 ──
