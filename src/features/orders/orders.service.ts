@@ -12,6 +12,7 @@ import {
 } from "./orders.state-machine";
 import type { OrderStatus } from "./orders.state-machine";
 import { encrypt } from "@/shared/utils/crypto";
+import { paymentService } from "@/features/payment";
 
 // ── 类型 ──
 
@@ -197,15 +198,13 @@ export async function createOrder(
   });
 
   // Step 5: 调用支付模块创建支付单（事务外 — 支付失败不回滚订单）
-  // 支付模块尚未实现，暂返回空 payUrl
-  const payUrl: string | null = null;
+  // 未配置支付宝环境变量时 createPayment 抛 PAYMENT_FAILED → 捕获后降级为 null payUrl（不阻塞下单）
+  let payUrl: string | null = null;
   try {
-    // TODO: 支付模块接入后替换为实际调用
-    // import { paymentService } from "@/features/payment";
-    // payUrl = await paymentService.createPayment({ orderId: result.id, total: result.total });
-  } catch {
-    // 支付单创建失败不阻塞下单
-    console.error("[orders] 支付单创建失败:", result.id);
+    const payment = await paymentService.createPayment(userId, result.id);
+    payUrl = payment.payUrl;
+  } catch (error) {
+    console.error("[orders] 支付单创建失败:", result.id, error);
   }
 
   return {
@@ -298,11 +297,28 @@ export async function requestRefund(
  *
  * 仅 PENDING 状态的订单可更新为 PAID
  * 使用 updateMany 保证并发安全 + 幂等
+ * 回调金额（分）可选传入，与订单快照 total 不一致时拒绝（防资损）
  */
 export async function markOrderPaid(
   orderId: string,
   outTradeNo: string,
+  paidAmountFen?: number,
 ): Promise<{ success: boolean; conflict: boolean }> {
+  // 金额核验：回调金额必须与下单时快照一致，否则视为异常拒绝标记
+  if (paidAmountFen !== undefined) {
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { total: true },
+    });
+    if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
+    if (order.total !== paidAmountFen) {
+      console.error(
+        `[orders] 支付回调金额不匹配: 订单=${orderId} 订单金额=${order.total} 回调金额=${paidAmountFen}`,
+      );
+      return { success: false, conflict: true };
+    }
+  }
+
   const result = await prisma.order.updateMany({
     where: {
       id: orderId,

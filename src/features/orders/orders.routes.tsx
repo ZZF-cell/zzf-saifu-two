@@ -294,6 +294,26 @@ export function OrderDetailPage({ id }: { id: string }) {
     }
   };
 
+  // 去支付 — 获取支付跳转 URL 后跳转支付宝
+  const handlePay = async () => {
+    if (acting) return;
+    setActing(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/pay/${id}`, { credentials: "include" });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.payUrl) {
+        window.location.href = data.payUrl;
+        return;
+      }
+      setError(data?.message || "支付功能暂不可用");
+    } catch {
+      setError("发起支付失败");
+    } finally {
+      setActing(false);
+    }
+  };
+
   if (loading) {
     return (
       <main className="mx-auto min-h-screen max-w-lg p-4">
@@ -383,21 +403,30 @@ export function OrderDetailPage({ id }: { id: string }) {
         {/* 操作按钮 */}
         <div className="space-y-2">
           {order.status === "PENDING" && !order.isDestroyed && (
-            <div className="flex gap-2">
+            <div className="space-y-2">
               <button
-                onClick={() => handleAction("cancel")}
+                onClick={handlePay}
                 disabled={acting}
-                className="flex-1 rounded-lg border border-gray-200 py-2.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+                className="w-full rounded-lg bg-primary py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
               >
-                取消订单
+                去支付
               </button>
-              <button
-                onClick={() => handleAction("check-paid")}
-                disabled={acting}
-                className="flex-1 rounded-lg bg-primary py-2.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
-              >
-                查询支付
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleAction("cancel")}
+                  disabled={acting}
+                  className="flex-1 rounded-lg border border-gray-200 py-2.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+                >
+                  取消订单
+                </button>
+                <button
+                  onClick={() => handleAction("check-paid")}
+                  disabled={acting}
+                  className="flex-1 rounded-lg border border-gray-200 py-2.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+                >
+                  查询支付
+                </button>
+              </div>
             </div>
           )}
           {order.status === "PAID" && !order.isDestroyed && (

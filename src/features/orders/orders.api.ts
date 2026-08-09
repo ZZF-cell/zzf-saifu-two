@@ -2,10 +2,31 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withValidation, apiError } from "@/shared/utils/api";
-import { ERROR_CODES } from "@/shared/errors/errors";
 import { authenticate } from "@/shared/api/auth";
+import { verifyNotifySignature } from "@/features/payment";
+import { yuanToFen } from "@/shared/utils/money";
 import * as ordersService from "./orders.service";
 import * as ordersQueries from "./orders.queries";
+
+/**
+ * 解析支付宝回调请求体
+ * 支付宝异步通知为 application/x-www-form-urlencoded 表单
+ * （本地联调模拟时可能是 JSON，两者都兼容）
+ */
+function parseCallbackBody(text: string): Record<string, string> {
+  if (!text) return {};
+  if (text.trim().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      return Object.fromEntries(
+        Object.entries(parsed).map(([k, v]) => [k, String(v)]),
+      );
+    } catch {
+      return {};
+    }
+  }
+  return Object.fromEntries(new URLSearchParams(text));
+}
 
 // ── Schemas ──
 
@@ -141,7 +162,14 @@ export async function destroyOrder(
   }
 }
 
-/** POST /api/orders/[id]/paid — 支付宝异步回调（幂等） */
+/**
+ * POST /api/orders/[id]/paid — 支付宝异步回调（幂等）
+ *
+ * 支付宝异步通知要求响应体为纯文本 "success"（停止重试）或 "failure"（重试）
+ * 验签失败 / 状态异常均返回 "failure" 前的安全处理：
+ * - 签名无效 → 记录日志返回 "failure"
+ * - 订单状态异常（支付到达但已取消/退款）→ 告警但返回 "success" 停止重试，避免无限重试
+ */
 export async function paidCallback(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
@@ -149,29 +177,49 @@ export async function paidCallback(
   try {
     const { id } = await ctx.params;
 
-    // 支付宝回调签名验证（通过 payment 模块 adapter）
-    const body = await req.json().catch(() => null);
-    if (!body) {
-      return NextResponse.json({ error: "INVALID_BODY" }, { status: 400 });
-    }
+    // 解析回调体（form-urlencoded 为主，兼容 JSON 便于本地模拟）
+    const text = await req.text();
+    const body = parseCallbackBody(text);
 
-    // TODO: payment 模块接入后启用签名验证
-    // const verified = await paymentService.verifyCallbackSignature(body);
-    // if (!verified) {
-    //   return NextResponse.json({ error: "INVALID_SIGNATURE" }, { status: 400 });
-    // }
+    // 签名 + app_id 校验（payment 模块）
+    await verifyNotifySignature(body);
 
-    const outTradeNo =
-      body.outTradeNo || body.out_trade_no || String(Date.now());
-    const result = await ordersService.markOrderPaid(id, outTradeNo);
-    if (result.conflict) {
-      return NextResponse.json(
-        { error: ERROR_CODES.CANCELLED_PAYMENT_ARRIVED.code, message: "订单状态异常" },
-        { status: 409 },
+    // trade_status 仅终态才标记已支付：
+    // WAIT_BUYER_PAY 等中间态 → 确认收到但不标记（返回 success 停止重试，等待最终状态通知）
+    const isFinalStatus =
+      body.trade_status === "TRADE_SUCCESS" ||
+      body.trade_status === "TRADE_FINISHED";
+    if (!isFinalStatus) {
+      console.log(
+        `[orders] 回调状态非终态: 订单 ${id} trade_status=${body.trade_status ?? "(空)"}`,
       );
+      return new NextResponse("success", { status: 200 });
     }
-    return NextResponse.json({ success: true });
+
+    const outTradeNo = body.out_trade_no || body.outTradeNo;
+    // out_trade_no 与订单号必须一致（pageExec 时 outTradeNo 即订单 id）
+    if (outTradeNo && outTradeNo !== id) {
+      console.error(
+        `[orders] 回调 out_trade_no 不匹配: 订单 ${id} out_trade_no=${outTradeNo}`,
+      );
+      return new NextResponse("success", { status: 200 });
+    }
+
+    // 回调金额（元）→ 分，与订单快照校验
+    const amountFen = body.total_amount ? yuanToFen(body.total_amount) : undefined;
+
+    const result = await ordersService.markOrderPaid(id, outTradeNo, amountFen);
+    if (result.conflict) {
+      // 金额不匹配或订单状态异常 — 停止重试，交由告警/人工处理
+      console.error(
+        `[orders] 支付回调异常: 订单 ${id} 无法标记为 PAID（outTradeNo=${outTradeNo}）`,
+      );
+      return new NextResponse("success", { status: 200 });
+    }
+    return new NextResponse("success", { status: 200 });
   } catch (error) {
-    return apiError(error);
+    // 验签失败 / 其他异常 — 返回 "failure" 让支付宝重试
+    console.error("[orders] 支付回调失败:", error);
+    return new NextResponse("failure", { status: 200 });
   }
 }
