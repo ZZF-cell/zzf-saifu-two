@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>赛夫严选 - 沙箱支付测试</title>
+<style>
+  body{font-family:system-ui,sans-serif;background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:20px}
+  .card{background:#fff;border-radius:16px;padding:32px 36px;box-shadow:0 4px 24px rgba(0,0,0,.08);max-width:640px;width:100%;text-align:center}
+  h1{font-size:21px;margin:0 0 4px}
+  .amt{font-size:40px;font-weight:700;color:#ff6a00;margin:16px 0 8px}
+  .order{color:#888;font-size:13px;margin-bottom:18px;word-break:break-all}
+  .copybtn{background:#1677ff;color:#fff;border:none;border-radius:12px;padding:15px;font-size:17px;font-weight:600;cursor:pointer;width:100%;box-sizing:border-box}
+  .copybtn:hover{background:#0f66e6}
+  textarea{width:100%;font-size:10.5px;word-break:break-all;border:1px solid #eee;border-radius:8px;padding:8px;box-sizing:border-box;color:#666;margin-top:12px;resize:none;font-family:monospace}
+  .alt{color:#1677ff;font-size:13px;margin-top:10px;display:inline-block;word-break:break-all}
+  .step{background:#f8f9fb;border:1px solid #e8ebf0;border-radius:10px;padding:14px 16px;font-size:13.5px;line-height:1.9;margin-top:16px;text-align:left}
+  .step b{color:#333}
+  .acct{color:#e64600;font-weight:700}
+  .crit{background:#fff1f0;border:1px solid #ffccc7;color:#cf1322;border-radius:8px;padding:10px 12px;font-size:13.5px;line-height:1.8;margin-top:12px;text-align:left}
+  .warn{background:#fff7e6;border:1px solid #ffd591;color:#ad6800;border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.7;margin-top:10px;text-align:left}
+  .ok{background:#f6ffed;border:1px solid #b7eb8f;color:#389e0d;border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.7;margin-top:10px;text-align:left}
+  .hint{color:#999;font-size:12.5px;margin-top:12px;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>支付宝沙箱支付测试</h1>
+  <div class="amt">¥199.00</div>
+  <div class="order">订单号：cmsmv7lqd0006jl049l9vyogn</div>
+
+  <button class="copybtn" onclick="var t=document.getElementById('url');t.focus();t.select();t.setSelectionRange(0,99999);document.execCommand('copy');alert('已复制链接，请粘贴到新标签页地址栏打开');">① 复制支付链接</button>
+  <textarea id="url" rows="5" readonly onclick="this.focus();this.select();this.setSelectionRange(0,99999)">https://openapi-sandbox.dl.alipaydev.com/gateway.do?method=alipay.trade.page.pay&app_id=9021000163673826&charset=utf-8&version=1.0&sign_type=RSA2&timestamp=2026-08-10%2014%3A43%3A14&notify_url=https%3A%2F%2Fsaifu.e9888.cn%2Fapi%2Forders%2Fcmsmv7lqd0006jl049l9vyogn%2Fpaid&return_url=https%3A%2F%2Fsaifu.e9888.cn%2Forders%2Fcmsmv7lqd0006jl049l9vyogn&sign=V%2FTl6GPPQpgXwVSDqG%2B32Dfzu%2BXaDKLzoTH5iR9R9VU5cL8XL1FIK5TVrAnEb3nUarMkHEMu%2BhUylx5VDGqwWxtU8qFvzxzoRtaybOzMM1Ej1dxJ5O13bQtbXDgdPY8d3gAq2zSpA%2BysQDlutWLjsA7FPWum25V0cqwK0K9Lr%2BzNTAcJI6GMzffQ%2BZMUQjhSDUkqRO1MJ%2FOQhHFKsWjmAXSO7iYG%2B6lntvadC3nloKBD5F8qO60lMskZ3k7dAT4RzXuRy%2FUrrGqUaMqBrIDIlRncsgFhTAEujnT8EYnmMQ4B48C3zF8uszvbTcyILr9YGop15WC0bTK2Y21bcGrGTw%3D%3D&alipay_sdk=alipay-sdk-nodejs-3.6.2&biz_content=%7B%22out_trade_no%22%3A%22cmsmv7lqd0006jl049l9vyogn%22%2C%22product_code%22%3A%22FAST_INSTANT_TRADE_PAY%22%2C%22total_amount%22%3A%22199.00%22%2C%22subject%22%3A%22%E8%B5%9B%E5%A4%AB%E4%B8%A5%E9%80%89%22%2C%22timeout_express%22%3A%2230m%22%7D</textarea>
+
+  <div class="crit">⚠️ <b>第 0 步（必须先做）：把浏览器语言切换成英文</b><br>
+  设置 → 语言 → 把 English 拖到最上面（或添加 English 并置于首位）。<br>
+  沙箱网关对<b>中文语言头（zh-CN）的请求一律返回错误页</b>，只有英文语言才能进收银台。切换后重启浏览器生效。</div>
+
+  <div class="step">
+    <b>操作步骤（在无痕窗口 Ctrl+Shift+N 操作）：</b><br>
+    ① 无痕窗口粘贴支付链接 → 跳转支付宝沙箱收银台<br>
+    ② 若出现「/error 错误页」或「系统繁忙」→ 沙箱网关偶尔抽风，<b>刷新重试几次</b>；还不行就把本页给我，我生成新订单<br>
+    ③ 收银台点「<b>邮箱登录</b>」切换（默认手机号框会卡住点不了下一步）<br>
+    ④ 登录账号：<span class="acct">nhrtuk7353@sandbox.com</span> 密码 <b>111111</b><br>
+    ⑤ 确认 <b>收款方=mhwqpp5502@sandbox.com</b> ≠ 付款方=nhrtuk7353@sandbox.com，金额 ¥199.00 →「下一步」→ 输入支付密码 <b>111111</b> → 确认付款<br>
+    ⑥ 看到「交易付款成功」→ <b>订单自动变已支付</b>（异步回调已打通）
+  </div>
+
+  <div class="ok">✅ <b>当前状态：回调链路已全部打通。</b><br>
+  支付成功后 Alipay 会异步回调到服务器，订单自动变为 PAID，无需手动操作。</div>
+
+  <div class="warn">⚠️ <b>关键提醒：</b><br>
+  登录账号必须是买家 <b>nhrtuk7353@sandbox.com</b>，不是商家 mhwqpp5502@sandbox.com（自付会被拦截「系统有点儿忙」）。<br>
+  支付链接<b>只能支付一次</b>，失败或已用就告诉我生成新订单。</div>
+
+  <p class="hint">备用按钮（你这台机器按钮方式可能被沙箱网关拒绝，优先用复制粘贴）</p>
+  <a class="alt" href="https://openapi-sandbox.dl.alipaydev.com/gateway.do?method=alipay.trade.page.pay&amp;app_id=9021000163673826&amp;charset=utf-8&amp;version=1.0&amp;sign_type=RSA2&amp;timestamp=2026-08-10%2014%3A43%3A14&amp;notify_url=https%3A%2F%2Fsaifu.e9888.cn%2Fapi%2Forders%2Fcmsmv7lqd0006jl049l9vyogn%2Fpaid&amp;return_url=https%3A%2F%2Fsaifu.e9888.cn%2Forders%2Fcmsmv7lqd0006jl049l9vyogn&amp;sign=V%2FTl6GPPQpgXwVSDqG%2B32Dfzu%2BXaDKLzoTH5iR9R9VU5cL8XL1FIK5TVrAnEb3nUarMkHEMu%2BhUylx5VDGqwWxtU8qFvzxzoRtaybOzMM1Ej1dxJ5O13bQtbXDgdPY8d3gAq2zSpA%2BysQDlutWLjsA7FPWum25V0cqwK0K9Lr%2BzNTAcJI6GMzffQ%2BZMUQjhSDUkqRO1MJ%2FOQhHFKsWjmAXSO7iYG%2B6lntvadC3nloKBD5F8qO60lMskZ3k7dAT4RzXuRy%2FUrrGqUaMqBrIDIlRncsgFhTAEujnT8EYnmMQ4B48C3zF8uszvbTcyILr9YGop15WC0bTK2Y21bcGrGTw%3D%3D&amp;alipay_sdk=alipay-sdk-nodejs-3.6.2&amp;biz_content=%7B%22out_trade_no%22%3A%22cmsmv7lqd0006jl049l9vyogn%22%2C%22product_code%22%3A%22FAST_INSTANT_TRADE_PAY%22%2C%22total_amount%22%3A%22199.00%22%2C%22subject%22%3A%22%E8%B5%9B%E5%A4%AB%E4%B8%A5%E9%80%89%22%2C%22timeout_express%22%3A%2230m%22%7D">备用按钮</a>
+</div>
+</body>
+</html>

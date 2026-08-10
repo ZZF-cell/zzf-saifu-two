@@ -4,9 +4,34 @@
 // 环境变量（全部可选，未配置时优雅降级）：
 //   ALIPAY_APP_ID / ALIPAY_PRIVATE_KEY（PKCS1）/ ALIPAY_PUBLIC_KEY / ALIPAY_GATEWAY
 //   NEXT_PUBLIC_BASE_URL（notifyUrl / returnUrl 基础地址）
+//
+// ⚠️ 时区陷阱：alipay-sdk 内部用 moment() 生成请求 timestamp（服务器本地时区），
+// 而支付宝网关按「北京时间」校验时间戳，偏差超范围直接判验签失败（沙箱实测偏差 8h 必失败）。
+// 服务器时区不可控（Vercel 是 UTC），故必须显式传入北京时间，覆盖 SDK 默认。
 
 import AlipaySdk from "alipay-sdk";
 import { fenToYuan } from "@/shared/utils/money";
+
+/**
+ * 生成北京时间（UTC+8）的 `YYYY-MM-DD HH:mm:ss` 字符串
+ * 供支付宝请求 timestamp 使用 — 不依赖服务器本地时区
+ */
+export function getBeijingTimestamp(date: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+
+  const get = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
+}
 
 export interface CreatePaymentParams {
   orderId: string;
@@ -101,8 +126,11 @@ export function createAlipayAdapter(): PaymentAdapter {
 
         // 页面支付：method:'GET' 返回带 RSA2 签名的网关跳转 URL
         // ⚠️ 不传 method 时 pageExec 默认返回 POST 自动提交的 HTML 表单，不是 URL
+        // timestamp 必须显式传北京时间（getBeijingTimestamp），否则服务器本地时区
+        // （Vercel=UTC）生成的时间戳比支付宝晚 8h，网关验签必失败
         const payUrl = sdk.pageExec("alipay.trade.page.pay", {
           method: "GET",
+          timestamp: getBeijingTimestamp(),
           // notifyUrl/returnUrl 必须放顶层（公共参数），不放 bizContent
           notifyUrl: `${baseUrl}/api/orders/${params.orderId}/paid`,
           returnUrl: `${baseUrl}/orders/${params.orderId}`,
