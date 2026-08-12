@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { fenToYuan } from "@/shared/utils/money";
 
 // ── 类型 ──
@@ -41,10 +42,12 @@ export function CartItemRow({
     <div className="flex gap-3 rounded-xl border border-gray-100 p-3">
       {/* 图片 */}
       <Link href={`/products/${item.productId}`} className="shrink-0">
-        <img
+        <Image
           src={item.image || placeholderImage}
           alt={item.productName}
-          className="h-20 w-20 rounded-lg object-cover bg-gray-50"
+          width={80}
+          height={80}
+          className="rounded-lg object-cover bg-gray-50"
         />
       </Link>
 

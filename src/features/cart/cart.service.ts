@@ -158,9 +158,3 @@ export async function removeFromCart(
     where: { userId, productId },
   });
 }
-
-// ── 清空购物车（下单后调用） ──
-
-export async function clearCart(userId: string): Promise<void> {
-  await prisma.cartItem.deleteMany({ where: { userId } });
-}

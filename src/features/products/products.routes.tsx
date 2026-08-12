@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
   ProductGrid,
@@ -224,10 +225,12 @@ export function ProductDetailPage({ id }: { id: string }) {
     <main className="mx-auto min-h-screen max-w-lg bg-white pb-24">
       {/* 图片轮播 */}
       <div className="relative aspect-square bg-gray-50">
-        <img
+        <Image
           src={images[selectedImage] || placeholderImage}
           alt={product.name}
-          className="h-full w-full object-cover"
+          fill
+          sizes="(max-width: 640px) 100vw, 50vw"
+          className="object-cover"
         />
         {images.length > 1 && (
           <div className="absolute bottom-3 left-0 right-0 flex justify-center gap-1.5">

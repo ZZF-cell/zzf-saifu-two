@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { fenToYuan } from "@/shared/utils/money";
 
 // ── 类型 ──
@@ -28,12 +29,13 @@ export function ProductCard({ product }: { product: ProductCardData }) {
       href={`/products/${product.id}`}
       className="group block overflow-hidden rounded-xl border border-border bg-white transition hover:shadow-md"
     >
-      <div className="aspect-square bg-gray-50">
-        <img
+      <div className="relative aspect-square bg-gray-50">
+        <Image
           src={product.images?.[0] || placeholderImage}
           alt={product.name}
-          className="h-full w-full object-cover"
-          loading="lazy"
+          fill
+          sizes="(max-width: 768px) 50vw, 33vw"
+          className="object-cover"
         />
       </div>
       <div className="p-3">
