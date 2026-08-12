@@ -12,9 +12,11 @@ export interface AuthUser {
 
 // JWT 公钥对端（注意：JWT 仅 base64 编码，载荷对任何人可见。phoneHash 已从载荷中移除。）
 
-function getJwtSecret(): Uint8Array {
-  const secret = process.env.JWT_SECRET || "dev-secret-change-in-production";
-  return new TextEncoder().encode(secret);
+function getJwtSecret(): Uint8Array | null {
+  const secret = process.env.JWT_SECRET;
+  // 生产环境缺失 JWT_SECRET → 返回 null（视作未登录，绝不用默认密钥放行伪造 Token）
+  if (!secret && process.env.NODE_ENV === "production") return null;
+  return new TextEncoder().encode(secret || "dev-secret-change-in-production");
 }
 
 /**
@@ -27,8 +29,11 @@ export async function getAuthUser(
   const token = req.cookies.get("access_token")?.value;
   if (!token) return null;
 
+  const secret = getJwtSecret();
+  if (!secret) return null; // 生产环境密钥缺失，视作未登录
+
   try {
-    const { payload } = await jwtVerify(token, getJwtSecret());
+    const { payload } = await jwtVerify(token, secret);
     return payload as unknown as AuthUser;
   } catch {
     return null;

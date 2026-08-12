@@ -23,10 +23,10 @@ async function main() {
 
   const buyer = await prisma.user.upsert({
     where: { phoneHash: hashPhone("13800138000") },
-    update: { passwordHash: hashPassword("123456") },
+    update: { passwordHash: await hashPassword("123456") },
     create: {
       phoneHash: hashPhone("13800138000"),
-      passwordHash: hashPassword("123456"),
+      passwordHash: await hashPassword("123456"),
       role: "USER",
     },
   });

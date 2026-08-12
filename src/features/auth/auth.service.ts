@@ -14,14 +14,26 @@ import {
 } from "@/shared/utils/crypto";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import type { AuthUser } from "@/shared/auth/middleware";
+import { sendSms } from "@/shared/adapters/sms.adapter";
+import { captureMessage } from "@sentry/nextjs";
 
 // ── 配置 ──
 
+// 生产环境 JWT_SECRET 必须显式配置（默认密钥可被伪造 Token），fail-fast
+const jwtSecretStr = process.env.JWT_SECRET;
+if (!jwtSecretStr && process.env.NODE_ENV === "production") {
+  throw new Error("JWT_SECRET 未配置：生产环境禁止使用默认密钥");
+}
 const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || "dev-secret-change-in-production",
+  jwtSecretStr || "dev-secret-change-in-production",
 );
 const ACCESS_TTL = "15m";
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 天
+
+// 爆破防护阈值
+const MAX_CODE_ATTEMPTS = 5; // 验证码错误次数上限，超过即销毁验证码
+const MAX_LOGIN_ATTEMPTS = 5; // 密码登录失败上限，达到后锁定账号
+const LOGIN_LOCK_MS = 15 * 60 * 1000; // 密码锁定 15 分钟
 
 // ── 短信验证码（DB 存储，Serverless 多实例共享）──
 
@@ -33,14 +45,34 @@ async function verifyAndConsumeCode(
   phone: string,
   code: string,
 ): Promise<boolean> {
-  // 原子删除：只有未消费且未过期的验证码才会被删除，deleted.count 唯一确定是否消费成功
-  const result = await prisma.verificationCode.deleteMany({
+  const phoneHash = hashPhone(phone);
+  // 定位该号码当前有效验证码（同号只保留一个，最新一条生效）
+  const record = await prisma.verificationCode.findFirst({
     where: {
-      phone,
-      code,
+      phoneHash,
       used: false,
       expiresAt: { gt: new Date() },
     },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!record) return false;
+
+  // 验证码错误 → 尝试计数；达到上限立即销毁（杜绝 6 位验证码在线爆破）
+  if (record.code !== code) {
+    if (record.attempts + 1 >= MAX_CODE_ATTEMPTS) {
+      await prisma.verificationCode.delete({ where: { id: record.id } });
+    } else {
+      await prisma.verificationCode.update({
+        where: { id: record.id },
+        data: { attempts: { increment: 1 } },
+      });
+    }
+    return false;
+  }
+
+  // 正确 → 原子消费（deleteMany 条件包含 used:false，并发下只消费一次）
+  const result = await prisma.verificationCode.deleteMany({
+    where: { id: record.id, used: false },
   });
   return result.count > 0;
 }
@@ -112,10 +144,11 @@ export interface AuthTokens {
 
 /** 发送短信验证码 */
 export async function sendVerificationCode(phone: string): Promise<void> {
+  const phoneHash = hashPhone(phone);
   // 频率限制：60 秒内同号码不可重复发送
   const recent = await prisma.verificationCode.findFirst({
     where: {
-      phone,
+      phoneHash,
       createdAt: { gt: new Date(Date.now() - 60 * 1000) },
     },
   });
@@ -128,19 +161,37 @@ export async function sendVerificationCode(phone: string): Promise<void> {
   // 在同一事务中：清旧码 + 写新码，保证原子性
   await prisma.$transaction(async (tx) => {
     await tx.verificationCode.deleteMany({
-      where: { phone, used: false },
+      where: { phoneHash, used: false },
     });
     await tx.verificationCode.create({
       data: {
-        phone,
+        phoneHash,
         code,
         expiresAt: new Date(Date.now() + 5 * 60 * 1000),
       },
     });
   });
 
-  if (process.env.NODE_ENV !== "production") {
-    console.log(`[SMS] ${phone}: ${code}`);
+  // 接线短信适配器（阿里云 SDK 集成为下一模块）：
+  // - 开发环境未配置密钥 → dev-fallback，验证码仅终端日志
+  // - 生产环境未配置密钥/未接入 SDK → 验证码实际未送达，上报告警
+  const smsResult = await sendSms(phone, code);
+  const actuallySent =
+    smsResult.success &&
+    smsResult.messageId !== "dev-fallback" &&
+    smsResult.messageId !== "placeholder";
+  if (!actuallySent && process.env.NODE_ENV === "production") {
+    console.error(
+      `[SMS] 生产环境验证码未实际送达: ${phone} (${smsResult.messageId || smsResult.error || "未知错误"}) — 请完成短信模块集成`,
+    );
+    try {
+      captureMessage(
+        `[SMS] 验证码未实际送达 phone=${phone} msg=${smsResult.messageId || "error"}`,
+        { level: "warning" },
+      );
+    } catch {
+      // Sentry 未初始化时静默（console.error 已兜底）
+    }
   }
 }
 
@@ -193,7 +244,7 @@ export async function registerWithPassword(
     );
   }
 
-  const passwordHash = hashPassword(password);
+  const passwordHash = await hashPassword(password);
 
   if (existing) {
     // 已有短信登录用户 → 补设密码
@@ -224,7 +275,7 @@ export async function registerWithPassword(
   }
 }
 
-/** 密码登录 */
+/** 密码登录（爆破防护：5 次失败锁定 15 分钟） */
 export async function loginWithPassword(
   phone: string,
   password: string,
@@ -239,8 +290,40 @@ export async function loginWithPassword(
     );
   }
 
-  if (!verifyPassword(password, user.passwordHash)) {
+  // 锁定检查：锁定期间统一 INVALID_CREDENTIALS（不泄露账号状态）
+  if (user.lockUntil && user.lockUntil > new Date()) {
+    throw new AppError(
+      ERROR_CODES.INVALID_CREDENTIALS,
+      "尝试次数过多，账号已锁定 15 分钟，请稍后再试",
+    );
+  }
+
+  const passwordOk = await verifyPassword(password, user.passwordHash);
+  if (!passwordOk) {
+    // 失败计数 + 达到上限锁定（count 由数据库原子递增，多实例并发安全）
+    const failed = (user.failedLoginAttempts ?? 0) + 1;
+    const lockUntil =
+      failed >= MAX_LOGIN_ATTEMPTS
+        ? new Date(Date.now() + LOGIN_LOCK_MS)
+        : null;
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { failedLoginAttempts: failed, lockUntil },
+    });
     throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "密码错误");
+  }
+
+  // 登录成功 → 重置失败计数/锁定；旧 SHA-256 密码顺带升级为 scrypt
+  if (user.failedLoginAttempts || user.lockUntil || !user.passwordHash.startsWith("scrypt.")) {
+    const data: {
+      failedLoginAttempts: number;
+      lockUntil: null;
+      passwordHash?: string;
+    } = { failedLoginAttempts: 0, lockUntil: null };
+    if (!user.passwordHash.startsWith("scrypt.")) {
+      data.passwordHash = await hashPassword(password);
+    }
+    await prisma.user.update({ where: { id: user.id }, data });
   }
 
   return issueTokens(user);
@@ -251,7 +334,7 @@ export async function setPassword(
   userId: string,
   password: string,
 ): Promise<void> {
-  const passwordHash = hashPassword(password);
+  const passwordHash = await hashPassword(password);
   await prisma.user.update({
     where: { id: userId },
     data: { passwordHash },
