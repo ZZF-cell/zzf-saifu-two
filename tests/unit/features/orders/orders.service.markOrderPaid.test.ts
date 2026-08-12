@@ -45,7 +45,25 @@ beforeEach(() => {
 // ── markOrderPaid：金额核验 + 幂等标记 ──
 
 describe("markOrderPaid — 支付回调幂等处理", () => {
-  it("PENDING 且金额一致 → 标记 PAID，updateMany 命中 PENDING + 记录 outTradeNo/paidAt", async () => {
+  it("PENDING 且金额一致 → 标记 PAID，updateMany 命中 PENDING + 记录 outTradeNo/alipayTradeNo/paidAt", async () => {
+    tx.order.findUnique.mockResolvedValue({ total: 29900 });
+    tx.order.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await markOrderPaid("order-1", "order-1", 29900, "202608122200000000001");
+
+    expect(result).toEqual({ success: true, conflict: false });
+    expect(tx.order.updateMany).toHaveBeenCalledWith({
+      where: { id: "order-1", status: "PENDING" },
+      data: {
+        status: "PAID",
+        outTradeNo: "order-1",
+        alipayTradeNo: "202608122200000000001",
+        paidAt: expect.any(Date),
+      },
+    });
+  });
+
+  it("回调未携带 trade_no → alipayTradeNo 落库为 null", async () => {
     tx.order.findUnique.mockResolvedValue({ total: 29900 });
     tx.order.updateMany.mockResolvedValue({ count: 1 });
 
@@ -57,6 +75,7 @@ describe("markOrderPaid — 支付回调幂等处理", () => {
       data: {
         status: "PAID",
         outTradeNo: "order-1",
+        alipayTradeNo: null,
         paidAt: expect.any(Date),
       },
     });

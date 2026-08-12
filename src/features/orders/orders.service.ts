@@ -13,6 +13,7 @@ import {
 import type { OrderStatus } from "./orders.state-machine";
 import { encrypt } from "@/shared/utils/crypto";
 import { paymentService } from "@/features/payment";
+import { captureMessage } from "@sentry/nextjs";
 
 // ── 类型 ──
 
@@ -81,10 +82,20 @@ export function calculateOrderItems(
 // ── 序列化配送地址 ──
 
 function serializeAddress(addr: CreateOrderInput["shippingAddress"]): string {
-  // AES-256-GCM 加密配送地址
-  // ENCRYPTION_KEYS 未配置时回退到 JSON 序列化（开发环境）
+  // AES-256-GCM 加密配送地址（README 隐私承诺）
+  // ENCRYPTION_KEYS 未配置时仅开发环境允许明文（带告警）；
+  // 生产环境 fail-fast，绝不静默明文落库
   const json = JSON.stringify(addr);
-  if (!process.env.ENCRYPTION_KEYS) return json;
+  if (!process.env.ENCRYPTION_KEYS) {
+    if (process.env.NODE_ENV === "production") {
+      throw new AppError(
+        ERROR_CODES.INTERNAL_ERROR,
+        "服务器未配置 ENCRYPTION_KEYS，无法加密配送地址",
+      );
+    }
+    console.warn("[orders] ENCRYPTION_KEYS 未配置，配送地址明文存储（仅限开发环境）");
+    return json;
+  }
   return encrypt(json);
 }
 
@@ -191,8 +202,11 @@ export async function createOrder(
       include: { items: true },
     });
 
-    // Step 4: 清空购物车
-    await tx.cartItem.deleteMany({ where: { userId } });
+    // Step 4: 清空购物车（仅删除本次下单的商品，保留部分结算时未购买的商品）
+    const purchasedProductIds = calculatedItems.map((ci) => ci.productId);
+    await tx.cartItem.deleteMany({
+      where: { userId, productId: { in: purchasedProductIds } },
+    });
 
     return order;
   });
@@ -233,14 +247,19 @@ export async function cancelOrder(
 
   const currentStatus = order.status as OrderStatus;
   if (!isCancellable(currentStatus)) {
-    throw new AppError(ERROR_CODES.ORDER_STATUS_INVALID, `订单状态「${currentStatus}」不允许取消`);
+    throw new AppError(
+      ERROR_CODES.ORDER_STATUS_INVALID,
+      currentStatus === ORDER_STATUS.PAID
+        ? "已支付订单不能直接取消，请使用「申请退款」"
+        : `订单状态「${currentStatus}」不允许取消（仅未支付的 PENDING 订单可取消）`,
+    );
   }
 
-  // PAID 订单取消 → 同时发起退款
-  const targetStatus =
-    currentStatus === ORDER_STATUS.PAID ? ORDER_STATUS.REFUNDED : ORDER_STATUS.CANCELLED;
-  const refundedAt = currentStatus === ORDER_STATUS.PAID ? new Date() : null;
-
+  // 仅 PENDING 可取消：回补库存/回减销量 + 置 CANCELLED。
+  // 状态守卫（where 带 status=PENDING）：与支付宝支付回调并发时，
+  // 若回调已先将订单置为 PAID，updateMany 命中 0 行 → 抛错整体回滚，
+  // 库存恢复一并撤销，绝不把已支付订单覆写成 CANCELLED（防资损）。
+  // 反向竞态（本事务先提交 CANCELLED，回调后到）→ 回调走 conflict 分支告警需人工退款。
   await prisma.$transaction(async (tx) => {
     // 恢复库存
     for (const item of order.items) {
@@ -254,14 +273,20 @@ export async function cancelOrder(
       });
     }
 
-    await tx.order.update({
-      where: { id: orderId },
+    const updated = await tx.order.updateMany({
+      where: { id: orderId, status: ORDER_STATUS.PENDING },
       data: {
-        status: targetStatus,
+        status: ORDER_STATUS.CANCELLED,
         cancelledAt: new Date(),
-        refundedAt,
       },
     });
+
+    if (updated.count === 0) {
+      throw new AppError(
+        ERROR_CODES.ORDER_STATUS_INVALID,
+        "订单状态已变更（可能已支付），无法取消",
+      );
+    }
   });
 }
 
@@ -281,13 +306,20 @@ export async function requestRefund(
 
   const currentStatus = order.status as OrderStatus;
   if (!isRefundable(currentStatus)) {
-    throw new AppError(ERROR_CODES.ORDER_STATUS_INVALID, `订单状态「${currentStatus}」不允许申请退款`);
+    throw new AppError(
+      ERROR_CODES.ORDER_STATUS_INVALID,
+      `仅已支付(PAID)订单可申请退款（当前状态「${currentStatus}」）`,
+    );
   }
 
-  await prisma.order.update({
-    where: { id: orderId },
+  // 状态守卫：与发货等并发时若状态已变更则拒绝，避免从非 PAID 状态进入 REFUND_REQUESTED
+  const updated = await prisma.order.updateMany({
+    where: { id: orderId, status: ORDER_STATUS.PAID },
     data: { status: ORDER_STATUS.REFUND_REQUESTED },
   });
+  if (updated.count === 0) {
+    throw new AppError(ERROR_CODES.ORDER_STATUS_INVALID, "订单状态已变更，无法申请退款");
+  }
 }
 
 // ── 支付回调（幂等） ──
@@ -300,11 +332,15 @@ export async function requestRefund(
  *
  * 仅 PENDING 状态的订单可更新为 PAID（updateMany 保证并发安全 + 幂等）
  * 回调金额（分）必传，必须与订单快照 total 一致，否则拒绝标记（防资损）
+ *
+ * @param outTradeNo    商户订单号（= 订单 id，回调幂等键）
+ * @param alipayTradeNo 支付宝真实交易流水号（trade_no），区别于商户 out_trade_no
  */
 export async function markOrderPaid(
   orderId: string,
   outTradeNo: string,
   paidAmountFen: number,
+  alipayTradeNo?: string | null,
 ): Promise<{ success: boolean; conflict: boolean }> {
   return prisma.$transaction(async (tx) => {
     // 金额核验：回调金额必须与下单时快照一致，否则视为异常拒绝标记
@@ -317,6 +353,7 @@ export async function markOrderPaid(
       console.error(
         `[orders] 支付回调金额不匹配: 订单=${orderId} 订单金额=${order.total} 回调金额=${paidAmountFen}`,
       );
+      alertPaymentConflict("金额不匹配", { orderId, paidAmountFen });
       return { success: false, conflict: true };
     }
 
@@ -328,6 +365,7 @@ export async function markOrderPaid(
       data: {
         status: ORDER_STATUS.PAID,
         outTradeNo,
+        alipayTradeNo: alipayTradeNo ?? null,
         paidAt: new Date(),
       },
     });
@@ -352,12 +390,32 @@ export async function markOrderPaid(
     }
 
     // CANCELLED / REFUNDED 等异常状态 — 支付成功但订单不可支付（需人工退款）
-    // README 监控章节将该场景列为告警（Sentry 集成后由 captureMessage 接管此日志）
+    // README 监控章节将该场景列为告警（CANCELLED_PAYMENT_ARRIVED）
     console.error(
       `[orders] 支付回调异常: 订单=${orderId} 状态=${current.status} 无法标记为 PAID（支付成功但订单已不可支付，需人工退款）`,
     );
+    alertPaymentConflict(`支付到达但订单已不可支付（状态=${current.status}）`, { orderId });
     return { success: false, conflict: true };
   });
+}
+
+/**
+ * 支付冲突告警 — 支付成功但订单无法标记 PAID 的场景（需人工退款）
+ * 接入 Sentry（配置 SENTRY_DSN 时上报 CANCELLED_PAYMENT_ARRIVED 错误码）
+ */
+function alertPaymentConflict(
+  reason: string,
+  context: { orderId: string; paidAmountFen?: number },
+): void {
+  if (!process.env.SENTRY_DSN) return;
+  try {
+    captureMessage(
+      `${ERROR_CODES.CANCELLED_PAYMENT_ARRIVED.code}: ${reason} orderId=${context.orderId}${context.paidAmountFen ? ` paidAmountFen=${context.paidAmountFen}` : ""}`,
+      { level: "error" },
+    );
+  } catch {
+    // Sentry 未初始化时静默忽略，日志已由 console.error 兜底
+  }
 }
 
 // ── 查询支付状态 ──

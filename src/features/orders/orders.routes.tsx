@@ -335,8 +335,9 @@ export function OrderDetailPage({ id }: { id: string }) {
 
   const timelineEvents = [
     { label: "下单", date: order.createdAt, active: true },
-    { label: "支付", date: order.paidAt, active: order.status !== "PENDING" },
-    { label: "发货", date: order.shippedAt, active: ["SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED"].includes(order.status) && !!order.shippedAt },
+    // 「支付」节点以实际支付时间为准 —— 未支付即取消的订单不得显示为已支付
+    { label: "支付", date: order.paidAt, active: !!order.paidAt },
+    { label: "发货", date: order.shippedAt, active: ["SHIPPED", "DELIVERED", "COMPLETED"].includes(order.status) && !!order.shippedAt },
     { label: "送达", date: order.deliveredAt, active: ["DELIVERED", "COMPLETED"].includes(order.status) },
     { label: "完成", date: order.completedAt || order.cancelledAt || order.refundedAt, active: ["COMPLETED", "CANCELLED", "REFUNDED"].includes(order.status) },
   ];

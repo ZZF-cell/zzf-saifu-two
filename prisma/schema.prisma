@@ -110,9 +110,10 @@ model Order {
   total           Int                      // 下单快照总价（分）
   status          String   @default("PENDING")
   // PENDING → PAID → SHIPPED → DELIVERED → COMPLETED
-  // PENDING → CANCELLED
-  // PAID    → REFUND_REQUESTED → REFUNDED
-  outTradeNo      String?  @unique         // 支付宝流水号（回调幂等）
+  // PENDING → CANCELLED（仅未支付订单可取消，见 README API 契约）
+  // PAID    → REFUND_REQUESTED → REFUNDED（管理员同意退款）
+  outTradeNo      String?  @unique         // 商户订单号（= 订单 id，回调幂等键）
+  alipayTradeNo   String?                  // 支付宝真实交易流水号（回调 trade_no）
   privacy         Json     @default("{}")  // 隐私选项
   shippingAddress String   // AES-256-GCM 加密后的配送地址
   paidAt          DateTime?
@@ -126,6 +127,8 @@ model Order {
 
   user  User        @relation(fields: [userId], references: [id])
   items OrderItem[]
+
+  @@index([userId, createdAt(sort: Desc)])
 }
 
 model OrderItem {
@@ -137,6 +140,8 @@ model OrderItem {
   productId   String? // 仅作参考外键，商品下架不影响历史订单
 
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
 }
 
 // ═══════════════════════════════════

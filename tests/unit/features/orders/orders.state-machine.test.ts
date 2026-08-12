@@ -1,7 +1,6 @@
 // 订单状态机单元测试 — 覆盖率目标 100%
 import { describe, it, expect } from "vitest";
 import {
-  ORDER_STATUS,
   canTransitionTo,
   isCancellable,
   isRefundable,
@@ -34,8 +33,8 @@ describe("canTransitionTo — 状态转换合法性", () => {
     expect(canTransitionTo("PAID", "SHIPPED")).toBe(true);
   });
 
-  it("PAID → CANCELLED（允许 — 已支付的订单仍可取消）", () => {
-    expect(canTransitionTo("PAID", "CANCELLED")).toBe(true);
+  it("PAID → CANCELLED（禁止 — 已支付订单需走退款流程，README 契约 cancel 仅 PENDING）", () => {
+    expect(canTransitionTo("PAID", "CANCELLED")).toBe(false);
   });
 
   it("PAID → REFUND_REQUESTED（允许）", () => {
@@ -50,32 +49,32 @@ describe("canTransitionTo — 状态转换合法性", () => {
     expect(canTransitionTo("SHIPPED", "DELIVERED")).toBe(true);
   });
 
-  it("SHIPPED → CANCELLED（允许）", () => {
-    expect(canTransitionTo("SHIPPED", "CANCELLED")).toBe(true);
+  it("SHIPPED → CANCELLED（禁止 — 货物已发出，不得直接取消回补库存）", () => {
+    expect(canTransitionTo("SHIPPED", "CANCELLED")).toBe(false);
   });
 
   it("DELIVERED → COMPLETED（允许）", () => {
     expect(canTransitionTo("DELIVERED", "COMPLETED")).toBe(true);
   });
 
-  it("DELIVERED → CANCELLED（允许 — 送达后仍可取消/销毁）", () => {
-    expect(canTransitionTo("DELIVERED", "CANCELLED")).toBe(true);
+  it("DELIVERED → CANCELLED（禁止）", () => {
+    expect(canTransitionTo("DELIVERED", "CANCELLED")).toBe(false);
   });
 
-  it("COMPLETED → CANCELLED（允许 — 完成后可销毁）", () => {
-    expect(canTransitionTo("COMPLETED", "CANCELLED")).toBe(true);
+  it("COMPLETED → CANCELLED（禁止 — 完成后仅可销毁，不改状态）", () => {
+    expect(canTransitionTo("COMPLETED", "CANCELLED")).toBe(false);
   });
 
   it("REFUND_REQUESTED → REFUNDED（允许）", () => {
     expect(canTransitionTo("REFUND_REQUESTED", "REFUNDED")).toBe(true);
   });
 
-  it("REFUND_REQUESTED → CANCELLED（允许）", () => {
-    expect(canTransitionTo("REFUND_REQUESTED", "CANCELLED")).toBe(true);
+  it("REFUND_REQUESTED → CANCELLED（禁止）", () => {
+    expect(canTransitionTo("REFUND_REQUESTED", "CANCELLED")).toBe(false);
   });
 
-  it("REFUNDED → CANCELLED（允许 — 退款后可销毁）", () => {
-    expect(canTransitionTo("REFUNDED", "CANCELLED")).toBe(true);
+  it("REFUNDED → CANCELLED（禁止 — 退款完成后仅可销毁）", () => {
+    expect(canTransitionTo("REFUNDED", "CANCELLED")).toBe(false);
   });
 
   // 终态不可再转换
@@ -93,14 +92,14 @@ describe("canTransitionTo — 状态转换合法性", () => {
 // ── isCancellable ──
 
 describe("isCancellable — 是否可取消", () => {
-  it("PENDING / PAID / SHIPPED / DELIVERED / COMPLETED 可取消", () => {
+  it("仅 PENDING 可取消（README 契约 cancel 仅 PENDING）", () => {
     expect(isCancellable("PENDING")).toBe(true);
-    expect(isCancellable("PAID")).toBe(true);
-    expect(isCancellable("SHIPPED")).toBe(true);
-    expect(isCancellable("DELIVERED")).toBe(true);
-    expect(isCancellable("COMPLETED")).toBe(true);
-    expect(isCancellable("REFUND_REQUESTED")).toBe(true);
-    expect(isCancellable("REFUNDED")).toBe(true);
+    expect(isCancellable("PAID")).toBe(false);
+    expect(isCancellable("SHIPPED")).toBe(false);
+    expect(isCancellable("DELIVERED")).toBe(false);
+    expect(isCancellable("COMPLETED")).toBe(false);
+    expect(isCancellable("REFUND_REQUESTED")).toBe(false);
+    expect(isCancellable("REFUNDED")).toBe(false);
   });
 
   it("CANCELLED 不可取消（已取消）", () => {
@@ -111,10 +110,10 @@ describe("isCancellable — 是否可取消", () => {
 // ── isRefundable ──
 
 describe("isRefundable — 是否可申请退款", () => {
-  it("PAID / SHIPPED / DELIVERED 可退款", () => {
+  it("仅 PAID 可退款（README 契约 refund 仅 PAID）", () => {
     expect(isRefundable("PAID")).toBe(true);
-    expect(isRefundable("SHIPPED")).toBe(true);
-    expect(isRefundable("DELIVERED")).toBe(true);
+    expect(isRefundable("SHIPPED")).toBe(false);
+    expect(isRefundable("DELIVERED")).toBe(false);
   });
 
   it("PENDING / CANCELLED / COMPLETED / REFUNDED 不可退款", () => {

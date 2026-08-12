@@ -211,6 +211,8 @@ export async function paidCallback(
       );
       return new NextResponse("success", { status: 200 });
     }
+    // 支付宝真实交易流水号（区别于商户 out_trade_no），回调必备字段之一
+    const alipayTradeNo = body.trade_no || body.tradeNo;
 
     // 终态通知的必需字段：total_amount（元）缺失则不做金额核验，
     // 一律不标记 PAID（防止绕过订单快照金额校验），返回 failure 让支付宝重试
@@ -223,7 +225,7 @@ export async function paidCallback(
     // 回调金额（元）→ 分，与订单快照校验（markOrderPaid 内强校验）
     const amountFen = yuanToFen(body.total_amount);
 
-    const result = await ordersService.markOrderPaid(id, outTradeNo, amountFen);
+    const result = await ordersService.markOrderPaid(id, outTradeNo, amountFen, alipayTradeNo);
     if (result.conflict) {
       // 金额不匹配或订单状态异常 — 停止重试，交由告警/人工处理
       console.error(

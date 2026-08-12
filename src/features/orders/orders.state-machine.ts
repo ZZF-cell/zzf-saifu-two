@@ -17,14 +17,17 @@ export type OrderStatus = (typeof ORDER_STATUS)[keyof typeof ORDER_STATUS];
 /**
  * 合法状态转换表
  *
+ * 契约来源 README API 表：取消订单仅 PENDING、申请退款仅 PAID。
+ * 已发货/已完成/已退款的订单不可直接「取消」——实物已出库，需走退款/售后流程。
+ * 销毁（destroy）不改变 status，仅擦除用户端隐私字段，故不在转换表中。
+ *
  * PENDING ──→ PAID ──→ SHIPPED ──→ DELIVERED ──→ COMPLETED
- *    │          │         │            │              │
- *    │          │         │            │              │
- *    └──→ CANCELLED ←────┴─────────┴──────────────┘
- *               ↑
- *    REFUND_REQUESTED ←── PAID（用户申请退款）
- *         │
- *         └──→ REFUNDED（管理员同意退款）
+ *    │
+ *    └──→ CANCELLED（仅 PENDING 可取消）
+ *
+ * REFUND_REQUESTED ←── PAID（用户申请退款）
+ *    │
+ *    └──→ REFUNDED（管理员同意退款）
  */
 const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   [ORDER_STATUS.PENDING]: [
@@ -33,46 +36,30 @@ const ALLOWED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   ],
   [ORDER_STATUS.PAID]: [
     ORDER_STATUS.SHIPPED,
-    ORDER_STATUS.CANCELLED,
     ORDER_STATUS.REFUND_REQUESTED,
   ],
   [ORDER_STATUS.SHIPPED]: [
     ORDER_STATUS.DELIVERED,
-    ORDER_STATUS.CANCELLED,
   ],
   [ORDER_STATUS.DELIVERED]: [
     ORDER_STATUS.COMPLETED,
-    ORDER_STATUS.CANCELLED,
   ],
-  [ORDER_STATUS.COMPLETED]: [
-    ORDER_STATUS.CANCELLED, // 完成后仍可销毁
-  ],
+  [ORDER_STATUS.COMPLETED]: [], // 终态（销毁不改变状态）
   [ORDER_STATUS.CANCELLED]: [], // 终态
   [ORDER_STATUS.REFUND_REQUESTED]: [
     ORDER_STATUS.REFUNDED,
-    ORDER_STATUS.CANCELLED,
   ],
-  [ORDER_STATUS.REFUNDED]: [
-    ORDER_STATUS.CANCELLED, // 退款完成后仍可销毁
-  ],
+  [ORDER_STATUS.REFUNDED]: [], // 终态（销毁不改变状态）
 };
 
-/** 允许取消的状态（用户或系统发起） */
+/** 允许取消的状态（用户或系统发起）— 仅 PENDING，实物未出库，可安全回补库存 */
 const CANCELLABLE_STATUSES: OrderStatus[] = [
   ORDER_STATUS.PENDING,
-  ORDER_STATUS.PAID,
-  ORDER_STATUS.SHIPPED,
-  ORDER_STATUS.DELIVERED,
-  ORDER_STATUS.COMPLETED,
-  ORDER_STATUS.REFUND_REQUESTED,
-  ORDER_STATUS.REFUNDED,
 ];
 
-/** 允许申请退款的状态 */
+/** 允许申请退款的状态 — 仅 PAID（README API 契约） */
 export const REFUNDABLE_STATUSES: OrderStatus[] = [
   ORDER_STATUS.PAID,
-  ORDER_STATUS.SHIPPED,
-  ORDER_STATUS.DELIVERED,
 ];
 
 /** 允许支付回调更新为 PAID 的状态（仅 PENDING） */
