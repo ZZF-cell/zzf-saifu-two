@@ -55,7 +55,7 @@ npm run dev                       # 启动开发服务器 → http://localhost:3
 
 | 角色 | 手机号 | 密码 | 权限 |
 |------|--------|------|------|
-| 管理员 | 13900000000 | — | 管理后台全部功能（品牌审核/商品质检/订单管理/用户管理/数据看板） |
+| 管理员 | 13900000000 | — | 管理后台全部功能（品牌审核/商品质检/订单管理/用户管理/邀请码管理/数据看板） |
 | 普通用户 | 13800138000 | 123456 | 浏览商品、购物车、下单、支付、退款、销毁订单 |
 | 品牌方 | 13888888888 | — | 品牌后台（提交商品/查看订单/品牌资料/数据看板） |
 
@@ -84,7 +84,7 @@ npx prisma db seed                 # 重新填充种子数据
 
 ### Mock 数据策略
 
-- **开发环境**：使用 `prisma/seed.ts` 生成的种子数据（含三个角色测试账号 + 示例商品）
+- **开发环境**：使用 `prisma/seed.ts` 生成的种子数据（含三个角色测试账号 + 示例商品 + 种子邀请码 `INVITE-BRAND-101/102`，可直接用于入驻演示）
 - **短信 Mock**：未配置阿里云短信时，验证码输出到终端日志（`grep "\[SMS\]"` 获取）
 - **支付 Mock**：使用支付宝沙箱环境，测试用买家账号付款不会产生真实资金流转
 - **Inngest 本地**：`npx inngest-cli dev` 提供完整的本地函数执行环境，无需连接 Inngest Cloud
@@ -125,12 +125,14 @@ npx prisma db seed                 # 重新填充种子数据
 | **管理后台** | ✅ 已完成 | 数据看板、品牌审核、商品质检、订单管理（发货/送达/完成/退款）、用户管理、质检模板管理 | `features/admin/`；所有状态变更用 `updateMany` 状态守卫（防并发重复操作），与审计日志在同一 `$transaction`（审计失败整体回滚，不留「状态已变但无审计」的账）；重复审核返回 409 区分「不存在」404 |
 | **品牌方后台** | ✅ 已完成 | 品牌概览、提交新商品、商品列表、订单查看、品牌资料 | `features/brand/`；品牌订单/销售额只聚合本品牌商品行（`OrderItem.price×qty`），混合品牌订单不整单全额重复计入；品牌无商品时直接返回零统计，绝不查询全平台数据（防跨租户泄漏） |
 | **订单超时自动取消** | ✅ 已完成 | 下单 30 分钟未支付自动取消并回补库存 | `inngest/functions/order-timeout-cancel.ts`：`order/created` 事件 → `step.sleep(30min)` → `cancelExpiredOrder`（**updateMany 状态守卫先于回补库存**，防并发双重回补）；下单时用 `next/server` 的 `after()` 保证 serverless 中事件投递完成 |
-| **品牌入驻** | ⏳ 待开发 | 管理员生成邀请码 → 品牌方激活 → 提交资料 → 审核 | 新增 `features/invite/` 模块；邀请码逻辑独立，不侵入现有 auth 模块 |
+| **品牌入驻** | ✅ 已完成 | 管理员生成邀请码 → 品牌方激活 → 提交资料 → 审核 | `features/invite/`：激活=单事务原子消耗邀请码（`updateMany` 状态守卫含过期判断）+ 创建 PENDING 品牌；管理员审核通过时同事务将负责人升级为 BRAND 角色（品牌已过但角色未升是笔错账）；邀请码列表 EXPIRED 由 `expiresAt` 即时推导不落库 |
 | **OSS 图片上传** | ⏳ 待开发 | 商品图片上传至阿里云 OSS | `shared/ui/Image` 组件需支持 OSS URL + base64 双源；`shared/adapters/oss.adapter.ts` 基于适配器模式，现有图片逻辑可平滑切换 |
 | **微信支付** | ⏳ 待开发 | 接入微信支付 SDK | `shared/adapters/payment.adapter.ts` 定义 `PaymentAdapter` 接口，微信支付实现同一接口；回调幂等逻辑直接复用 `payment.callback.ts` 的 `updateMany` 模式 |
 | **实名认证** | ⏳ 待开发 | 对接实名认证服务 | 新增 `shared/adapters/realname.adapter.ts`；用户表增加 `realNameVerified` 字段，不影响现有登录流程 |
 
 > **技术债预警原则**：每个二期功能的 `features/` 模块是独立的，不跨模块修改，只通过现有 Public API 或新增 Adapter 扩展。如果某个功能需要修改现有模块的内部实现，说明边界设计需要调整。
+
+> **迁移提醒（品牌入驻）**：本版本新增 `InviteCode` 表，迁移 SQL 已提交（`prisma/migrations/20260812155959_add_invite_code_model/`）。已有数据库（含 Neon 生产库）部署前需执行 `npx prisma migrate dev` 应用迁移；全新数据库可直接 `npx prisma db push` 建表后 `npx prisma db seed` 获得种子邀请码。
 
 ## 目录结构
 
@@ -195,6 +197,12 @@ src/
 │   │   ├── brand.queries.ts        #   品牌概览（跨租户防泄漏）+ 归属校验
 │   │   └── brand.routes.tsx        #   品牌后台页面
 │   │
+│   ├── invite/                      # 品牌入驻激活模块
+│   │   ├── index.ts
+│   │   ├── invite.routes.tsx        #   入驻激活页（/invite：邀请码+品牌资料）
+│   │   ├── invite.api.ts            #   POST /api/invite/activate
+│   │   └── invite.service.ts        #   原子消耗邀请码 + 创建 PENDING 品牌
+│   │
 │   └── audit/                       # 审计模块（AuditLog 表访问，后台操作同事务写日志）
 │
 ├── shared/                          # 共享基础设施（所有模块可引用，禁引用 feature 内部文件）
@@ -256,6 +264,7 @@ features/orders/                   features/orders/
 | RefreshToken | userId, tokenHash, expiresAt | JWT Refresh Token Rotation | 存 SHA-256 Hash 而非原文——即使 DB 泄露也无法伪造 Token；定时清理过期记录 |
 | VerificationCode | phoneHash, code, expiresAt, **attempts** | 短信验证码（手机号哈希关联）| 不存明文手机号（同 User.phoneHash 规则）；`attempts` 验证码错误尝试计数，≥5 次删除记录（防爆破）；索引 `(phoneHash, createdAt)` 支持滑动窗口查询 |
 | Brand | name, status, inviteCode, ownerId | 品牌（归属用户 + 邀请码）| ownerId 指向 User，一个用户只能拥有一个品牌，防止品牌方多账号绕审核 |
+| InviteCode | code(unique), status, createdBy, usedBy, expiresAt | 品牌入驻邀请码 | `code` 为自然键（大写，剔除 0/O/1/I 混淆字符）；`EXPIRED` 为推导态（UNUSED + 过期）不落库，读取时即时推导；消耗用 `updateMany` 状态守卫（含过期判断）防并发重复激活；激活侧对无效码一律返回 400，防枚举探测码存在性 |
 | Product | brandId, category, status, images, specs, **version, stock** | 商品（version 乐观锁防超卖）| `version` 字段配合 `updateMany` 实现乐观锁；specs 用 JSONB 存储灵活扩展 |
 | CartItem | userId, productId, productName, price, qty | 购物车（唯一约束 userId+productId）| ⚠️ **资损关键点**：`productName` 和 `price` 为展示冗余，**下单时对最新价格进行实时校验并快照到 OrderItem**，不依赖于购物车缓存。商品调价后购物车中的旧价格仅作参考 |
 | Order | userId, total, status, privacy, shippingAddress, **outTradeNo** | 订单（outTradeNo 支付回调幂等）| `total` 为下单时快照的快照总价，不可后续修改；发货地址单独加密存储 |
@@ -404,6 +413,13 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | GET | `/api/admin/users` | 用户列表 |
 | GET | `/api/admin/audit-templates` | 质检模板列表 |
 | PUT | `/api/admin/audit-templates` | 更新质检模板 |
+| GET | `/api/admin/invite-codes` | 邀请码列表（分页，状态含推导态 EXPIRED） |
+| POST | `/api/admin/invite-codes` | 批量生成邀请码（INV-XXXX-XXXX，逐码审计留痕） |
+
+### 品牌入驻（激活）
+| 方法 | 路由 | 说明 |
+|------|------|------|
+| POST | `/api/invite/activate` | 激活邀请码创建品牌（需登录；单事务原子消耗，无效/已用/过期分别返回 400/409/410） |
 
 ### 品牌方（BRAND）
 | 方法 | 路由 | 说明 |
@@ -492,6 +508,8 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 
 > 路由保护由 `middleware.ts` 实现：`/admin/*` 要求 ADMIN 角色，`/brand/*` 要求登录且 BRAND 角色，API 层二次校验归属。
 
+> **品牌入驻流程**：游客/USER 在 `/invite` 用管理员发放的邀请码激活品牌（激活只创建 PENDING 品牌，不升级角色）→ 管理员在 `/admin` 审核 → **审核通过时**负责人才升级为 BRAND 角色。当前 access token 15min 内仍携带 USER 角色，需**重新登录**后才可进入 `/brand`。被拒绝的品牌不可再次提交入驻，需联系管理员重新发放邀请码。
+
 ## 部署
 
 ### Vercel（免费，全球 CDN）
@@ -555,8 +573,8 @@ npm start
      │  ~15 条   │     （Vitest + Docker 本地 PG）
      └───────────┘
   ┌─────────────────┐
-  │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证/管理/品牌服务层
-  │    ~103 条        │     （Vitest，mock Prisma 与 $transaction）
+  │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证/管理/品牌/邀请码服务层
+  │    ~117 条        │     （Vitest，mock Prisma 与 $transaction）
   └─────────────────┘
 ```
 

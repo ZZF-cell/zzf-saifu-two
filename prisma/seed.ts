@@ -49,6 +49,19 @@ async function main() {
     },
   });
 
+  // ── 预生成入驻邀请码（可重复执行；update:{} 只补缺，绝不复活已使用/已过期码） ──
+  const seedInviteCodes = [
+    { code: "INVITE-BRAND-101", expiresAt: null as Date | null },
+    { code: "INVITE-BRAND-102", expiresAt: null as Date | null },
+  ];
+  for (const ic of seedInviteCodes) {
+    await prisma.inviteCode.upsert({
+      where: { code: ic.code },
+      update: {}, // 幂等：创建即停，不回滚消耗状态
+      create: { code: ic.code, createdBy: admin.id, expiresAt: ic.expiresAt },
+    });
+  }
+
   // ── 示例商品（APPROVED 且库存充足，用于支付闭环） ──
   const products = [
     {
@@ -89,6 +102,7 @@ async function main() {
   console.log(`  用户:   13800138000 / 123456      id=${buyer.id}`);
   console.log(`  品牌方: 13888888888 (验证码登录)  id=${brandOwner.id}`);
   console.log(`  品牌:   ${brand.name}（${brand.inviteCode}）`);
+  console.log(`  入驻邀请码: ${seedInviteCodes.map((c) => c.code).join("、")}`);
   console.log(`  商品:   ${products.map((p) => p.name).join("、")}`);
 }
 

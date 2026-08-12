@@ -31,6 +31,7 @@ model User {
   orders         Order[]
   brand          Brand?           @relation("BrandOwner")
   refreshTokens  RefreshToken[]
+  inviteCodesCreated InviteCode[] @relation("InviteCreator")
 }
 
 // ═══════════════════════════════════
@@ -61,6 +62,22 @@ model Brand {
 
   owner    User       @relation("BrandOwner", fields: [ownerId], references: [id])
   products Product[]
+}
+
+// ═══════════════════════════════════
+// 品牌入驻邀请码（预生成，注册品牌时消耗）
+// ═══════════════════════════════════
+model InviteCode {
+  id        String   @id @default(cuid())
+  code      String   @unique          // 邀请码明文（统一大写），自然键（upsert 键）
+  status    String   @default("UNUSED") // UNUSED | USED（EXPIRED 由 expiresAt 读取时推导，不落库）
+  createdBy String
+  usedBy    String?                    // 使用用户 id（仅参考，无外键约束，参照 OrderItem.productId 模式）
+  createdAt DateTime @default(now())
+  usedAt    DateTime?
+  expiresAt DateTime?                  // 过期时间（null = 永不过期）
+
+  creator User @relation("InviteCreator", fields: [createdBy], references: [id])
 }
 
 // ═══════════════════════════════════

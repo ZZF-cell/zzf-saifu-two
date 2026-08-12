@@ -20,6 +20,16 @@ const auditTemplateSchema = z.object({
   checkPoints: z.array(z.string()).optional(),
 });
 
+const generateInviteSchema = z.object({
+  count: z.number().int().min(1, "数量至少为 1").max(100, "单次最多生成 100 个"),
+  expiresAt: z
+    .string()
+    .datetime({ message: "过期时间格式错误（需 ISO 时间字符串）" })
+    .nullable()
+    .optional()
+    .refine((v) => !v || new Date(v).getTime() > Date.now(), "过期时间需晚于当前时间"),
+});
+
 /**
  * 审核操作统一处理（品牌审核/商品质检共用）
  * 参数路由（[id]）无法复用 withValidation（其 handler 只收 (data, req)），
@@ -188,5 +198,32 @@ export const upsertAuditTemplate = withValidation(
     const admin = await requireRole(req, ["ADMIN"]);
     await adminService.upsertAuditTemplate(data, admin.userId);
     return NextResponse.json({ success: true });
+  },
+);
+
+// ── 邀请码管理 ──
+
+export async function getInviteCodes(req: Request) {
+  try {
+    await requireRole(req, ["ADMIN"]);
+    const url = new URL(req.url);
+    const { page, pageSize } = parsePagination(url);
+    const status = url.searchParams.get("status") || undefined;
+    const result = await adminQueries.getAdminInviteCodes({ page, pageSize, status });
+    return NextResponse.json(result);
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
+export const generateInviteCodes = withValidation(
+  generateInviteSchema,
+  async (data, req) => {
+    const admin = await requireRole(req, ["ADMIN"]);
+    const codes = await adminService.generateInviteCodes(
+      { count: data.count, expiresAt: data.expiresAt ? new Date(data.expiresAt) : null },
+      admin.userId,
+    );
+    return NextResponse.json({ success: true, codes });
   },
 );

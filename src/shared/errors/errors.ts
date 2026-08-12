@@ -23,6 +23,12 @@ export const ERROR_CODES = {
   // 商品 6xxx
   PRODUCT_ALREADY_REVIEWED: { status: 409, code: "PRODUCT_ALREADY_REVIEWED" },
 
+  // 邀请码 7xxx
+  INVITE_CODE_NOT_FOUND: { status: 404, code: "INVITE_CODE_NOT_FOUND" },
+  INVITE_CODE_INVALID: { status: 400, code: "INVITE_CODE_INVALID" },
+  INVITE_CODE_USED: { status: 409, code: "INVITE_CODE_USED" },
+  INVITE_CODE_EXPIRED: { status: 410, code: "INVITE_CODE_EXPIRED" },
+
   // 订单 3xxx
   ORDER_NOT_FOUND: { status: 404, code: "ORDER_NOT_FOUND" },
   ORDER_STATUS_INVALID: { status: 409, code: "ORDER_STATUS_INVALID" },

@@ -79,6 +79,17 @@ interface AuditTemplate {
   checkPoints: unknown;
 }
 
+interface AdminInviteCode {
+  id: string;
+  code: string;
+  status: string; // UNUSED | USED | EXPIRED
+  createdBy: string;
+  usedBy: string | null;
+  createdAt: string;
+  usedAt: string | null;
+  expiresAt: string | null;
+}
+
 const STATUS_LABEL: Record<string, string> = {
   PENDING: "待处理",
   APPROVED: "已通过",
@@ -90,6 +101,9 @@ const STATUS_LABEL: Record<string, string> = {
   CANCELLED: "已取消",
   REFUND_REQUESTED: "退款中",
   REFUNDED: "已退款",
+  UNUSED: "待使用",
+  USED: "已使用",
+  EXPIRED: "已过期",
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -496,9 +510,111 @@ function TemplatesTab() {
   );
 }
 
+function InviteCodesTab() {
+  const [codes, setCodes] = useState<AdminInviteCode[]>([]);
+  const [count, setCount] = useState(5);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState("");
+
+  const fetchCodes = useCallback(async () => {
+    try {
+      const data = await apiCall("GET", "/api/admin/invite-codes?pageSize=50");
+      setCodes(data.items || []);
+    } catch { /* 静默 */ }
+  }, []);
+
+  useEffect(() => { fetchCodes(); }, [fetchCodes]);
+
+  const handleGenerate = async () => {
+    setGenerating(true);
+    setError("");
+    try {
+      await apiCall("POST", "/api/admin/invite-codes", { count });
+      await fetchCodes();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "生成失败");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const fmtTime = (v: string | null) =>
+    v ? new Date(v).toLocaleString("zh-CN", { hour12: false }) : "—";
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl border border-gray-100 p-4">
+        <div className="flex items-end justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-gray-900">生成入驻邀请码</p>
+            <p className="mt-0.5 text-xs text-gray-400">格式 INV-XXXX-XXXX，发放给意向品牌方</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={count}
+              onChange={(e) => setCount(Math.max(1, Number(e.target.value) || 1))}
+              className="w-20 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+            />
+            <button
+              onClick={handleGenerate}
+              disabled={generating}
+              className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+            >
+              {generating ? "生成中…" : "生成"}
+            </button>
+          </div>
+        </div>
+        {error && <div className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
+      </div>
+
+      {codes.length === 0 ? (
+        <div className="py-12 text-center text-gray-400">暂无邀请码</div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-gray-100">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-gray-50 text-left text-xs text-gray-500">
+                <th className="px-3 py-2 font-medium">邀请码</th>
+                <th className="px-3 py-2 font-medium">状态</th>
+                <th className="px-3 py-2 font-medium">使用人</th>
+                <th className="px-3 py-2 font-medium">过期时间</th>
+                <th className="px-3 py-2 font-medium">使用时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              {codes.map((c) => (
+                <tr key={c.id} className="border-b border-gray-50 last:border-0">
+                  <td className="px-3 py-2 font-mono text-xs text-gray-900">{c.code}</td>
+                  <td className="px-3 py-2 text-xs">
+                    <StatusBadge status={c.status} />
+                  </td>
+                  <td className="max-w-[120px] truncate px-3 py-2 text-xs text-gray-400">
+                    {c.usedBy ? (
+                      <>
+                        {c.usedBy.slice(0, 12)}…
+                      </>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-xs text-gray-400">{fmtTime(c.expiresAt)}</td>
+                  <td className="px-3 py-2 text-xs text-gray-400">{fmtTime(c.usedAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── 主页面 ──
 
-type TabKey = "dashboard" | "brands" | "products" | "orders" | "users" | "templates";
+type TabKey = "dashboard" | "brands" | "products" | "orders" | "users" | "templates" | "invites";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "dashboard", label: "数据看板" },
@@ -507,6 +623,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "orders", label: "订单管理" },
   { key: "users", label: "用户管理" },
   { key: "templates", label: "质检模板" },
+  { key: "invites", label: "邀请码" },
 ];
 
 export function AdminDashboardPage() {
@@ -564,6 +681,7 @@ export function AdminDashboardPage() {
         {tab === "orders" && <OrdersTab />}
         {tab === "users" && <UsersTab />}
         {tab === "templates" && <TemplatesTab />}
+        {tab === "invites" && <InviteCodesTab />}
       </div>
     </main>
   );

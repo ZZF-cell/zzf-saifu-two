@@ -30,22 +30,32 @@ export async function reviewBrand(
   operatorId: string,
 ): Promise<void> {
   await prisma.$transaction(async (tx) => {
+    // 先取品牌以获 ownerId（审核通过需升级其角色为 BRAND）；不存在 → 404
+    const brand = await tx.brand.findUnique({
+      where: { id: brandId },
+      select: { ownerId: true },
+    });
+    if (!brand) {
+      throw new AppError(ERROR_CODES.BRAND_NOT_FOUND, "品牌不存在");
+    }
+
     // 仅 PENDING 品牌可审核（状态守卫，防重复审核）
     const updated = await tx.brand.updateMany({
       where: { id: brandId, status: "PENDING" },
       data: { status: decision },
     });
     if (updated.count === 0) {
-      // 区分「不存在」(404) 与「已审核」(409) —— 实体存在却返回 404 会误导调用方
-      const exists = await tx.brand.findUnique({
-        where: { id: brandId },
-        select: { id: true },
-      });
-      throw new AppError(
-        exists ? ERROR_CODES.BRAND_ALREADY_REVIEWED : ERROR_CODES.BRAND_NOT_FOUND,
-        exists ? "品牌已被审核" : "品牌不存在",
-      );
+      throw new AppError(ERROR_CODES.BRAND_ALREADY_REVIEWED, "品牌已被审核");
     }
+
+    // 审核通过 → 负责人升级 BRAND 角色（同事务：品牌已过但角色未升是笔错账）
+    if (decision === "APPROVED") {
+      await tx.user.update({
+        where: { id: brand.ownerId },
+        data: { role: "BRAND" },
+      });
+    }
+
     await writeAuditLog(tx, "Brand", brandId, `REVIEW_${decision}`, operatorId);
   });
 }
@@ -164,4 +174,59 @@ export async function upsertAuditTemplate(
     });
     await writeAuditLog(tx, "CategoryAuditTemplate", input.categoryId, "UPSERT_TEMPLATE", operatorId);
   });
+}
+
+// ── 邀请码管理 ──
+
+// 邀请码字符集：剔除易混淆的 0/O/1/I，余 32 字符（2^5）
+const INVITE_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+/** 生成 INV-XXXX-XXXX 格式邀请码（组内字符可重复） */
+function generateInviteCodeValue(): string {
+  const group = () => {
+    let s = "";
+    for (let i = 0; i < 4; i++) {
+      s += INVITE_CODE_ALPHABET[Math.floor(Math.random() * INVITE_CODE_ALPHABET.length)];
+    }
+    return s;
+  };
+  return `INV-${group()}-${group()}`;
+}
+
+export interface GenerateInviteInput {
+  count: number;
+  expiresAt?: Date | null;
+}
+
+/**
+ * 批量生成邀请码 — 同事务内逐码落库 + 逐码审计
+ * 唯一性：INV 码空间 32^4×32^4 ≈ 2^40，碰撞概率可忽略；内存 Set 兜底本次批内去重
+ * （InviteCode.code @unique 是最终兜底，极端碰撞时整事务回滚报错）
+ */
+export async function generateInviteCodes(
+  input: GenerateInviteInput,
+  operatorId: string,
+): Promise<string[]> {
+  const { count, expiresAt = null } = input;
+  const codes: string[] = [];
+  const seen = new Set<string>();
+  while (codes.length < count) {
+    const code = generateInviteCodeValue();
+    if (seen.has(code)) continue;
+    seen.add(code);
+    codes.push(code);
+  }
+
+  await prisma.$transaction(async (tx) => {
+    for (const code of codes) {
+      await tx.inviteCode.create({
+        data: { code, createdBy: operatorId, expiresAt },
+      });
+    }
+    for (const code of codes) {
+      await writeAuditLog(tx, "InviteCode", code, "INVITE_GENERATED", operatorId);
+    }
+  });
+
+  return codes;
 }

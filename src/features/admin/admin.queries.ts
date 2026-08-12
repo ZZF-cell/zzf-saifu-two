@@ -295,3 +295,83 @@ export async function getAuditTemplates(): Promise<AuditTemplate[]> {
     orderBy: { categoryId: "asc" },
   });
 }
+
+// ── 邀请码管理列表 ──
+
+export interface AdminInviteCodeRow {
+  id: string;
+  code: string;
+  status: string; // UNUSED | USED | EXPIRED（EXPIRED 为推导态，不落库）
+  createdBy: string;
+  usedBy: string | null;
+  createdAt: Date;
+  usedAt: Date | null;
+  expiresAt: Date | null;
+}
+
+export interface AdminInviteCodeListResult {
+  items: AdminInviteCodeRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+/** 推导行状态：USED > EXPIRED > UNUSED（EXPIRED 由 expiresAt 即时推导） */
+function deriveInviteStatus(status: string, expiresAt: Date | null, now: Date): string {
+  if (status === "USED") return "USED";
+  if (expiresAt && expiresAt.getTime() < now.getTime()) return "EXPIRED";
+  return "UNUSED";
+}
+
+export async function getAdminInviteCodes(params: {
+  page: number;
+  pageSize: number;
+  status?: string;
+}): Promise<AdminInviteCodeListResult> {
+  const { page, pageSize, status } = params;
+  const now = new Date();
+
+  // EXPIRED 是推导态：筛选时按「UNUSED 且 expiresAt < now」等价展开
+  const where: Prisma.InviteCodeWhereInput = {};
+  if (status === "USED") {
+    where.status = "USED";
+  } else if (status === "EXPIRED") {
+    where.status = "UNUSED";
+    where.expiresAt = { lt: now };
+  } else if (status === "UNUSED") {
+    where.status = "UNUSED";
+    where.OR = [{ expiresAt: null }, { expiresAt: { gte: now } }];
+  }
+
+  const [items, total] = await Promise.all([
+    prisma.inviteCode.findMany({
+      where,
+      select: {
+        id: true,
+        code: true,
+        status: true,
+        createdBy: true,
+        usedBy: true,
+        createdAt: true,
+        usedAt: true,
+        expiresAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.inviteCode.count({ where }),
+  ]);
+
+  return {
+    items: items.map((i) => ({
+      ...i,
+      status: deriveInviteStatus(i.status, i.expiresAt, now),
+    })),
+    total,
+    page,
+    pageSize,
+    totalPages: Math.ceil(total / pageSize),
+  };
+}
