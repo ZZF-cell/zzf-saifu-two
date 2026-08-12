@@ -5,15 +5,16 @@ import { useRouter } from "next/navigation";
 import { OrderCard, OrderStatusBadge, OrderTimeline, AddressForm } from "./orders.components";
 import type { OrderSummary, OrderDetail } from "./orders.queries";
 import { fenToYuan, multiplyFen } from "@/shared/utils/money";
+import { apiFetch } from "@/shared/api/client";
 
 // ── helpers ──
 
 async function apiCall(method: string, url: string, body?: Record<string, unknown>) {
-  const res = await fetch(url, {
+  // apiFetch：401 自动刷新 Access Token 并重试；Refresh 也失效才跳登录页
+  const res = await apiFetch(url, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
-    credentials: "include",
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.message || "请求失败");
@@ -39,6 +40,13 @@ export function CheckoutPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  // 下单后服务端重算金额与购物车显示不一致（商品调价）→ 提示用户后等待确认
+  const [priceChanged, setPriceChanged] = useState(false);
+  const [finalTotal, setFinalTotal] = useState(0);
+  const [pendingOrder, setPendingOrder] = useState<{
+    payUrl: string | null;
+    orderId: string;
+  } | null>(null);
   const [address, setAddress] = useState({
     name: "",
     phone: "",
@@ -50,17 +58,15 @@ export function CheckoutPage() {
   });
 
   useEffect(() => {
-    fetch("/api/cart", { credentials: "include" })
-      .then((res) => {
-        if (res.status === 401) { router.push("/login"); return null; }
-        return res.json();
-      })
+    // apiFetch 处理 401 自动刷新；Refresh 失效时自行跳登录页
+    apiFetch("/api/cart")
+      .then((res) => res.json())
       .then((data) => {
         if (data?.items) setCart(data);
       })
       .catch(() => setError("加载购物车失败"))
       .finally(() => setLoading(false));
-  }, [router]);
+  }, []);
 
   const handleSubmit = async () => {
     // 基本校验
@@ -75,6 +81,7 @@ export function CheckoutPage() {
 
     setSubmitting(true);
     setError("");
+    setPriceChanged(false);
     try {
       const order = await apiCall("POST", "/api/orders", {
         items: cart!.items.map((item) => ({
@@ -88,13 +95,16 @@ export function CheckoutPage() {
         },
       });
 
-      if (order.payUrl) {
-        // 跳转支付
-        window.location.href = order.payUrl;
-      } else {
-        // 无支付 URL，直接跳转订单页
-        router.push(`/orders/${order.orderId}`);
+      // 服务端按下单时点商品价格快照重算金额（订单快照权威）
+      // 与购物车展示金额不一致（可能被调价）→ 提示用户确认后继续，绝不静默改价
+      if (typeof order.total === "number" && order.total !== cart!.totalAmount) {
+        setFinalTotal(order.total);
+        setPendingOrder({ payUrl: order.payUrl, orderId: order.orderId });
+        setPriceChanged(true);
+        return;
       }
+
+      redirectToPay(order);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "下单失败";
       setError(msg);
@@ -104,6 +114,15 @@ export function CheckoutPage() {
       }
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  /** 跳转支付（有支付 URL 走支付宝，否则进订单详情） */
+  const redirectToPay = (order: { payUrl: string | null; orderId: string }) => {
+    if (order.payUrl) {
+      window.location.href = order.payUrl;
+    } else {
+      router.push(`/orders/${order.orderId}`);
     }
   };
 
@@ -185,13 +204,30 @@ export function CheckoutPage() {
           <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>
         )}
 
-        <button
-          onClick={handleSubmit}
-          disabled={submitting}
-          className="w-full rounded-lg bg-primary py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
-        >
-          {submitting ? "提交中..." : "提交订单"}
-        </button>
+        {priceChanged && pendingOrder ? (
+          // 下单时服务端按实时价重算，与购物车展示金额不一致（可能被调价）
+          // 订单已创建，金额以服务端快照为准 —— 明确提示后由用户确认继续支付
+          <div className="rounded-lg bg-yellow-50 px-3 py-3 text-sm text-yellow-700">
+            <p>
+              部分商品价格有调整，应付金额以{" "}
+              <b className="text-base">¥{fenToYuan(finalTotal)}</b> 为准
+            </p>
+            <button
+              onClick={() => redirectToPay(pendingOrder)}
+              className="mt-2 w-full rounded-lg bg-primary py-3 text-sm font-medium text-white transition hover:opacity-90"
+            >
+              继续支付 ¥{fenToYuan(finalTotal)}
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="w-full rounded-lg bg-primary py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+          >
+            {submitting ? "提交中..." : "提交订单"}
+          </button>
+        )}
       </div>
     </main>
   );
@@ -217,6 +253,16 @@ export function OrderListPage() {
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
+  // 退出登录 — 吊销 Refresh Token + 清除 Cookie
+  const handleLogout = async () => {
+    try {
+      await apiCall("POST", "/api/auth/logout");
+    } catch {
+      // 后端吊销失败也继续本地跳转（Cookie 随会话清理）
+    }
+    router.push("/login");
+  };
+
   if (loading) {
     return (
       <main className="mx-auto min-h-screen max-w-lg p-4">
@@ -231,8 +277,14 @@ export function OrderListPage() {
 
   return (
     <main className="mx-auto min-h-screen max-w-lg bg-white">
-      <div className="sticky top-0 z-10 border-b bg-white/90 backdrop-blur px-4 py-3">
+      <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white/90 backdrop-blur px-4 py-3">
         <h1 className="text-center text-base font-bold">我的订单</h1>
+        <button
+          onClick={handleLogout}
+          className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
+        >
+          退出登录
+        </button>
       </div>
 
       <div className="p-4">
@@ -300,15 +352,16 @@ export function OrderDetailPage({ id }: { id: string }) {
     setActing(true);
     setError("");
     try {
-      const res = await fetch(`/api/pay/${id}`, { credentials: "include" });
+      const res = await apiFetch(`/api/pay/${id}`);
       const data = await res.json().catch(() => null);
       if (res.ok && data?.payUrl) {
         window.location.href = data.payUrl;
         return;
       }
       setError(data?.message || "支付功能暂不可用");
-    } catch {
-      setError("发起支付失败");
+    } catch (err: unknown) {
+      // apiFetch 在 Refresh Token 失效时已跳转登录页并抛错，这里只提示其他异常
+      setError(err instanceof Error ? err.message : "发起支付失败");
     } finally {
       setActing(false);
     }

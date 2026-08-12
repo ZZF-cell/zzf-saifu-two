@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { CodeLoginForm, PasswordLoginForm } from "./auth.components";
 
@@ -17,13 +17,18 @@ async function apiCall(url: string, body: Record<string, unknown>) {
   return data;
 }
 
-export function LoginPage() {
+function LoginPageContent() {
   const [mode, setMode] = useState<"code" | "password">("code");
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // 401 自动刷新失败跳转登录时携带 ?redirect= 原页面；同样防 Open Redirect
+  const rawRedirect = searchParams.get("redirect") || "/";
+  const redirect =
+    rawRedirect.startsWith("/") && !rawRedirect.startsWith("//") ? rawRedirect : "/";
 
   const handleCodeLogin = async (phone: string, code: string) => {
     await apiCall("/api/auth/verify-code", { phone, code });
-    router.push("/");
+    router.push(redirect);
   };
 
   const handleSendCode = async (phone: string) => {
@@ -32,7 +37,7 @@ export function LoginPage() {
 
   const handlePasswordLogin = async (phone: string, password: string) => {
     await apiCall("/api/auth/login", { phone, password });
-    router.push("/");
+    router.push(redirect);
   };
 
   return (
@@ -74,6 +79,15 @@ export function LoginPage() {
         </p>
       </div>
     </main>
+  );
+}
+
+export function LoginPage() {
+  // useSearchParams 依赖 Suspense 边界（Next.js App Router 静态渲染要求）
+  return (
+    <Suspense fallback={null}>
+      <LoginPageContent />
+    </Suspense>
   );
 }
 

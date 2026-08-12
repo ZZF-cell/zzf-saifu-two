@@ -11,6 +11,7 @@ import {
 } from "./products.components";
 import type { ProductCardData } from "./products.components";
 import { fenToYuan } from "@/shared/utils/money";
+import { apiFetch } from "@/shared/api/client";
 
 // ── API helpers ──
 
@@ -35,9 +36,11 @@ export function HomePage() {
   const [category, setCategory] = useState<string | undefined>();
   const [sort, setSort] = useState({ sortBy: "createdAt", sortOrder: "desc" });
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   const fetchProducts = useCallback(async () => {
     setLoading(true);
+    setLoadError("");
     try {
       const params = new URLSearchParams();
       params.set("page", String(page));
@@ -48,11 +51,18 @@ export function HomePage() {
       if (category) params.set("category", category);
 
       const res = await fetch(`/api/products?${params.toString()}`);
-      const data: ProductListResponse = await res.json();
+      // 错误响应形如 { error, message }，与成功响应 ProductListResponse 并存
+      const data = (await res.json()) as ProductListResponse & { message?: string };
       if (res.ok) {
         setProducts(data.items);
         setTotalPages(data.totalPages);
+      } else {
+        // 接口返回错误（如 500）→ 保留旧列表并提示，避免整页白屏
+        setLoadError(data.message || "商品加载失败，请稍后重试");
       }
+    } catch {
+      // 网络异常/JSON 解析失败 → 不抛出未处理 rejection，提示后保留旧列表
+      setLoadError("网络异常，商品加载失败");
     } finally {
       setLoading(false);
     }
@@ -132,6 +142,10 @@ export function HomePage() {
                 className="aspect-[3/4] animate-pulse rounded-xl bg-gray-100"
               />
             ))}
+          </div>
+        ) : loadError && products.length === 0 ? (
+          <div className="py-20 text-center text-gray-400">
+            <p className="text-lg">{loadError}</p>
           </div>
         ) : (
           <ProductGrid products={products} />
@@ -281,11 +295,11 @@ export function ProductDetailPage({ id }: { id: string }) {
         <div className="mx-auto flex max-w-lg gap-3">
           <button
             onClick={() => {
-              fetch("/api/cart", {
+              // apiFetch：未登录/401 自动刷新 Token；Refresh 失效时自行跳登录页
+              apiFetch("/api/cart", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ productId: product.id, qty: 1 }),
-                credentials: "include",
               })
                 .then((res) => res.json())
                 .then((data) => {

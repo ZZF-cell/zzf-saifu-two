@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 function AgeGateContent() {
   const [confirmed, setConfirmed] = useState(false);
   const [showContent, setShowContent] = useState(false);
+  const [rejected, setRejected] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const rawRedirect = searchParams.get("redirect") || "/";
@@ -24,16 +25,27 @@ function AgeGateContent() {
   };
 
   const handleReject = () => {
-    setShowContent(false);
+    // 拒绝 → 直接进入硬性阻止态，绝不回到确认界面（防止「确认-拒绝-再确认」绕过）
+    setRejected(true);
     window.close();
-    // 如果 close 失败，显示无法离开的提示
-    setTimeout(() => setShowContent(true), 500);
+    // window.close() 仅对脚本打开的窗口生效；普通标签页会失败，此时停留在阻止页
   };
 
   return (
     <main className="age-gate-overlay fixed inset-0 z-50 flex items-center justify-center bg-primary/95 p-6">
       <div className="flex max-w-sm flex-col items-center text-center text-white">
-        {!showContent ? (
+        {rejected ? (
+          // 拒绝后的硬性阻止页：无任何继续入口
+          <div className="flex flex-col items-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/10 text-2xl">🚫</div>
+            <h1 className="mt-4 text-xl font-bold tracking-tight">无法访问</h1>
+            <p className="mt-3 text-sm leading-relaxed text-white/80">
+              本平台仅面向年满 18 周岁的成年人开放。
+              <br />
+              感谢您的理解。
+            </p>
+          </div>
+        ) : !showContent ? (
           // 第一步：确认年满 18 周岁
           <>
             <h1 className="text-2xl font-bold tracking-tight">年龄确认</h1>
