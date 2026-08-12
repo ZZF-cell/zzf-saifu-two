@@ -135,13 +135,14 @@ npx prisma db seed                 # 重新填充种子数据
 
 ```
 src/
-├── features/                        # 业务模块（按领域划分）
+├── middleware.ts                    # Edge Middleware（年龄验证门禁 + 路由权限守卫）
+├── features/                        # 业务模块（按领域划分，index.ts 为唯一 Public API）
 │   ├── auth/                        # 认证模块
-│   │   ├── index.ts                 #   Public API（只对外暴露这些）
-│   │   ├── auth.routes.tsx          #   登录/注册页面
-│   │   ├── auth.api.ts             #   Route Handlers
-│   │   ├── auth.service.ts         #   双 Token 签发/验证/Refresh Rotation
-│   │   ├── auth.queries.ts         #   用户查询
+│   │   ├── index.ts
+│   │   ├── auth.routes.tsx          #   登录/注册页面（支持 ?redirect= 回跳）
+│   │   ├── auth.api.ts              #   Route Handlers
+│   │   ├── auth.service.ts         #   双 Token 签发/验证/Refresh Rotation + 爆破防护 + 短信接线
+│   │   ├── auth.queries.ts         #   验证码/用户查询
 │   │   └── auth.components.tsx     #   登录表单、验证码输入框
 │   │
 │   ├── products/                    # 商品模块
@@ -162,7 +163,7 @@ src/
 │   │   ├── index.ts
 │   │   ├── orders.routes.tsx
 │   │   ├── orders.api.ts
-│   │   ├── orders.service.ts       #   领域服务（$transaction 业务流程）
+│   │   ├── orders.service.ts       #   领域服务（$transaction 业务流程 + 优惠分摊）
 │   │   ├── orders.queries.ts       #   订单列表/详情查询
 │   │   ├── orders.state-machine.ts #   纯函数状态流转规则
 │   │   └── orders.components.tsx
@@ -175,44 +176,47 @@ src/
 │   │
 │   ├── user/                        # 用户模块
 │   │   ├── index.ts
-│   │   ├── user.api.ts
-│   │   ├── user.service.ts
-│   │   └── user.components.tsx
+│   │   ├── user.api.ts              #   GET/PATCH /api/user/profile
+│   │   ├── user.service.ts          #   修改昵称
+│   │   └── user.queries.ts          #   个人信息 + 订单统计
 │   │
 │   └── audit/                       # 审计模块
-│       ├── index.ts
-│       └── audit.service.ts
+│       └── index.ts
 │
-├── shared/                          # 共享基础设施（所有模块可引用）
+├── shared/                          # 共享基础设施（所有模块可引用，禁引用 feature 内部文件）
+│   ├── api/
+│   │   ├── auth.ts                  #   服务端 authenticate（各模块 API 层复用）
+│   │   └── client.ts                #   前端 apiFetch（401 自动刷新 Access Token）
+│   ├── auth/
+│   │   └── middleware.ts           #   getAuthUser + 路由权限
 │   ├── db/
 │   │   └── client.ts               #   Prisma Client 单例
-│   ├── auth/
-│   │   └── middleware.ts           #   Edge Middleware（路由保护 + JWT 校验）
-│   ├── validation/
-│   │   └── schemas.ts              #   Zod schemas（全局共享）
 │   ├── errors/
 │   │   └── errors.ts               #   AppError 类 + 错误码枚举
-│   ├── ui/                          #   shadcn/ui 基础组件（只读，禁直接修改）
-│   │   └── README.md               #   记录所有对 shadcn 源码的修改
 │   ├── utils/
-│   │   ├── crypto.ts               #   AES-256-GCM 加密 + 手机号哈希
-│   │   ├── money.ts                #   金额处理（big.js 整数分）
+│   │   ├── crypto.ts               #   AES-256-GCM + scrypt 密码哈希 + 手机号哈希
+│   │   ├── money.ts                #   金额处理（整数分，避免浮点精度）
+│   │   ├── format.ts               #   展示格式化
 │   │   └── api.ts                  #   withValidation HOF + apiError 包装器
+│   ├── validation/
+│   │   └── schemas.ts              #   Zod schemas（全局共享）
 │   └── adapters/
 │       ├── sms.adapter.ts          #   阿里云短信（未配置回退日志）
 │       └── payment.adapter.ts      #   支付宝沙箱封装
 │
 ├── app/                             # Next.js App Router 入口
-│   ├── layout.tsx                   #   根布局（PWA Manifest + SW 注册）
-│   └── manifest.ts                  #   Web App Manifest
+│   ├── layout.tsx                   #   根布局（PWA Manifest）
+│   ├── manifest.ts                  #   Web App Manifest（图标 public/icons/）
+│   ├── page.tsx                     #   首页 = 商品列表
+│   ├── age-gate/                    #   年龄验证门禁（拒绝 → 硬性阻止页）
+│   ├── (auth)/                      #   登录/注册
+│   ├── cart/ checkout/ orders/ products/
+│   └── api/                         #   Route Handlers（薄转发层，逻辑在 features/）
+│       ├── auth/ ... orders/ cart/ user/ products/ pay/
+│       └── user/profile/            #   个人信息路由（GET/PATCH）
 │
-└── inngest/                         # Inngest 异步函数
-    ├── functions/
-    │   ├── send-sms.ts
-    │   ├── write-audit-log.ts
-    │   ├── notify-brand.ts
-    │   └── order-timeout-cancel.ts
-    └── client.ts
+└── inngest/
+    └── client.ts                    #   Inngest 客户端（异步函数按需接入）
 ```
 
 ## 模块通信规则
@@ -231,8 +235,9 @@ features/orders/                   features/orders/
 
 | 模型 | 关键字段 | 说明 | Trade-off 备注 |
 |------|---------|------|---------------|
-| User | phoneHash, passwordHash, role, ageVerified | 用户（角色: USER/BRAND/ADMIN）| 手机号不存明文，仅存 `pepper + SHA-256` 哈希；角色用枚举约束避免权限越界 |
+| User | phoneHash, passwordHash, role, ageVerified, **failedLoginAttempts, lockUntil** | 用户（角色: USER/BRAND/ADMIN）| 手机号不存明文，仅存 `pepper + SHA-256` 哈希；密码存 **scrypt 慢哈希**（格式 `scrypt.salt.hash`，旧 SHA-256 兼容并在登录成功时自动升级）；`failedLoginAttempts`/`lockUntil` 实现密码爆破防护（连续失败 ≥5 次锁定 15 分钟）；角色用枚举约束避免权限越界 |
 | RefreshToken | userId, tokenHash, expiresAt | JWT Refresh Token Rotation | 存 SHA-256 Hash 而非原文——即使 DB 泄露也无法伪造 Token；定时清理过期记录 |
+| VerificationCode | phoneHash, code, expiresAt, **attempts** | 短信验证码（手机号哈希关联）| 不存明文手机号（同 User.phoneHash 规则）；`attempts` 验证码错误尝试计数，≥5 次删除记录（防爆破）；索引 `(phoneHash, createdAt)` 支持滑动窗口查询 |
 | Brand | name, status, inviteCode, ownerId | 品牌（归属用户 + 邀请码）| ownerId 指向 User，一个用户只能拥有一个品牌，防止品牌方多账号绕审核 |
 | Product | brandId, category, status, images, specs, **version, stock** | 商品（version 乐观锁防超卖）| `version` 字段配合 `updateMany` 实现乐观锁；specs 用 JSONB 存储灵活扩展 |
 | CartItem | userId, productId, productName, price, qty | 购物车（唯一约束 userId+productId）| ⚠️ **资损关键点**：`productName` 和 `price` 为展示冗余，**下单时对最新价格进行实时校验并快照到 OrderItem**，不依赖于购物车缓存。商品调价后购物车中的旧价格仅作参考 |
@@ -291,14 +296,16 @@ const result = await prisma.order.updateMany({
 
 ```
 PENDING ──→ PAID ──→ SHIPPED ──→ DELIVERED ──→ COMPLETED
-   │          │         │            │              │
-   │          │         │            │              │
-   └──→ CANCELLED ←────┴─────────┴──────────────┘
-              ↑
-   REFUND_REQUESTED ←── PAID（用户申请退款）
-        │
-        └──→ REFUNDED（管理员同意退款）
+   │
+   └──→ CANCELLED（仅 PENDING 可取消；已发货/完成/退款的订单不可直接取消，
+                   实物已出库需走退款/售后流程）
+
+REFUND_REQUESTED ←── PAID（用户申请退款）
+   │
+   └──→ REFUNDED（管理员同意退款）
 ```
+
+> **销毁（destroy）不改变 status**，仅擦除用户端隐私字段（收货地址、隐私选项等），故不在状态图中。
 
 ## 同步 vs 异步策略
 
@@ -350,12 +357,19 @@ PENDING ──→ PAID ──→ SHIPPED ──→ DELIVERED ──→ COMPLETED
 | GET | `/api/user/profile` | 个人信息 + 订单统计 |
 | PATCH | `/api/user/profile` | 修改昵称 |
 
+### 商品
+| 方法 | 路由 | 说明 |
+|------|------|------|
+| GET | `/api/products` | 商品列表（搜索/分类/排序/分页） |
+| GET | `/api/products/[id]` | 商品详情 |
+| GET | `/api/products/categories` | 品类列表 |
+
 ### 管理
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| POST | `/api/admin/products/upload` | 商品图片上传 |
-| GET | `/api/oss/proxy` | OSS 图片代理 |
-| GET | `/api/pay/[orderId]` | 支付请求 |
+| GET | `/api/pay/[orderId]` | 支付请求（生成支付宝跳转 URL） |
+| POST | `/api/admin/products/upload` | 商品图片上传（二期） |
+| GET | `/api/oss/proxy` | OSS 图片代理（二期） |
 
 ### Inngest
 | 方法 | 路由 | 说明 |
@@ -479,7 +493,7 @@ npm start
 | `ALIPAY_GATEWAY` | 否 | 支付宝网关（沙箱/正式） |
 | `NEXT_PUBLIC_BASE_URL` | 是 | 回调基础 URL |
 | `ENCRYPTION_KEYS` | 否 | AES-256-GCM 加密密钥（优先级从左到右，最左侧为当前加密密钥。格式：`v2:newkey,v1:oldkey`）。旧密钥仅在所有历史数据重加密完成后才可移除 |
-| `PEPPER` | 否 | 手机号哈希 pepper |
+| `PEPPER` | 否 | 手机号哈希 pepper（生产环境未配置时 fail-fast 拒绝启动/计算，绝不使用默认值） |
 | `INNGEST_EVENT_KEY` | 否 | Inngest Event Key |
 | `INNGEST_SIGNING_KEY` | 否 | Inngest Signing Key |
 | `SENTRY_DSN` | 否 | Sentry DSN |
@@ -499,8 +513,8 @@ npm start
      │  ~15 条   │     （Vitest + Docker 本地 PG）
      └───────────┘
   ┌─────────────────┐
-  │    单元测试       │  ← 状态机纯函数、金额工具、加密工具
-  │    ~50 条         │     （Vitest，零 mock，零外部依赖）
+  │    单元测试       │  ← 状态机纯函数、金额工具、加密工具、服务层（mock Prisma）
+  │    ~70 条         │     （Vitest）
   └─────────────────┘
 ```
 
