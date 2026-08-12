@@ -3,3 +3,4 @@
 export * as userQueries from "./user.queries";
 export * as userService from "./user.service";
 export type { UserProfile, OrderStats } from "./user.queries";
+export { AccountPage } from "./user.routes";
