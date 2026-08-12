@@ -14,6 +14,10 @@ import type { OrderStatus } from "./orders.state-machine";
 import { encrypt } from "@/shared/utils/crypto";
 import { paymentService } from "@/features/payment";
 import { captureMessage } from "@sentry/nextjs";
+import type { Prisma } from "@prisma/client";
+
+/** 支付超时时间（30 分钟）— 下单 expiresAt 与 Inngest 超时取消共用，防止展示倒计时与实际取消时机不一致 */
+export const ORDER_PAYMENT_TIMEOUT_MS = 30 * 60 * 1000;
 
 // ── 类型 ──
 
@@ -227,8 +231,26 @@ export async function createOrder(
     currency: "CNY",
     status: ORDER_STATUS.PENDING,
     payUrl,
-    expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(), // 30 分钟支付过期
+    expiresAt: new Date(Date.now() + ORDER_PAYMENT_TIMEOUT_MS).toISOString(),
   };
+}
+
+// ── 恢复库存（取消订单 / 超时取消共用） ──
+
+async function restoreStock(
+  tx: Prisma.TransactionClient,
+  items: { productId: string | null; qty: number }[],
+): Promise<void> {
+  for (const item of items) {
+    if (!item.productId) continue;
+    await tx.product.updateMany({
+      where: { id: item.productId },
+      data: {
+        stock: { increment: item.qty },
+        sales: { decrement: item.qty },
+      },
+    });
+  }
 }
 
 // ── 取消订单 ──
@@ -261,17 +283,7 @@ export async function cancelOrder(
   // 库存恢复一并撤销，绝不把已支付订单覆写成 CANCELLED（防资损）。
   // 反向竞态（本事务先提交 CANCELLED，回调后到）→ 回调走 conflict 分支告警需人工退款。
   await prisma.$transaction(async (tx) => {
-    // 恢复库存
-    for (const item of order.items) {
-      if (!item.productId) continue;
-      await tx.product.updateMany({
-        where: { id: item.productId },
-        data: {
-          stock: { increment: item.qty },
-          sales: { decrement: item.qty },
-        },
-      });
-    }
+    await restoreStock(tx, order.items);
 
     const updated = await tx.order.updateMany({
       where: { id: orderId, status: ORDER_STATUS.PENDING },
@@ -287,6 +299,55 @@ export async function cancelOrder(
         "订单状态已变更（可能已支付），无法取消",
       );
     }
+  });
+}
+
+// ── 支付超时自动取消（Inngest 定时任务调用） ──
+
+/**
+ * 支付超时自动取消 — 由 Inngest `order-timeout-cancel` 函数在等待 ORDER_PAYMENT_TIMEOUT_MS 后调用
+ *
+ * 与用户主动取消 cancelOrder 的区别：
+ * - 无用户归属校验（系统发起）
+ * - 订单非 PENDING（已支付/已取消）时静默返回 no-op，不抛错、不触发重试
+ *
+ * 竞态安全：状态读取与库存回补/状态更新在同一 $transaction 内完成；
+ * updateMany 带 status=PENDING 守卫 — 与支付回调并发时，若回调先置 PAID，
+ * 本事务命中 0 行 → 返回未取消，绝不回补已支付订单的库存（防资损）。
+ */
+export async function cancelExpiredOrder(
+  orderId: string,
+): Promise<{ cancelled: boolean; status: string }> {
+  return prisma.$transaction(async (tx) => {
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      select: {
+        status: true,
+        items: { select: { productId: true, qty: true } },
+      },
+    });
+
+    // 订单不存在或已非 PENDING（已支付/已取消）→ no-op
+    if (!order || order.status !== ORDER_STATUS.PENDING) {
+      return { cancelled: false, status: order?.status ?? "NOT_FOUND" };
+    }
+
+    // 状态守卫必须先于库存回补：
+    // updateMany 带 status=PENDING，与支付回调并发时若回调抢先置 PAID，
+    // 命中 0 行 → 提前 return（事务无写入提交），绝不回补已支付订单的库存（防资损）
+    const updated = await tx.order.updateMany({
+      where: { id: orderId, status: ORDER_STATUS.PENDING },
+      data: { status: ORDER_STATUS.CANCELLED, cancelledAt: new Date() },
+    });
+
+    if (updated.count === 0) {
+      return { cancelled: false, status: "ALREADY_CHANGED" };
+    }
+
+    // 成功取消后才回补库存（同一事务，原子提交）
+    await restoreStock(tx, order.items);
+
+    return { cancelled: true, status: ORDER_STATUS.CANCELLED };
   });
 }
 

@@ -14,6 +14,15 @@ export const ERROR_CODES = {
   STOCK_CONFLICT: { status: 409, code: "STOCK_CONFLICT" },
   PRODUCT_NOT_FOUND: { status: 404, code: "PRODUCT_NOT_FOUND" },
 
+  // 品牌 5xxx
+  BRAND_NOT_FOUND: { status: 404, code: "BRAND_NOT_FOUND" },
+  BRAND_NOT_OWNED: { status: 403, code: "BRAND_NOT_OWNED" },
+  BRAND_ALREADY_EXISTS: { status: 409, code: "BRAND_ALREADY_EXISTS" },
+  BRAND_ALREADY_REVIEWED: { status: 409, code: "BRAND_ALREADY_REVIEWED" },
+
+  // 商品 6xxx
+  PRODUCT_ALREADY_REVIEWED: { status: 409, code: "PRODUCT_ALREADY_REVIEWED" },
+
   // 订单 3xxx
   ORDER_NOT_FOUND: { status: 404, code: "ORDER_NOT_FOUND" },
   ORDER_STATUS_INVALID: { status: 409, code: "ORDER_STATUS_INVALID" },

@@ -73,6 +73,27 @@ export function apiError(error: unknown): NextResponse {
   );
 }
 
+/**
+ * 分页参数解析 — 统一处理 page/pageSize
+ *
+ * 关键防御：负数（如 ?page=-1）与 NaN 一律 clamp 到合法区间，
+ * 否则 Prisma 的 skip/take 收到负值会抛校验错误 → 500。
+ */
+export function parsePagination(
+  url: URL,
+  defaultSize = 20,
+): { page: number; pageSize: number } {
+  const page = Math.max(
+    1,
+    parseInt(url.searchParams.get("page") || "1") || 1,
+  );
+  const pageSize = Math.min(
+    100,
+    Math.max(1, parseInt(url.searchParams.get("pageSize") || String(defaultSize)) || defaultSize),
+  );
+  return { page, pageSize };
+}
+
 /** 扁平化 Zod 错误，方便前端展示 */
 function flattenZodError(error: ZodError): Record<string, string[]> {
   const result: Record<string, string[]> = {};

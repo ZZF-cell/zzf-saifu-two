@@ -66,9 +66,9 @@ export function checkRoutePermission(
     }
   }
 
-  // 品牌方后台
+  // 品牌方后台（仅 BRAND：品牌中心是品牌方自己的后台，ADMIN 走 /admin）
   if (path.startsWith("/brand")) {
-    if (!authUser || !["BRAND", "ADMIN"].includes(authUser.role)) {
+    if (!authUser || authUser.role !== "BRAND") {
       return NextResponse.redirect(new URL("/login", req.url));
     }
   }

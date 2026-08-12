@@ -22,7 +22,7 @@
 | ORM | Prisma (PostgreSQL provider) | 交互式事务 `$transaction`，Service 层直调 |
 | 认证 | JWT 双 Token (jose) | Access 15min + Refresh 7d Rotation，Refresh Token 存 DB |
 | 校验 | Zod | `withValidation` HOF + Server Actions 用 `next-safe-action` |
-| 异步 | Inngest | 短信/审计日志/订单超时取消 |
+| 异步 | Inngest | 订单支付超时自动取消 |
 | 支付 | 支付宝沙箱 | `outTradeNo` 唯一索引 + `updateMany` 保证幂等 |
 | UI | shadcn/ui + Tailwind CSS v4 | `shared/ui/` 只读，业务组件在 `features/*/` 内 |
 | PWA | Service Worker + Web App Manifest | API 路由 Network Only，静态资源 SWR，构建版本校验 |
@@ -120,14 +120,15 @@ npx prisma db seed                 # 重新填充种子数据
 
 ### 二期
 
-| 模块 | 功能 | 技术影响评估 |
-|------|------|-------------|
-| **管理后台** | 数据看板、品牌审核、商品质检、订单管理、用户管理、质检模板管理 | 新增 `features/admin/` 模块，不修改现有 `features/orders|cart|products` 边界；复用现有 Service 和 Query 层 |
-| **品牌方后台** | 品牌概览、提交新商品、商品列表、订单查看、品牌资料、数据看板 | 新增 `features/brand/` 模块；品牌方订单查询复用 `features/orders/orders.queries.ts` 的 `getOrderList`，增加 `brandId` 过滤 |
-| **品牌入驻** | 管理员生成邀请码 → 品牌方激活 → 提交资料 → 审核 | 新增 `features/invite/` 模块；邀请码逻辑独立，不侵入现有 auth 模块 |
-| **OSS 图片上传** | 商品图片上传至阿里云 OSS | `shared/ui/Image` 组件需支持 OSS URL + base64 双源；`shared/adapters/oss.adapter.ts` 基于适配器模式，现有图片逻辑可平滑切换 |
-| **微信支付** | 接入微信支付 SDK | `shared/adapters/payment.adapter.ts` 定义 `PaymentAdapter` 接口，微信支付实现同一接口；回调幂等逻辑直接复用 `payment.callback.ts` 的 `updateMany` 模式 |
-| **实名认证** | 对接实名认证服务 | 新增 `shared/adapters/realname.adapter.ts`；用户表增加 `realNameVerified` 字段，不影响现有登录流程 |
+| 模块 | 状态 | 功能 | 技术实现 |
+|------|------|------|---------|
+| **管理后台** | ✅ 已完成 | 数据看板、品牌审核、商品质检、订单管理（发货/送达/完成/退款）、用户管理、质检模板管理 | `features/admin/`；所有状态变更用 `updateMany` 状态守卫（防并发重复操作），与审计日志在同一 `$transaction`（审计失败整体回滚，不留「状态已变但无审计」的账）；重复审核返回 409 区分「不存在」404 |
+| **品牌方后台** | ✅ 已完成 | 品牌概览、提交新商品、商品列表、订单查看、品牌资料 | `features/brand/`；品牌订单/销售额只聚合本品牌商品行（`OrderItem.price×qty`），混合品牌订单不整单全额重复计入；品牌无商品时直接返回零统计，绝不查询全平台数据（防跨租户泄漏） |
+| **订单超时自动取消** | ✅ 已完成 | 下单 30 分钟未支付自动取消并回补库存 | `inngest/functions/order-timeout-cancel.ts`：`order/created` 事件 → `step.sleep(30min)` → `cancelExpiredOrder`（**updateMany 状态守卫先于回补库存**，防并发双重回补）；下单时用 `next/server` 的 `after()` 保证 serverless 中事件投递完成 |
+| **品牌入驻** | ⏳ 待开发 | 管理员生成邀请码 → 品牌方激活 → 提交资料 → 审核 | 新增 `features/invite/` 模块；邀请码逻辑独立，不侵入现有 auth 模块 |
+| **OSS 图片上传** | ⏳ 待开发 | 商品图片上传至阿里云 OSS | `shared/ui/Image` 组件需支持 OSS URL + base64 双源；`shared/adapters/oss.adapter.ts` 基于适配器模式，现有图片逻辑可平滑切换 |
+| **微信支付** | ⏳ 待开发 | 接入微信支付 SDK | `shared/adapters/payment.adapter.ts` 定义 `PaymentAdapter` 接口，微信支付实现同一接口；回调幂等逻辑直接复用 `payment.callback.ts` 的 `updateMany` 模式 |
+| **实名认证** | ⏳ 待开发 | 对接实名认证服务 | 新增 `shared/adapters/realname.adapter.ts`；用户表增加 `realNameVerified` 字段，不影响现有登录流程 |
 
 > **技术债预警原则**：每个二期功能的 `features/` 模块是独立的，不跨模块修改，只通过现有 Public API 或新增 Adapter 扩展。如果某个功能需要修改现有模块的内部实现，说明边界设计需要调整。
 
@@ -163,9 +164,10 @@ src/
 │   │   ├── index.ts
 │   │   ├── orders.routes.tsx
 │   │   ├── orders.api.ts
-│   │   ├── orders.service.ts       #   领域服务（$transaction 业务流程 + 优惠分摊）
+│   │   ├── orders.service.ts       #   领域服务（$transaction 业务流程 + 优惠分摊 + cancelExpiredOrder）
 │   │   ├── orders.queries.ts       #   订单列表/详情查询
 │   │   ├── orders.state-machine.ts #   纯函数状态流转规则
+│   │   ├── order-events.ts         #   订单事件发布（order/created → Inngest，调用方用 after() 包裹）
 │   │   └── orders.components.tsx
 │   │
 │   ├── payment/                     # 支付模块
@@ -180,8 +182,20 @@ src/
 │   │   ├── user.service.ts          #   修改昵称
 │   │   └── user.queries.ts          #   个人信息 + 订单统计
 │   │
-│   └── audit/                       # 审计模块
-│       └── index.ts
+│   ├── admin/                       # 管理后台模块
+│   │   ├── index.ts
+│   │   ├── admin.api.ts             #   品牌审核/商品质检/订单管理/用户/看板/质检模板
+│   │   ├── admin.service.ts        #   状态变更（updateMany 守卫 + 审计同事务）
+│   │   └── admin.queries.ts        #   后台查询 + 看板统计
+│   │
+│   ├── brand/                       # 品牌方后台模块
+│   │   ├── index.ts
+│   │   ├── brand.api.ts             #   概览/提交商品/商品列表/订单
+│   │   ├── brand.service.ts        #   提交商品（价格转分存储）
+│   │   ├── brand.queries.ts        #   品牌概览（跨租户防泄漏）+ 归属校验
+│   │   └── brand.routes.tsx        #   品牌后台页面
+│   │
+│   └── audit/                       # 审计模块（AuditLog 表访问，后台操作同事务写日志）
 │
 ├── shared/                          # 共享基础设施（所有模块可引用，禁引用 feature 内部文件）
 │   ├── api/
@@ -210,13 +224,16 @@ src/
 │   ├── page.tsx                     #   首页 = 商品列表
 │   ├── age-gate/                    #   年龄验证门禁（拒绝 → 硬性阻止页）
 │   ├── (auth)/                      #   登录/注册
-│   ├── cart/ checkout/ orders/ products/
+│   ├── admin/ brand/ cart/ checkout/ orders/ products/
 │   └── api/                         #   Route Handlers（薄转发层，逻辑在 features/）
-│       ├── auth/ ... orders/ cart/ user/ products/ pay/
+│       ├── auth/ ... orders/ cart/ user/ products/ pay/ admin/ brand/ inngest/
 │       └── user/profile/            #   个人信息路由（GET/PATCH）
 │
 └── inngest/
-    └── client.ts                    #   Inngest 客户端（异步函数按需接入）
+    ├── client.ts                    #   Inngest 客户端单例（eventKey）
+    ├── index.ts                     #   函数注册中心（serve 端点 + Dev Server 自动发现）
+    └── functions/
+        └── order-timeout-cancel.ts  #   订单支付超时自动取消（order/created → sleep 30min → 取消+回补库存）
 ```
 
 ## 模块通信规则
@@ -305,6 +322,8 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
    └──→ REFUNDED（管理员同意退款）
 ```
 
+> **超时自动取消**：下单 30 分钟（`ORDER_PAYMENT_TIMEOUT_MS`）未支付，由 Inngest `order-timeout-cancel` 自动将 PENDING 订单置为 CANCELLED 并回补库存（`updateMany` 状态守卫先于回补，防与手动取消/支付回调并发冲突）。
+
 > **销毁（destroy）不改变 status**，仅擦除用户端隐私字段（收货地址、隐私选项等），故不在状态图中。
 
 ## 同步 vs 异步策略
@@ -313,10 +332,10 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 |------|------|------|
 | 下单（扣库存+建订单） | Prisma `$transaction` 同步 | 强一致性，必须同时成功或同时回滚 |
 | 支付回调（状态更新） | Prisma `$transaction` 同步 | 幂等性需和状态更新在同一事务 |
-| 发送短信 | Inngest `send-sms` | 失败可重试，不影响下单核心流程 |
-| 写审计日志 | Inngest `write-audit-log` | 同上 |
-| 通知品牌方 | Inngest `notify-brand` | 同上 |
-| 订单超时取消 | Inngest `step.sleep(30min)` | 无需自建定时任务 |
+| 后台状态变更 + 审计日志 | Prisma `$transaction` 同步 | 审计与状态变更必须同生共死——审计失败则整体回滚，杜绝「状态已变但无审计留痕」 |
+| 发送短信 | `shared/adapters/sms.adapter.ts` 同步 | 认证流程强依赖验证码送达，失败直接报错；未配置短信服务时回退终端日志（`[SMS]`） |
+| 订单超时取消 | Inngest `order/created` → `step.sleep(30min)` → 取消+回补库存 | 无需自建定时任务；下单时用 `next/server` 的 `after()` 保证 serverless 中事件投递完成 |
+| 通知品牌方（下单/新商品） | ⏳ 待开发 | 预留 Inngest `notify-brand` |
 
 ## API 路由
 
@@ -364,12 +383,35 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | GET | `/api/products/[id]` | 商品详情 |
 | GET | `/api/products/categories` | 品类列表 |
 
-### 管理
+### 支付
 | 方法 | 路由 | 说明 |
 |------|------|------|
 | GET | `/api/pay/[orderId]` | 支付请求（生成支付宝跳转 URL） |
-| POST | `/api/admin/products/upload` | 商品图片上传（二期） |
-| GET | `/api/oss/proxy` | OSS 图片代理（二期） |
+
+### 管理后台（ADMIN）
+| 方法 | 路由 | 说明 |
+|------|------|------|
+| GET | `/api/admin/dashboard` | 数据看板（平台整体统计） |
+| GET | `/api/admin/brands` | 品牌列表 |
+| POST | `/api/admin/brands/[id]/review` | 品牌审核（PENDING → APPROVED/REJECTED，重复审核 409） |
+| GET | `/api/admin/products` | 商品列表 |
+| POST | `/api/admin/products/[id]/review` | 商品质检（PENDING → APPROVED/REJECTED，重复质检 409） |
+| GET | `/api/admin/orders` | 订单列表 |
+| POST | `/api/admin/orders/[id]/ship` | 发货（PAID → SHIPPED） |
+| POST | `/api/admin/orders/[id]/deliver` | 标记送达（SHIPPED → DELIVERED） |
+| POST | `/api/admin/orders/[id]/complete` | 标记完成（DELIVERED → COMPLETED） |
+| POST | `/api/admin/orders/[id]/refund-confirm` | 确认退款（REFUND_REQUESTED → REFUNDED） |
+| GET | `/api/admin/users` | 用户列表 |
+| GET | `/api/admin/audit-templates` | 质检模板列表 |
+| PUT | `/api/admin/audit-templates` | 更新质检模板 |
+
+### 品牌方（BRAND）
+| 方法 | 路由 | 说明 |
+|------|------|------|
+| GET | `/api/brand/overview` | 品牌概览（商品/订单/销售额，只聚合本品牌数据） |
+| GET | `/api/brand/products` | 品牌商品列表 |
+| POST | `/api/brand/products` | 提交新商品（价格转分存储，待平台质检） |
+| GET | `/api/brand/orders` | 品牌订单（仅含本品牌商品的行） |
 
 ### Inngest
 | 方法 | 路由 | 说明 |
@@ -513,8 +555,8 @@ npm start
      │  ~15 条   │     （Vitest + Docker 本地 PG）
      └───────────┘
   ┌─────────────────┐
-  │    单元测试       │  ← 状态机纯函数、金额工具、加密工具、服务层（mock Prisma）
-  │    ~70 条         │     （Vitest）
+  │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证/管理/品牌服务层
+  │    ~103 条        │     （Vitest，mock Prisma 与 $transaction）
   └─────────────────┘
 ```
 

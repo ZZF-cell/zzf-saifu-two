@@ -58,18 +58,13 @@ export interface OrderDetail {
   }[];
 }
 
-// ── 我的订单列表 ──
+// ── 订单摘要查询（用户列表 / 品牌方订单列表共用） ──
 
-export async function getOrderList(
-  userId: string,
-  page = 1,
-  pageSize = 20,
+async function queryOrderSummaries(
+  where: Prisma.OrderWhereInput,
+  page: number,
+  pageSize: number,
 ): Promise<OrderListResult> {
-  const where: Prisma.OrderWhereInput = {
-    userId,
-    // 不排除已销毁订单，用户可看到「已销毁」标记
-  };
-
   const [orders, total] = await Promise.all([
     prisma.order.findMany({
       where,
@@ -80,6 +75,7 @@ export async function getOrderList(
         privacy: true,
         createdAt: true,
         paidAt: true,
+        _count: { select: { items: true } },
         items: { select: { productName: true }, take: 1, orderBy: { id: "asc" } },
       },
       orderBy: { createdAt: "desc" },
@@ -94,12 +90,114 @@ export async function getOrderList(
       id: o.id,
       total: o.total,
       status: o.status,
-      itemCount: 0, // 由前端或单独查询获取
+      itemCount: o._count.items, // 真实商品行数（_count 聚合，不再硬编码 0）
       firstItemName: o.items[0]?.productName || "商品",
       createdAt: o.createdAt,
       paidAt: o.paidAt,
       isDestroyed: isOrderDestroyed(o.privacy as Record<string, unknown> | null),
     })),
+    total,
+    page,
+    pageSize,
+  };
+}
+
+// ── 我的订单列表 ──
+
+export async function getOrderList(
+  userId: string,
+  page = 1,
+  pageSize = 20,
+): Promise<OrderListResult> {
+  return queryOrderSummaries(
+    {
+      userId,
+      // 不排除已销毁订单，用户可看到「已销毁」标记
+    },
+    page,
+    pageSize,
+  );
+}
+
+// ── 品牌方订单列表（按品牌商品过滤，README 二期：品牌后台查看自己的订单） ──
+
+/**
+ * 品牌方订单列表 — 返回本品牌商品行的聚合，绝不泄漏整单金额/其他品牌商品名
+ *
+ * 关键隐私边界：多品牌混合订单中，品牌 A 只能看到自己商品行的
+ * brandSubtotal（本品牌行 price×qty 之和）与本品牌首个商品名，
+ * 不返回 Order.total（含其他品牌金额）也不返回其他品牌的 firstItemName。
+ */
+export interface BrandOrderRow {
+  id: string;
+  status: string;
+  createdAt: Date;
+  paidAt: Date | null;
+  isDestroyed: boolean;
+  brandSubtotal: number; // 本品牌商品行小计（分）
+  firstItemName: string; // 本品牌首个商品名
+}
+
+export interface BrandOrderListResult {
+  orders: BrandOrderRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export async function getOrderListByBrand(
+  brandProductIds: string[],
+  page = 1,
+  pageSize = 20,
+): Promise<BrandOrderListResult> {
+  if (brandProductIds.length === 0) {
+    return { orders: [], total: 0, page, pageSize };
+  }
+
+  const where: Prisma.OrderWhereInput = {
+    items: { some: { productId: { in: brandProductIds } } },
+  };
+
+  const [orders, total] = await Promise.all([
+    prisma.order.findMany({
+      where,
+      select: {
+        id: true,
+        status: true,
+        createdAt: true,
+        paidAt: true,
+        privacy: true,
+        // 只取本品牌商品行：跨品牌行的金额/名称不进入品牌方视图
+        items: {
+          where: { productId: { in: brandProductIds } },
+          select: { productName: true, price: true, qty: true },
+          orderBy: { id: "asc" },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.order.count({ where }),
+  ]);
+
+  return {
+    orders: orders.map((o) => {
+      const brandItems = o.items;
+      const brandSubtotal = brandItems.reduce(
+        (sum, it) => sum + it.price * it.qty,
+        0,
+      );
+      return {
+        id: o.id,
+        status: o.status,
+        createdAt: o.createdAt,
+        paidAt: o.paidAt,
+        isDestroyed: isOrderDestroyed(o.privacy as Record<string, unknown> | null),
+        brandSubtotal,
+        firstItemName: brandItems[0]?.productName || "商品",
+      };
+    }),
     total,
     page,
     pageSize,

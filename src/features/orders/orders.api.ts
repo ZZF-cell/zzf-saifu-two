@@ -1,10 +1,11 @@
 // 订单 API Route Handlers（需登录）
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { z } from "zod";
 import { withValidation, apiError } from "@/shared/utils/api";
 import { authenticate } from "@/shared/api/auth";
 import { verifyNotifySignature } from "@/features/payment";
 import { yuanToFen } from "@/shared/utils/money";
+import { notifyOrderCreated } from "./order-events";
 import * as ordersService from "./orders.service";
 import * as ordersQueries from "./orders.queries";
 
@@ -83,6 +84,9 @@ export const createOrder = withValidation(
         hideProductName: (data.privacy.hideProductName ?? true) as boolean,
       },
     });
+    // 投递订单超时取消事件（after() 在响应返回后仍执行，确保 serverless 中投递完成；
+    // 失败在 notifyOrderCreated 内部静默降级，不阻塞下单主流程）
+    after(() => notifyOrderCreated(order.orderId));
     return NextResponse.json(order, { status: 201 });
   },
 );
