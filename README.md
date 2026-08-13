@@ -24,7 +24,7 @@
 | 校验 | Zod | `withValidation` HOF + Server Actions 用 `next-safe-action` |
 | 异步 | Inngest | 订单支付超时自动取消 |
 | 支付 | 支付宝沙箱 | `outTradeNo` 唯一索引 + `updateMany` 保证幂等 |
-| UI | shadcn/ui + Tailwind CSS v4 | `shared/ui/` 只读，业务组件在 `features/*/` 内 |
+| UI | shadcn/ui + Tailwind CSS v4 | `shared/ui/` 只读，业务组件在 `features/*/` 内；`Image.tsx` / `SiteHeader.tsx` 为自定义组件（登录态感知全局导航） |
 | PWA | Service Worker + Web App Manifest | API 路由 Network Only，静态资源 SWR，构建版本校验 |
 | 测试 | Playwright (E2E) + Vitest (单元) | CI 双构建流水线（Turbopack + Webpack） |
 | 错误追踪 | Sentry (`@sentry/nextjs`) | 全局 `AppError` + `apiError` 包装器 |
@@ -227,10 +227,14 @@ src/
 │   │   └── api.ts                  #   withValidation HOF + apiError 包装器
 │   ├── validation/
 │   │   └── schemas.ts              #   Zod schemas（全局共享）
-│   └── adapters/
-│       ├── sms.adapter.ts          #   阿里云短信（未配置回退日志）
-│       ├── payment.adapter.ts      #   支付宝沙箱封装
-│       └── oss.adapter.ts          #   阿里云 OSS（懒初始化，未配置返回失败标记）
+│   ├── adapters/
+│   │   ├── sms.adapter.ts          #   阿里云短信（未配置回退日志）
+│   │   ├── payment.adapter.ts      #   支付宝沙箱封装
+│   │   └── oss.adapter.ts          #   阿里云 OSS（懒初始化，未配置返回失败标记）
+│   └── ui/                         #   自定义 UI（非 shadcn 源，可改）
+│       ├── Image.tsx               #   双源图片（OSS URL + base64）+ 统一占位图
+│       ├── image-source.ts         #   resolveImageSource 纯函数
+│       └── SiteHeader.tsx          #   登录态感知全局导航（按角色显示购物车/入驻/后台）
 │
 ├── app/                             # Next.js App Router 入口
 │   ├── layout.tsx                   #   根布局（PWA Manifest）
@@ -362,6 +366,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | POST | `/api/auth/login` | 密码登录 |
 | POST | `/api/auth/register` | 密码注册 |
 | POST | `/api/auth/set-password` | 短信登录后设置密码 |
+| GET | `/api/auth/me` | 当前登录用户信息（登录态导航/前端状态；安全字段，不含 phoneHash） |
 | POST | `/api/auth/refresh` | 刷新 Access Token（Rotation） |
 | POST | `/api/auth/logout` | 退出登录（吊销 Refresh Token） |
 
@@ -591,7 +596,7 @@ npm start
      └───────────┘
   ┌─────────────────┐
   │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证/管理/品牌/邀请码/上传/OSS 适配器服务层
-  │    ~151 条        │     （Vitest，mock Prisma 与 $transaction）
+  │    ~155 条        │     （Vitest，mock Prisma 与 $transaction）
   └─────────────────┘
 ```
 

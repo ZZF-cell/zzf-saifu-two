@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { apiFetch } from "@/shared/api/client";
 import { fenToYuan } from "@/shared/utils/money";
+import { SiteHeader } from "@/shared/ui/SiteHeader";
 
 // ── helpers ──
 
@@ -314,36 +314,13 @@ const TABS: { key: TabKey; label: string }[] = [
 ];
 
 export function BrandCenterPage() {
-  const router = useRouter();
   const [tab, setTab] = useState<TabKey>("overview");
-
-  const handleLogout = async () => {
-    try {
-      await apiCall("POST", "/api/auth/logout");
-    } catch { /* 静默 */ }
-    router.push("/login");
-  };
 
   return (
     <main className="mx-auto min-h-screen max-w-lg bg-white pb-24">
-      <div className="sticky top-0 z-10 border-b bg-white/90 backdrop-blur px-4 py-3">
-        <div className="flex items-center justify-between">
-          <h1 className="text-center text-base font-bold">品牌中心</h1>
-          <div className="flex gap-2">
-            <button
-              onClick={() => router.push("/")}
-              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
-            >
-              商城首页
-            </button>
-            <button
-              onClick={handleLogout}
-              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
-            >
-              退出登录
-            </button>
-          </div>
-        </div>
+      <SiteHeader />
+      <div className="px-4 pt-3">
+        <h1 className="text-center text-base font-bold">品牌中心</h1>
         <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
           {TABS.map((t) => (
             <button

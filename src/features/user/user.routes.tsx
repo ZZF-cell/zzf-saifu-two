@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { UserProfile } from "./user.queries";
 import { apiFetch } from "@/shared/api/client";
+import { SiteHeader } from "@/shared/ui/SiteHeader";
 
 // ── helpers ──
 
@@ -28,7 +28,6 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 export function AccountPage() {
-  const router = useRouter();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -73,16 +72,6 @@ export function AccountPage() {
     }
   };
 
-  // 退出登录 — 吊销 Refresh Token + 清除 Cookie
-  const handleLogout = async () => {
-    try {
-      await apiCall("POST", "/api/auth/logout");
-    } catch {
-      // 后端吊销失败也继续本地跳转（Cookie 随会话清理）
-    }
-    router.push("/login");
-  };
-
   if (loading) {
     return (
       <main className="mx-auto min-h-screen max-w-lg p-4">
@@ -112,14 +101,9 @@ export function AccountPage() {
 
   return (
     <main className="mx-auto min-h-screen max-w-lg bg-white pb-24">
-      <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white/90 backdrop-blur px-4 py-3">
+      <SiteHeader />
+      <div className="px-4 pt-4">
         <h1 className="text-center text-base font-bold">个人中心</h1>
-        <button
-          onClick={handleLogout}
-          className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
-        >
-          退出登录
-        </button>
       </div>
 
       <div className="p-4 space-y-6">

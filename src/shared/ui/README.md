@@ -8,4 +8,4 @@
 > 1. 此目录下的 shadcn 组件为只读源文件，禁止直接修改
 > 2. 如需扩展，在 `features/*/` 业务组件中通过组合/包装实现
 > 3. 如果确实需要修改源文件，必须在此表中记录，并与团队讨论
-> 4. `Image.tsx` / `image-source.ts` 为**自定义组件**（非 shadcn 源）：双源图片展示（OSS URL + base64）+ 统一占位图，可正常修改
+> 4. `Image.tsx` / `image-source.ts` / `SiteHeader.tsx` 为**自定义组件**（非 shadcn 源）：双源图片展示 + 登录态全局导航，可正常修改

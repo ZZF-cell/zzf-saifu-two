@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Image from "@/shared/ui/Image";
+import { SiteHeader } from "@/shared/ui/SiteHeader";
 import { useRouter } from "next/navigation";
 import {
   ProductGrid,
@@ -27,7 +28,6 @@ interface ProductListResponse {
 // ── 首页（商品列表） ──
 
 export function HomePage() {
-  const router = useRouter();
   const [products, setProducts] = useState<ProductCardData[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [totalPages, setTotalPages] = useState(1);
@@ -94,17 +94,8 @@ export function HomePage() {
 
   return (
     <main className="min-h-screen bg-white">
+      <SiteHeader />
       <div className="mx-auto max-w-6xl px-4 py-4">
-        {/* Header */}
-        <div className="mb-4 flex items-center justify-between">
-          <h1 className="text-xl font-bold tracking-tight">赛夫严选</h1>
-          <button
-            onClick={() => router.push("/login")}
-            className="text-sm text-gray-500"
-          >
-            登录
-          </button>
-        </div>
 
         {/* Search */}
         <div className="mb-4">

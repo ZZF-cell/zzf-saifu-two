@@ -1,7 +1,7 @@
 // 认证 API Route Handlers
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { withValidation } from "@/shared/utils/api";
+import { withValidation, apiError } from "@/shared/utils/api";
 import { ERROR_CODES, AppError } from "@/shared/errors/errors";
 import * as authService from "./auth.service";
 import * as authQueries from "./auth.queries";
@@ -133,6 +133,27 @@ export const setPassword = withValidation(
     return NextResponse.json({ success: true });
   },
 );
+
+/** GET /api/auth/me — 返回当前登录用户安全信息（供前端导航/登录态） */
+export const meHandler = async (req: Request) => {
+  try {
+    const auth = await requireAuthFromRequest(req);
+    const user = await authQueries.getUserById(auth.userId);
+    if (!user) throw new AppError(ERROR_CODES.UNAUTHORIZED, "用户不存在");
+    return NextResponse.json({
+      success: true,
+      // 显式映射安全字段，绝不回传 phoneHash
+      user: {
+        id: user.id,
+        nickname: user.nickname,
+        role: user.role,
+        ageVerified: user.ageVerified,
+      },
+    });
+  } catch (error) {
+    return apiError(error);
+  }
+};
 
 /** POST /api/auth/refresh */
 export const refreshHandler = async (req: Request) => {

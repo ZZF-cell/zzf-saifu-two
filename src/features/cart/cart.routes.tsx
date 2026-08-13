@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { CartItemRow, EmptyCart } from "./cart.components";
 import type { CartItemData } from "./cart.components";
 import { fenToYuan } from "@/shared/utils/money";
+import { SiteHeader } from "@/shared/ui/SiteHeader";
 
 interface CartData {
   items: CartItemData[];
@@ -114,7 +115,8 @@ export function CartPage() {
 
   return (
     <main className="mx-auto min-h-screen max-w-lg bg-white pb-32">
-      <div className="sticky top-0 z-10 border-b bg-white/90 backdrop-blur px-4 py-3">
+      <SiteHeader />
+      <div className="px-4 pt-4">
         <h1 className="text-center text-base font-bold">
           购物车 ({cart?.totalCount || 0})
         </h1>
