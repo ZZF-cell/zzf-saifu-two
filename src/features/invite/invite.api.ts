@@ -4,12 +4,13 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withValidation } from "@/shared/utils/api";
 import { authenticateUser } from "@/shared/api/auth";
+import { ossImageUrlSchema } from "@/shared/validation/schemas";
 import { activateInviteCode } from "./invite.service";
 
 const activateInviteSchema = z.object({
   code: z.string().trim().min(1, "请输入邀请码").max(50),
   name: z.string().trim().min(1, "请输入品牌名称").max(50),
-  logo: z.string().trim().max(2000).optional(),
+  logo: ossImageUrlSchema.optional(),
 });
 
 /** POST /api/invite/activate — 激活邀请码创建品牌（单事务消耗码 + 建 PENDING 品牌） */

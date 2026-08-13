@@ -126,7 +126,7 @@ npx prisma db seed                 # 重新填充种子数据
 | **品牌方后台** | ✅ 已完成 | 品牌概览、提交新商品、商品列表、订单查看、品牌资料 | `features/brand/`；品牌订单/销售额只聚合本品牌商品行（`OrderItem.price×qty`），混合品牌订单不整单全额重复计入；品牌无商品时直接返回零统计，绝不查询全平台数据（防跨租户泄漏） |
 | **订单超时自动取消** | ✅ 已完成 | 下单 30 分钟未支付自动取消并回补库存 | `inngest/functions/order-timeout-cancel.ts`：`order/created` 事件 → `step.sleep(30min)` → `cancelExpiredOrder`（**updateMany 状态守卫先于回补库存**，防并发双重回补）；下单时用 `next/server` 的 `after()` 保证 serverless 中事件投递完成 |
 | **品牌入驻** | ✅ 已完成 | 管理员生成邀请码 → 品牌方激活 → 提交资料 → 审核 | `features/invite/`：激活=单事务原子消耗邀请码（`updateMany` 状态守卫含过期判断）+ 创建 PENDING 品牌；管理员审核通过时同事务将负责人升级为 BRAND 角色（品牌已过但角色未升是笔错账）；邀请码列表 EXPIRED 由 `expiresAt` 即时推导不落库 |
-| **OSS 图片上传** | ⏳ 待开发 | 商品图片上传至阿里云 OSS | `shared/ui/Image` 组件需支持 OSS URL + base64 双源；`shared/adapters/oss.adapter.ts` 基于适配器模式，现有图片逻辑可平滑切换 |
+| **OSS 图片上传** | ✅ 已完成 | 商品/品牌图片上传至阿里云 OSS（后端中转） | `features/upload/`：POST `/api/upload`（multipart + MIME 白名单 + ≤4MB，未配置 OSS 返回 503）；`shared/adapters/oss.adapter.ts` 仿 payment 懒初始化 + 纯函数；`shared/ui/Image` 双源（OSS URL + base64）+ 统一占位图；submitProduct 收 images、品牌 logo 校验收紧、`PUT /api/brand/profile` 改资料。Vercel 请求体上限 4.5MB → 图片限 ≤4MB；更大文件走 OSS 预签名直传（三期） |
 | **微信支付** | ⏳ 待开发 | 接入微信支付 SDK | `shared/adapters/payment.adapter.ts` 定义 `PaymentAdapter` 接口，微信支付实现同一接口；回调幂等逻辑直接复用 `payment.callback.ts` 的 `updateMany` 模式 |
 | **实名认证** | ⏳ 待开发 | 对接实名认证服务 | 新增 `shared/adapters/realname.adapter.ts`；用户表增加 `realNameVerified` 字段，不影响现有登录流程 |
 
@@ -203,6 +203,11 @@ src/
 │   │   ├── invite.api.ts            #   POST /api/invite/activate
 │   │   └── invite.service.ts        #   原子消耗邀请码 + 创建 PENDING 品牌
 │   │
+│   ├── upload/                      # 图片上传模块
+│   │   ├── index.ts
+│   │   ├── upload.api.ts            #   POST /api/upload（multipart，任意登录用户）
+│   │   └── upload.service.ts        #   文件 → OSS → URL（未配置抛 503）
+│   │
 │   └── audit/                       # 审计模块（AuditLog 表访问，后台操作同事务写日志）
 │
 ├── shared/                          # 共享基础设施（所有模块可引用，禁引用 feature 内部文件）
@@ -224,7 +229,8 @@ src/
 │   │   └── schemas.ts              #   Zod schemas（全局共享）
 │   └── adapters/
 │       ├── sms.adapter.ts          #   阿里云短信（未配置回退日志）
-│       └── payment.adapter.ts      #   支付宝沙箱封装
+│       ├── payment.adapter.ts      #   支付宝沙箱封装
+│       └── oss.adapter.ts          #   阿里云 OSS（懒初始化，未配置返回失败标记）
 │
 ├── app/                             # Next.js App Router 入口
 │   ├── layout.tsx                   #   根布局（PWA Manifest）
@@ -421,13 +427,19 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 |------|------|------|
 | POST | `/api/invite/activate` | 激活邀请码创建品牌（需登录；单事务原子消耗，无效/已用/过期分别返回 400/409/410） |
 
+### 图片上传（任意登录用户）
+| 方法 | 路由 | 说明 |
+|------|------|------|
+| POST | `/api/upload` | 上传图片到 OSS，返回公开 URL（multipart；MIME 白名单 JPG/PNG/WebP、≤4MB；未配置 OSS 返回 503 STORAGE_NOT_CONFIGURED；key 内嵌 userId 按人归属） |
+
 ### 品牌方（BRAND）
 | 方法 | 路由 | 说明 |
 |------|------|------|
 | GET | `/api/brand/overview` | 品牌概览（商品/订单/销售额，只聚合本品牌数据） |
 | GET | `/api/brand/products` | 品牌商品列表 |
-| POST | `/api/brand/products` | 提交新商品（价格转分存储，待平台质检） |
+| POST | `/api/brand/products` | 提交新商品（价格转分存储，待平台质检；可带 images 至多 5 张 OSS URL） |
 | GET | `/api/brand/orders` | 品牌订单（仅含本品牌商品的行） |
+| PUT | `/api/brand/profile` | 更新品牌资料（名称/logo，logo 需 OSS URL） |
 
 ### Inngest
 | 方法 | 路由 | 说明 |
@@ -551,6 +563,11 @@ npm start
 | `ALIPAY_PRIVATE_KEY` | 否 | 支付宝应用私钥（PEM 格式） |
 | `ALIPAY_PUBLIC_KEY` | 否 | 支付宝公钥（PEM 格式） |
 | `ALIPAY_GATEWAY` | 否 | 支付宝网关（沙箱/正式） |
+| `OSS_ACCESS_KEY_ID` | 否 | 阿里云 OSS AccessKey ID |
+| `OSS_ACCESS_KEY_SECRET` | 否 | 阿里云 OSS AccessKey Secret |
+| `OSS_BUCKET` | 否 | OSS Bucket 名称 |
+| `OSS_REGION` | 否 | OSS 区域代码，如 `oss-cn-hangzhou` |
+| `OSS_PUBLIC_DOMAIN` | 否 | OSS 自定义公开访问域名/CDN（如 `https://img.example.com`）；同时供 next.config 图片白名单与 OSS URL 校验。未配置时图片白名单回退通配（生产务必设置） |
 | `NEXT_PUBLIC_BASE_URL` | 是 | 回调基础 URL |
 | `ENCRYPTION_KEYS` | 否 | AES-256-GCM 加密密钥（优先级从左到右，最左侧为当前加密密钥。格式：`v2:newkey,v1:oldkey`）。旧密钥仅在所有历史数据重加密完成后才可移除 |
 | `PEPPER` | 否 | 手机号哈希 pepper（生产环境未配置时 fail-fast 拒绝启动/计算，绝不使用默认值） |
@@ -573,8 +590,8 @@ npm start
      │  ~15 条   │     （Vitest + Docker 本地 PG）
      └───────────┘
   ┌─────────────────┐
-  │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证/管理/品牌/邀请码服务层
-  │    ~117 条        │     （Vitest，mock Prisma 与 $transaction）
+  │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证/管理/品牌/邀请码/上传/OSS 适配器服务层
+  │    ~151 条        │     （Vitest，mock Prisma 与 $transaction）
   └─────────────────┘
 ```
 

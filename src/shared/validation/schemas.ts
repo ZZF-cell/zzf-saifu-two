@@ -1,5 +1,6 @@
 // 通用 Zod 校验 Schemas — 全局复用
 import { z } from "zod";
+import { isOssUrl } from "@/shared/adapters/oss.adapter";
 
 // 手机号（中国大陆）
 export const phoneSchema = z
@@ -33,3 +34,10 @@ export const passwordSchema = z
   .string()
   .min(6, "密码至少 6 位")
   .max(64, "密码最长 64 位");
+
+// OSS 图片 URL（只接受白名单 host 的 https URL，拒绝任意外链/大体积 base64）
+export const ossImageUrlSchema = z
+  .string()
+  .trim()
+  .max(500, "图片地址过长")
+  .refine(isOssUrl, "图片必须是有效的 OSS 地址");

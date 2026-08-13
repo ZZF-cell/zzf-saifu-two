@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
+import Image from "@/shared/ui/Image";
 import { fenToYuan } from "@/shared/utils/money";
 
 // ── 类型 ──
@@ -32,18 +32,12 @@ export function CartItemRow({
   onRemove,
   disabled,
 }: CartItemRowProps) {
-  const placeholderImage =
-    "data:image/svg+xml," +
-    encodeURIComponent(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" fill="%231a1a2e"><rect width="80" height="80"/><text x="40" y="40" fill="%23ffffff33" text-anchor="middle" dy=".3em" font-size="8">无图</text></svg>`,
-    );
-
   return (
     <div className="flex gap-3 rounded-xl border border-gray-100 p-3">
       {/* 图片 */}
       <Link href={`/products/${item.productId}`} className="shrink-0">
         <Image
-          src={item.image || placeholderImage}
+          src={item.image}
           alt={item.productName}
           width={80}
           height={80}

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
+import Image from "@/shared/ui/Image";
 import { fenToYuan } from "@/shared/utils/money";
 
 // ── 类型 ──
@@ -18,12 +18,6 @@ export interface ProductCardData {
 // ── 商品卡片 ──
 
 export function ProductCard({ product }: { product: ProductCardData }) {
-  const placeholderImage =
-    "data:image/svg+xml," +
-    encodeURIComponent(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" fill="%231a1a2e"><rect width="300" height="300"/><text x="150" y="150" fill="%23ffffff33" text-anchor="middle" dy=".3em" font-size="14">暂无图片</text></svg>`,
-    );
-
   return (
     <Link
       href={`/products/${product.id}`}
@@ -31,7 +25,7 @@ export function ProductCard({ product }: { product: ProductCardData }) {
     >
       <div className="relative aspect-square bg-gray-50">
         <Image
-          src={product.images?.[0] || placeholderImage}
+          src={product.images?.[0]}
           alt={product.name}
           fill
           sizes="(max-width: 768px) 50vw, 33vw"

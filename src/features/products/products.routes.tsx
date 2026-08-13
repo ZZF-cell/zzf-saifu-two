@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import Image from "next/image";
+import Image from "@/shared/ui/Image";
 import { useRouter } from "next/navigation";
 import {
   ProductGrid,
@@ -212,21 +212,15 @@ export function ProductDetailPage({ id }: { id: string }) {
 
   if (!product) return null;
 
-  const placeholderImage =
-    "data:image/svg+xml," +
-    encodeURIComponent(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" fill="%231a1a2e"><rect width="300" height="300"/><text x="150" y="150" fill="%23ffffff33" text-anchor="middle" dy=".3em" font-size="14">暂无图片</text></svg>`,
-    );
-
-  const images =
-    product.images.length > 0 ? product.images : [placeholderImage];
+  // 空数组时 images[selectedImage] 为 undefined，SharedImage 内部回退占位图
+  const images = product.images;
 
   return (
     <main className="mx-auto min-h-screen max-w-lg bg-white pb-24">
       {/* 图片轮播 */}
       <div className="relative aspect-square bg-gray-50">
         <Image
-          src={images[selectedImage] || placeholderImage}
+          src={images[selectedImage]}
           alt={product.name}
           fill
           sizes="(max-width: 640px) 100vw, 50vw"

@@ -12,6 +12,7 @@ export interface SubmitProductInput {
   price: number; // 元
   stock: number;
   specs?: Record<string, string>;
+  images?: string[]; // 上传到 OSS 的公开 URL（schema 层已用 ossImageUrlSchema 校验）
 }
 
 export async function submitProduct(
@@ -36,7 +37,7 @@ export async function submitProduct(
       price: yuanToFen(input.price),
       stock: input.stock,
       specs: input.specs as unknown as object | undefined,
-      images: [] as unknown as object,
+      images: (input.images ?? []) as unknown as object,
       status: "PENDING", // 新商品默认待质检
     },
     select: { id: true },

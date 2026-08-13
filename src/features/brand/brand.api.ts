@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withValidation, apiError, parsePagination } from "@/shared/utils/api";
 import { requireRole } from "@/shared/api/auth";
+import { ossImageUrlSchema } from "@/shared/validation/schemas";
 import * as brandQueries from "./brand.queries";
 import * as brandService from "./brand.service";
 
@@ -12,6 +13,7 @@ const submitProductSchema = z.object({
   name: z.string().trim().min(1, "商品名称不能为空").max(100),
   description: z.string().trim().max(2000).optional(),
   category: z.string().trim().min(1, "请填写品类").max(50),
+  images: z.array(ossImageUrlSchema).max(5, "最多 5 张图片").optional(),
   // 价格（元）：min 0.01 保证元→分后至少 1 分（0.001 会 round 成 0 分免费商品）；
   // max 21_474_836 保证 ×100 后不超 PostgreSQL Int 上限（2^31-1），防溢出写库报 500
   price: z.number().positive("价格必须大于 0").min(0.01).max(21_474_836),
@@ -62,6 +64,23 @@ export const submitProduct = withValidation(
     const { brand } = await requireBrand(req);
     const result = await brandService.submitProduct(brand.id, data);
     return NextResponse.json(result, { status: 201 });
+  },
+);
+
+// ── 更新品牌资料（名称/logo） ──
+
+const updateProfileSchema = z.object({
+  name: z.string().trim().min(1, "品牌名称不能为空").max(50).optional(),
+  logo: ossImageUrlSchema.optional(),
+});
+
+/** PUT /api/brand/profile — 更新品牌资料（品牌归属校验在 requireBrand） */
+export const updateProfile = withValidation(
+  updateProfileSchema,
+  async (data, req) => {
+    const { brand } = await requireBrand(req);
+    await brandService.updateBrandProfile(brand.id, data);
+    return NextResponse.json({ success: true });
   },
 );
 

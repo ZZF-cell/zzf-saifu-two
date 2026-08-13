@@ -29,6 +29,10 @@ export const ERROR_CODES = {
   INVITE_CODE_USED: { status: 409, code: "INVITE_CODE_USED" },
   INVITE_CODE_EXPIRED: { status: 410, code: "INVITE_CODE_EXPIRED" },
 
+  // 存储/上传 8xxx
+  STORAGE_NOT_CONFIGURED: { status: 503, code: "STORAGE_NOT_CONFIGURED" },
+  UPLOAD_FAILED: { status: 502, code: "UPLOAD_FAILED" },
+
   // 订单 3xxx
   ORDER_NOT_FOUND: { status: 404, code: "ORDER_NOT_FOUND" },
   ORDER_STATUS_INVALID: { status: 409, code: "ORDER_STATUS_INVALID" },

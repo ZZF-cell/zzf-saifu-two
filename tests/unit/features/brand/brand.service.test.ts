@@ -59,6 +59,44 @@ describe("submitProduct — 品牌提交商品", () => {
     expect(createArgs.data.images).toEqual([]);
   });
 
+  it("传入 images → images 数组原样写库（OSS URL）", async () => {
+    vi.mocked(prisma.brand.findUnique).mockResolvedValue({ status: "APPROVED" } as never);
+    vi.mocked(prisma.product.create).mockResolvedValue({ id: "product-1" } as never);
+
+    await submitProduct("brand-1", {
+      name: "静音震动器",
+      category: "智能设备",
+      price: 199,
+      stock: 10,
+      images: ["https://img.example.com/product/a.jpg", "https://img.example.com/product/b.jpg"],
+    });
+
+    const createArgs = vi.mocked(prisma.product.create).mock.calls[0][0] as {
+      data: { images: unknown };
+    };
+    expect(createArgs.data.images).toEqual([
+      "https://img.example.com/product/a.jpg",
+      "https://img.example.com/product/b.jpg",
+    ]);
+  });
+
+  it("不传 images → 落库空数组（默认）", async () => {
+    vi.mocked(prisma.brand.findUnique).mockResolvedValue({ status: "APPROVED" } as never);
+    vi.mocked(prisma.product.create).mockResolvedValue({ id: "product-1" } as never);
+
+    await submitProduct("brand-1", {
+      name: "无图商品",
+      category: "测试",
+      price: 10,
+      stock: 1,
+    });
+
+    const createArgs = vi.mocked(prisma.product.create).mock.calls[0][0] as {
+      data: { images: unknown };
+    };
+    expect(createArgs.data.images).toEqual([]);
+  });
+
   it("价格 0.5 元 → 精确转 50 分（无浮点误差）", async () => {
     vi.mocked(prisma.brand.findUnique).mockResolvedValue({ status: "APPROVED" } as never);
     vi.mocked(prisma.product.create).mockResolvedValue({ id: "product-2" } as never);
