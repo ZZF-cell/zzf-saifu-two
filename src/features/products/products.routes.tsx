@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Image from "@/shared/ui/Image";
 import { SiteHeader } from "@/shared/ui/SiteHeader";
 import { useRouter } from "next/navigation";
@@ -40,8 +40,12 @@ export function HomePage() {
   const [sort, setSort] = useState({ sortBy: "createdAt", sortOrder: "desc" });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  // 请求序号守卫：快速连点类目/排序时只应用「最后一次」请求的结果，
+  // 丢弃晚到的旧响应，杜绝网格内容在 A/B/C 类目间来回闪跳（多次切类抖动主因）。
+  const reqSeq = useRef(0);
 
   const fetchProducts = useCallback(async () => {
+    const seq = ++reqSeq.current;
     setLoading(true);
     setLoadError("");
     try {
@@ -57,6 +61,8 @@ export function HomePage() {
       const res = await fetch(`/api/products?${params.toString()}`);
       // 错误响应形如 { error, message }，与成功响应 ProductListResponse 并存
       const data = (await res.json()) as ProductListResponse & { message?: string };
+      // 过期响应：seq 落后于最新 → 直接丢弃，不触碰任何 state
+      if (seq !== reqSeq.current) return;
       if (res.ok) {
         setProducts(data.items);
         setTotalPages(data.totalPages);
@@ -66,9 +72,11 @@ export function HomePage() {
       }
     } catch {
       // 网络异常/JSON 解析失败 → 不抛出未处理 rejection，提示后保留旧列表
+      if (seq !== reqSeq.current) return;
       setLoadError("网络异常，商品加载失败");
     } finally {
-      setLoading(false);
+      // 仅最新请求有权结束 loading，防止旧响应翻转加载状态
+      if (seq === reqSeq.current) setLoading(false);
     }
   }, [page, activeSearch, category, subCategory, sort]);
 
@@ -136,16 +144,17 @@ export function HomePage() {
 
         {/* Sort */}
         <div className="mb-4 flex items-center justify-between">
-          <p className="text-xs text-gray-400">
+          {/* min-w 固定计数/加载文案宽度，避免 justify-between 下排序按钮随文案重排 */}
+          <p className="min-w-20 truncate text-xs text-gray-400">
             {loading ? "加载中..." : `${products.length} 个商品`}
           </p>
           <SortSelector value={sort} onChange={setSort} />
         </div>
 
         {/* Product Grid：首次加载才显示骨架；分类/排序/翻页刷新时保留旧网格避免高度跳变。
-            网格区保留 min-h-[50vh]：切到少商品/空类目时不整块塌缩，分页条不跳动。
+            网格区 min-h-[70vh]：吃住「全部→稀疏类目」的高度差，分页条不随数据量上下跳。
             不置灰旧网格（opacity 切换会闪烁），加载反馈靠排序行「加载中...」 */}
-        <div className="min-h-[50vh]">
+        <div className="min-h-[70vh]">
           {loading && products.length === 0 ? (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
               {Array.from({ length: 8 }).map((_, i) => (
@@ -164,7 +173,7 @@ export function HomePage() {
               ))}
             </div>
           ) : loadError && products.length === 0 ? (
-            <div className="flex min-h-[50vh] flex-col items-center justify-center text-center text-gray-400">
+            <div className="flex min-h-[70vh] flex-col items-center justify-center text-center text-gray-400">
               <p className="text-lg">{loadError}</p>
             </div>
           ) : (

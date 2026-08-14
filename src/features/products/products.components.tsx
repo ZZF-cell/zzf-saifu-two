@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "@/shared/ui/Image";
 import { fenToYuan } from "@/shared/utils/money";
@@ -57,9 +58,9 @@ export function ProductCard({ product }: { product: ProductCardData }) {
 
 export function ProductGrid({ products }: { products: ProductCardData[] }) {
   if (products.length === 0) {
-    // min-h 与网格区一致（外层同为 min-h-[50vh]），空态不产生高度跳变
+    // min-h 与网格区一致（外层同为 min-h-[70vh]），空态不产生高度跳变
     return (
-      <div className="flex min-h-[50vh] flex-col items-center justify-center text-gray-400">
+      <div className="flex min-h-[70vh] flex-col items-center justify-center text-gray-400">
         <p className="text-lg">暂无商品</p>
         <p className="mt-2 text-sm">换个关键词试试</p>
       </div>
@@ -95,6 +96,11 @@ export function CategoryFilter({
   const activeNode = categories.find((n) => n.category === activeCategory);
   const subcategories = activeNode?.subcategories ?? [];
   const showSubRow = activeCategory && subcategories.length > 0;
+  // 切大类时子类 pill 集合瞬变，横向滚动位置可能停在旧偏移 → 切回起点
+  const subScrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (subScrollRef.current) subScrollRef.current.scrollLeft = 0;
+  }, [activeCategory]);
 
   return (
     <div>
@@ -124,15 +130,17 @@ export function CategoryFilter({
         ))}
       </div>
 
-      {/* 子类行：grid-rows 过渡平滑展开/收起，点大类时不再瞬时下移下方内容造成抖动 */}
+      {/* 子类行：key 绑定大类 → 切大类时整块重挂载，跳过 grid-rows 补间动画。
+          快速连点不再打断半展开动画造成抖动；展开/收起随新 key 瞬时到位 */}
       <div
+        key={activeCategory}
         className={`grid transition-[grid-template-rows] duration-200 ease-out ${
           showSubRow ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
         }`}
       >
         <div className="min-h-0 overflow-hidden">
           {showSubRow && (
-            <div className="flex gap-2 overflow-x-auto pb-1 pt-2">
+            <div ref={subScrollRef} className="flex gap-2 overflow-x-auto pb-1 pt-2">
               <button
                 onClick={() => onSubCategoryChange(undefined)}
                 className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition ${
