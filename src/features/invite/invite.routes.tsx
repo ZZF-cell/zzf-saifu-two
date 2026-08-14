@@ -8,11 +8,9 @@
 import { useState, useRef } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/shared/api/client";
+import { firstFieldError } from "@/shared/utils/api-errors";
 import { Image } from "@/shared/ui/Image";
-
-// 与 src/features/upload/upload.api.ts 的校验一致
-const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
-const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
+import { MAX_UPLOAD_BYTES, ALLOWED_IMAGE_TYPES } from "@/shared/constants/upload";
 
 export function InvitePage() {
   const [code, setCode] = useState("");
@@ -26,7 +24,7 @@ export function InvitePage() {
 
   /** 上传品牌 Logo：POST /api/upload（multipart，字段 file + purpose=brand）→ 成功回填 URL */
   const handleLogoUpload = async (file: File) => {
-    if (!ALLOWED_TYPES.includes(file.type)) {
+    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
       setError("仅支持 JPG/PNG/WebP 图片");
       return;
     }
@@ -44,10 +42,7 @@ export function InvitePage() {
       const data = await res.json().catch(() => null);
       if (!res.ok) {
         // 后端 422 带 details（字段 → 具体原因），优先展示具体原因而非笼统的"请求参数不符合预期"
-        const firstDetail = data?.details
-          ? (Object.values(data.details as Record<string, string[]>) as string[][]).flat()[0]
-          : null;
-        throw new Error(firstDetail || data?.message || "上传失败");
+        throw new Error(firstFieldError(data?.details) || data?.message || "上传失败");
       }
       setLogo(data.url);
     } catch (err: unknown) {
@@ -140,7 +135,7 @@ export function InvitePage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/jpeg,image/png,image/webp"
+              accept={ALLOWED_IMAGE_TYPES.join(",")}
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];

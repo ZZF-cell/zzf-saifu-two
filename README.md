@@ -222,12 +222,14 @@ src/
 │   ├── errors/
 │   │   └── errors.ts               #   AppError 类 + 错误码枚举
 │   ├── constants/
-│   │   └── product-categories.ts   #   商品两级类目（平台预设，唯一来源）
+│   │   ├── product-categories.ts   #   商品两级类目（平台预设，唯一来源）
+│   │   └── upload.ts               #   上传预检常量（MIME 白名单 / ≤4MB / 商品图上限）
 │   ├── utils/
 │   │   ├── crypto.ts               #   AES-256-GCM + scrypt 密码哈希 + 手机号哈希
 │   │   ├── money.ts                #   金额处理（整数分，避免浮点精度）
 │   │   ├── format.ts               #   展示格式化
-│   │   └── api.ts                  #   withValidation HOF + apiError 包装器
+│   │   ├── api.ts                  #   withValidation HOF + apiError 包装器
+│   │   └── api-errors.ts           #   客户端解析 422 details（firstFieldError）
 │   ├── validation/
 │   │   └── schemas.ts              #   Zod schemas（全局共享）
 │   ├── adapters/

@@ -103,8 +103,18 @@ export function CartPage() {
 
   if (loading) {
     return (
-      <main className="mx-auto min-h-screen max-w-lg p-4">
-        <div className="mt-20 space-y-3">
+      <main className="mx-auto min-h-screen max-w-lg bg-white pb-32">
+        <SiteHeader />
+        <div className="flex items-center gap-2 px-4 pt-4">
+          <button
+            onClick={() => router.push("/")}
+            className="shrink-0 rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 transition hover:bg-gray-50"
+          >
+            ← 返回首页
+          </button>
+          <h1 className="flex-1 text-center text-base font-bold">购物车</h1>
+        </div>
+        <div className="mt-6 space-y-3 px-4">
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="h-24 animate-pulse rounded-xl bg-gray-100" />
           ))}
@@ -116,8 +126,14 @@ export function CartPage() {
   return (
     <main className="mx-auto min-h-screen max-w-lg bg-white pb-32">
       <SiteHeader />
-      <div className="px-4 pt-4">
-        <h1 className="text-center text-base font-bold">
+      <div className="flex items-center gap-2 px-4 pt-4">
+        <button
+          onClick={() => router.push("/")}
+          className="shrink-0 rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 transition hover:bg-gray-50"
+        >
+          ← 返回首页
+        </button>
+        <h1 className="flex-1 text-center text-base font-bold">
           购物车 ({cart?.totalCount || 0})
         </h1>
       </div>

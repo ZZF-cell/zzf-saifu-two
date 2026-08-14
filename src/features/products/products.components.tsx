@@ -88,9 +88,10 @@ export function CategoryFilter({
 }: CategoryFilterProps) {
   const activeNode = categories.find((n) => n.category === activeCategory);
   const subcategories = activeNode?.subcategories ?? [];
+  const showSubRow = activeCategory && subcategories.length > 0;
 
   return (
-    <div className="space-y-2">
+    <div>
       <div className="flex gap-2 overflow-x-auto pb-1">
         <button
           onClick={() => onCategoryChange(undefined)}
@@ -116,33 +117,43 @@ export function CategoryFilter({
           </button>
         ))}
       </div>
-      {activeCategory && subcategories.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          <button
-            onClick={() => onSubCategoryChange(undefined)}
-            className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition ${
-              !activeSubCategory
-                ? "bg-primary/10 text-primary"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-            }`}
-          >
-            全部子类
-          </button>
-          {subcategories.map((sub) => (
-            <button
-              key={sub}
-              onClick={() => onSubCategoryChange(sub)}
-              className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition ${
-                activeSubCategory === sub
-                  ? "bg-primary text-white"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-              }`}
-            >
-              {sub}
-            </button>
-          ))}
+
+      {/* 子类行：grid-rows 过渡平滑展开/收起，点大类时不再瞬时下移下方内容造成抖动 */}
+      <div
+        className={`grid transition-[grid-template-rows] duration-200 ease-out ${
+          showSubRow ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+        }`}
+      >
+        <div className="min-h-0 overflow-hidden">
+          {showSubRow && (
+            <div className="flex gap-2 overflow-x-auto pb-1 pt-2">
+              <button
+                onClick={() => onSubCategoryChange(undefined)}
+                className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition ${
+                  !activeSubCategory
+                    ? "bg-primary/10 text-primary"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                }`}
+              >
+                全部子类
+              </button>
+              {subcategories.map((sub) => (
+                <button
+                  key={sub}
+                  onClick={() => onSubCategoryChange(sub)}
+                  className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition ${
+                    activeSubCategory === sub
+                      ? "bg-primary text-white"
+                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
+                >
+                  {sub}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

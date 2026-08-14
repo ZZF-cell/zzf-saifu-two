@@ -136,14 +136,22 @@ export function HomePage() {
           <SortSelector value={sort} onChange={setSort} />
         </div>
 
-        {/* Product Grid */}
-        {loading ? (
+        {/* Product Grid：首次加载才显示骨架；分类/排序/翻页刷新时保留旧网格（置灰）避免高度跳变 */}
+        {loading && products.length === 0 ? (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {Array.from({ length: 8 }).map((_, i) => (
+              // 骨架结构与 ProductCard（方形图 + 文本块）对齐，切换时不产生高度差
               <div
                 key={i}
-                className="aspect-[3/4] animate-pulse rounded-xl bg-gray-100"
-              />
+                className="overflow-hidden rounded-xl border border-border bg-white"
+              >
+                <div className="aspect-square animate-pulse bg-gray-100" />
+                <div className="space-y-2 p-3">
+                  <div className="h-4 w-3/4 animate-pulse rounded bg-gray-100" />
+                  <div className="h-5 w-1/3 animate-pulse rounded bg-gray-100" />
+                  <div className="h-3 w-1/4 animate-pulse rounded bg-gray-100" />
+                </div>
+              </div>
             ))}
           </div>
         ) : loadError && products.length === 0 ? (
@@ -151,7 +159,9 @@ export function HomePage() {
             <p className="text-lg">{loadError}</p>
           </div>
         ) : (
-          <ProductGrid products={products} />
+          <div className={loading ? "pointer-events-none opacity-60 transition-opacity" : "transition-opacity"}>
+            <ProductGrid products={products} />
+          </div>
         )}
 
         {/* Pagination */}
@@ -222,6 +232,16 @@ export function ProductDetailPage({ id }: { id: string }) {
     <main className="mx-auto min-h-screen max-w-lg bg-white pb-24">
       {/* 图片轮播 */}
       <div className="relative aspect-square bg-gray-50">
+        {/* 返回：深链直达时无历史记录则回首页，避免浏览器退出 */}
+        <button
+          onClick={() =>
+            window.history.length > 1 ? router.back() : router.push("/")
+          }
+          aria-label="返回"
+          className="absolute left-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-black/30 text-lg text-white backdrop-blur transition hover:bg-black/50"
+        >
+          ←
+        </button>
         <Image
           src={images[selectedImage]}
           alt={product.name}

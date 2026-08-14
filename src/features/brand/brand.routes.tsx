@@ -1,10 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { apiFetch } from "@/shared/api/client";
 import { fenToYuan } from "@/shared/utils/money";
+import { firstFieldError } from "@/shared/utils/api-errors";
 import { SiteHeader } from "@/shared/ui/SiteHeader";
+import { Image } from "@/shared/ui/Image";
 import { PRODUCT_CATEGORIES, getSubcategories } from "@/shared/constants/product-categories";
+import {
+  MAX_UPLOAD_BYTES,
+  ALLOWED_IMAGE_TYPES,
+  MAX_PRODUCT_IMAGES,
+} from "@/shared/constants/upload";
 
 // ── helpers ──
 
@@ -139,9 +146,46 @@ function SubmitProductTab() {
     stock: "",
     description: "",
   });
+  const [images, setImages] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /** 上传商品图：POST /api/upload（multipart 字段 file + purpose=product）→ 成功后追加 URL，最多 5 张 */
+  const handleImageUpload = async (file: File) => {
+    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+      setError("仅支持 JPG/PNG/WebP 图片");
+      return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError("图片不能超过 4MB");
+      return;
+    }
+    if (images.length >= MAX_PRODUCT_IMAGES) {
+      setError(`最多上传 ${MAX_PRODUCT_IMAGES} 张图片`);
+      return;
+    }
+    setUploading(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("purpose", "product");
+      const res = await apiFetch("/api/upload", { method: "POST", body: form });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        // 后端 422 带 details（字段 → 具体原因），优先展示具体原因
+        throw new Error(firstFieldError(data?.details) || data?.message || "上传失败");
+      }
+      setImages((prev) => [...prev, data.url]);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "上传失败");
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const handleSubmit = async () => {
     setError("");
@@ -163,9 +207,11 @@ function SubmitProductTab() {
         price,
         stock,
         description: form.description.trim() || undefined,
+        images: images.length > 0 ? images : undefined,
       });
       setSuccess("商品已提交，等待平台质检");
       setForm({ name: "", category: "", subCategory: "", price: "", stock: "", description: "" });
+      setImages([]);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "提交失败");
     } finally {
@@ -237,12 +283,65 @@ function SubmitProductTab() {
             rows={3}
             className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
           />
+          {/* 商品图片：上传（POST /api/upload purpose=product）→ OSS URL 回填，最多 5 张 */}
+          <div>
+            <p className="text-xs font-medium text-gray-500">
+              商品图片（选填，最多 {MAX_PRODUCT_IMAGES} 张）
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {images.map((url, i) => (
+                <div key={url} className="relative">
+                  <Image
+                    src={url}
+                    alt={`商品图片 ${i + 1}`}
+                    width={64}
+                    height={64}
+                    className="h-16 w-16 rounded-lg border border-gray-100 object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setImages((prev) => prev.filter((_, idx) => idx !== i))
+                    }
+                    aria-label={`删除第 ${i + 1} 张图片`}
+                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-gray-800 text-xs leading-none text-white transition hover:bg-gray-900"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+              {images.length < MAX_PRODUCT_IMAGES && (
+                <>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept={ALLOWED_IMAGE_TYPES.join(",")}
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) void handleImageUpload(file);
+                      e.target.value = ""; // 允许重复选择同一文件
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading || submitting}
+                    aria-label="上传商品图片"
+                    className="flex h-16 w-16 items-center justify-center rounded-lg border border-dashed border-gray-300 text-2xl text-gray-400 transition hover:border-primary hover:text-primary disabled:opacity-50"
+                  >
+                    {uploading ? "…" : "+"}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
         </div>
         {error && <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
         {success && <div className="mt-3 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{success}</div>}
         <button
           onClick={handleSubmit}
-          disabled={submitting}
+          disabled={submitting || uploading}
           className="mt-4 w-full rounded-lg bg-primary py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
         >
           {submitting ? "提交中..." : "提交审核"}
