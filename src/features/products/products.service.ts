@@ -114,8 +114,10 @@ export async function getProductList(
 export async function getProductById(
   id: string,
 ): Promise<ProductDetail | null> {
-  const product = await prisma.product.findUnique({
-    where: { id },
+  // 公开详情只放行「已上架」商品：下架/待审/撤回/拒绝一律视为不存在（404），
+  // DB 层过滤，不泄露非在售商品存在性。内部需要任意状态详情走各自 queries 层。
+  const product = await prisma.product.findFirst({
+    where: { id, status: "APPROVED" },
     include: {
       brand: { select: { id: true, name: true } },
     },

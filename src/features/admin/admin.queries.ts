@@ -162,6 +162,69 @@ export async function getAdminProducts(params: {
   };
 }
 
+// ── 商品详情（管理端：完整信息 + 该品类质检清单） ──
+
+export interface AdminProductDetail {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string;
+  subCategory: string | null;
+  price: number;
+  stock: number;
+  status: string;
+  sales: number;
+  images: unknown;
+  specs: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+  version: number;
+  brand: { id: string; name: string; logo: string | null } | null;
+  /** 该大类质检模板（requiredDocs/checkPoints）；无模板 → null */
+  qcTemplate: {
+    requiredDocs: unknown;
+    checkPoints: unknown;
+  } | null;
+}
+
+/**
+ * 管理端商品详情 — 商品全字段 + 品牌 + 该品类质检清单。
+ * 质检清单决定审核员「按什么标准查什么」，是审核决策的完整信息闭环。
+ */
+export async function getAdminProductDetail(productId: string): Promise<AdminProductDetail | null> {
+  const product = await prisma.product.findUnique({
+    where: { id: productId },
+    include: {
+      brand: { select: { id: true, name: true, logo: true } },
+    },
+  });
+  if (!product) return null;
+
+  const template = await prisma.categoryAuditTemplate.findUnique({
+    where: { categoryId: product.category },
+    select: { requiredDocs: true, checkPoints: true },
+  });
+
+  return {
+    id: product.id,
+    name: product.name,
+    description: product.description,
+    category: product.category,
+    subCategory: product.subCategory,
+    price: product.price,
+    stock: product.stock,
+    status: product.status,
+    sales: product.sales,
+    images: product.images,
+    specs: product.specs,
+    createdAt: product.createdAt,
+    updatedAt: product.updatedAt,
+    version: product.version,
+    brand: product.brand,
+    qcTemplate: template,
+  };
+}
+
 // ── 订单管理列表 ──
 
 export interface AdminOrderRow {

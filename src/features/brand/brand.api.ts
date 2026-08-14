@@ -3,36 +3,18 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withValidation, apiError, parsePagination } from "@/shared/utils/api";
 import { requireRole } from "@/shared/api/auth";
+import { ERROR_CODES } from "@/shared/errors/errors";
 import { ossImageUrlSchema } from "@/shared/validation/schemas";
-import { isValidCategoryPair } from "@/shared/constants/product-categories";
+import { productFields, categoryPairRefine, updateProductSchema } from "@/shared/validation/product";
 import * as brandQueries from "./brand.queries";
 import * as brandService from "./brand.service";
 
 // ── Schemas ──
+// 字段约束统一来自 shared/validation/product（submit 全量必填，update 部分可选）
 
 export const submitProductSchema = z
-  .object({
-    name: z.string().trim().min(1, "商品名称不能为空").max(100),
-    description: z.string().trim().max(2000).optional(),
-    category: z.string().trim().min(1, "请选择大类").max(50),
-    subCategory: z.string().trim().min(1, "请选择子类").max(50),
-    images: z.array(ossImageUrlSchema).max(5, "最多 5 张图片").optional(),
-    // 价格（元）：min 0.01 保证元→分后至少 1 分（0.001 会 round 成 0 分免费商品）；
-    // max 21_474_836 保证 ×100 后不超 PostgreSQL Int 上限（2^31-1），防溢出写库报 500
-    price: z.number().positive("价格必须大于 0").min(0.01).max(21_474_836),
-    stock: z.number().int().min(0, "库存不能为负").max(2_147_483_647), // Int 上限
-    specs: z.record(z.string(), z.string()).optional(),
-  })
-  .superRefine((data, ctx) => {
-    // 大类 + 子类必须是类目树中的合法组合（空字符串/非法组合统一拦截，错误指向子类）
-    if (!isValidCategoryPair(data.category, data.subCategory)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["subCategory"],
-        message: "大类与子类不是合法组合",
-      });
-    }
-  });
+  .object(productFields)
+  .superRefine(categoryPairRefine);
 
 // ── 品牌归属（所有品牌接口先取当前用户品牌） ──
 // 仅 BRAND 角色：品牌中心是品牌方自己的后台，ADMIN 看订单/商品走 /api/admin；
@@ -79,6 +61,80 @@ export const submitProduct = withValidation(
     return NextResponse.json(result, { status: 201 });
   },
 );
+
+// ── 商品撤回 / 下架 / 重新上架（参数路由，手动解析，归属由 requireBrand + service 双重守卫） ──
+
+/** POST /api/brand/products/[id]/withdraw — 撤回待审提交（PENDING → WITHDRAWN） */
+export async function withdrawProduct(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { brand, user } = await requireBrand(req);
+    const { id } = await ctx.params;
+    await brandService.withdrawProduct(brand.id, id, user.userId);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
+/** POST /api/brand/products/[id]/delist — 下架（APPROVED → DELISTED） */
+export async function delistProduct(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { brand, user } = await requireBrand(req);
+    const { id } = await ctx.params;
+    await brandService.delistProduct(brand.id, id, user.userId);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
+/** POST /api/brand/products/[id]/relist — 重新上架（DELISTED → APPROVED，不重质检） */
+export async function relistProduct(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { brand, user } = await requireBrand(req);
+    const { id } = await ctx.params;
+    await brandService.relistProduct(brand.id, id, user.userId);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
+/**
+ * PATCH /api/brand/products/[id] — 编辑商品
+ * 基本信息变更 → 已上架/已下架回待质检、拒绝/撤回重新提交；仅运营信息（价格/库存）→ 直改
+ * 参数路由无法复用 withValidation（其 handler 只收 (data, req)），手动 req.json + safeParse
+ */
+export async function updateProduct(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { brand, user } = await requireBrand(req);
+    const { id } = await ctx.params;
+    const body = await req.json().catch(() => null);
+    const parsed = updateProductSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: ERROR_CODES.VALIDATION_ERROR.code, message: "请求参数不符合预期" },
+        { status: 422 },
+      );
+    }
+    const result = await brandService.updateProduct(brand.id, id, parsed.data, user.userId);
+    return NextResponse.json(result);
+  } catch (error) {
+    return apiError(error);
+  }
+}
 
 // ── 更新品牌资料（名称/logo） ──
 

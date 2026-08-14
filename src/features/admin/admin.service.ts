@@ -4,11 +4,13 @@
 import { prisma } from "@/shared/db/client";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import { ORDER_STATUS } from "@/features/orders";
+import { yuanToFen } from "@/shared/utils/money";
 import type { Prisma } from "@prisma/client";
 
 export type ReviewDecision = "APPROVED" | "REJECTED";
 
 // ── 审计日志（后台所有操作留痕） ──
+// snapshot 可选：编辑类操作存 {before, after}，便于追溯变更前后
 
 async function writeAuditLog(
   tx: Prisma.TransactionClient,
@@ -16,9 +18,16 @@ async function writeAuditLog(
   targetId: string,
   action: string,
   operatorId: string,
+  snapshot?: unknown,
 ): Promise<void> {
   await tx.auditLog.create({
-    data: { targetType, targetId, action, operatorId },
+    data: {
+      targetType,
+      targetId,
+      action,
+      operatorId,
+      ...(snapshot !== undefined ? { snapshot: snapshot as object } : {}),
+    },
   });
 }
 
@@ -68,10 +77,10 @@ export async function reviewProduct(
   operatorId: string,
 ): Promise<void> {
   await prisma.$transaction(async (tx) => {
-    // 仅 PENDING 商品可质检（状态守卫）
+    // 仅 PENDING 商品可质检（状态守卫）；version bump 与后续编辑/下单乐观锁语义一致
     const updated = await tx.product.updateMany({
       where: { id: productId, status: "PENDING" },
-      data: { status: decision },
+      data: { status: decision, version: { increment: 1 } },
     });
     if (updated.count === 0) {
       const exists = await tx.product.findUnique({
@@ -84,6 +93,158 @@ export async function reviewProduct(
       );
     }
     await writeAuditLog(tx, "Product", productId, `REVIEW_${decision}`, operatorId);
+  });
+}
+
+// ── 商品下架 / 重新上架 / 编辑（与品牌方同一套状态机，操作人是管理员） ──
+
+export interface AdminProductUpdateInput {
+  name?: string;
+  description?: string | null;
+  category?: string;
+  subCategory?: string;
+  price?: number; // 元
+  stock?: number;
+  images?: string[];
+  specs?: Record<string, string>;
+}
+
+/** 基本信息变更判定（只读旧值比较）：
+    价格/库存属运营信息，仅改它们不触发重审；整表单提交（前端全量字段）也不会误判 */
+function basicInfoChanged(
+  old: {
+    name: string;
+    category: string;
+    subCategory: string | null;
+    description: string | null;
+    images: unknown;
+    specs: unknown;
+  },
+  input: AdminProductUpdateInput,
+): boolean {
+  if (input.name !== undefined && input.name !== old.name) return true;
+  if (input.category !== undefined && input.category !== old.category) return true;
+  if (input.subCategory !== undefined && input.subCategory !== old.subCategory) return true;
+  // description 传 ""（表单清空）归一化 null：与写侧 `input.description || null` 一致，
+  // 旧值为 null 时清空不误判为重审
+  if (input.description !== undefined && (input.description || null) !== old.description) return true;
+  if (input.images !== undefined && JSON.stringify(input.images) !== JSON.stringify(old.images)) return true;
+  if (input.specs !== undefined && JSON.stringify(input.specs) !== JSON.stringify(old.specs)) return true;
+  return false;
+}
+
+export async function delistProduct(productId: string, operatorId: string): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    // 仅 APPROVED 可下架（状态守卫）
+    const updated = await tx.product.updateMany({
+      where: { id: productId, status: "APPROVED" },
+      data: { status: "DELISTED", version: { increment: 1 } },
+    });
+    if (updated.count === 0) {
+      const exists = await tx.product.findUnique({
+        where: { id: productId },
+        select: { id: true },
+      });
+      throw new AppError(
+        exists ? ERROR_CODES.PRODUCT_STATUS_INVALID : ERROR_CODES.PRODUCT_NOT_FOUND,
+        exists ? "仅已上架商品可下架" : "商品不存在",
+      );
+    }
+    await writeAuditLog(tx, "Product", productId, "PRODUCT_DELISTED", operatorId);
+  });
+}
+
+export async function relistProduct(productId: string, operatorId: string): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    // 仅 DELISTED 可重新上架（状态守卫；不重质检，用户已确认）
+    const updated = await tx.product.updateMany({
+      where: { id: productId, status: "DELISTED" },
+      data: { status: "APPROVED", version: { increment: 1 } },
+    });
+    if (updated.count === 0) {
+      const exists = await tx.product.findUnique({
+        where: { id: productId },
+        select: { id: true },
+      });
+      throw new AppError(
+        exists ? ERROR_CODES.PRODUCT_STATUS_INVALID : ERROR_CODES.PRODUCT_NOT_FOUND,
+        exists ? "仅已下架商品可重新上架" : "商品不存在",
+      );
+    }
+    await writeAuditLog(tx, "Product", productId, "PRODUCT_RELISTED", operatorId);
+  });
+}
+
+export async function updateProduct(
+  productId: string,
+  input: AdminProductUpdateInput,
+  operatorId: string,
+): Promise<{ id: string; status: string }> {
+  return prisma.$transaction(async (tx) => {
+    // 事务内读旧值：与写同一快照，比较结果与守卫一致
+    const old = await tx.product.findUnique({
+      where: { id: productId },
+      select: {
+        id: true,
+        name: true,
+        category: true,
+        subCategory: true,
+        description: true,
+        images: true,
+        specs: true,
+        status: true,
+      },
+    });
+    if (!old) throw new AppError(ERROR_CODES.PRODUCT_NOT_FOUND, "商品不存在");
+
+    const basicChanged = basicInfoChanged(old, input);
+
+    // 状态机：已上架/已下架改基本信息 → 回待质检（保住品质关）；
+    // 拒绝/撤回任意修改 → 重新提交；仅运营信息 → 状态不变
+    let nextStatus = old.status;
+    let action = "PRODUCT_UPDATE";
+    if (basicChanged && (old.status === "APPROVED" || old.status === "DELISTED")) {
+      nextStatus = "PENDING";
+      action = "PRODUCT_UPDATE_REVIEW";
+    } else if (old.status === "REJECTED" || old.status === "WITHDRAWN") {
+      nextStatus = "PENDING";
+      action = "PRODUCT_UPDATE_RESUBMIT";
+    }
+
+    const data: Prisma.ProductUpdateManyMutationInput = {
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      // description 清空：schema 为 optional 非 nullable，传 "" 归一化 null 防误判重审
+      ...(input.description !== undefined ? { description: input.description || null } : {}),
+      ...(input.category !== undefined ? { category: input.category } : {}),
+      ...(input.subCategory !== undefined ? { subCategory: input.subCategory } : {}),
+      ...(input.price !== undefined ? { price: yuanToFen(input.price) } : {}),
+      ...(input.stock !== undefined ? { stock: input.stock } : {}),
+      ...(input.images !== undefined ? { images: input.images as unknown as object } : {}),
+      ...(input.specs !== undefined ? { specs: input.specs as unknown as object } : {}),
+      ...(nextStatus !== old.status ? { status: nextStatus } : {}),
+      version: { increment: 1 },
+    };
+
+    // 守卫 status: old.status：读后如有并发状态变更，本次写入整体失败，不覆盖他人决策
+    const updated = await tx.product.updateMany({
+      where: { id: productId, status: old.status },
+      data,
+    });
+    if (updated.count === 0) {
+      throw new AppError(ERROR_CODES.PRODUCT_STATUS_INVALID, "商品状态已变更，请刷新后重试");
+    }
+
+    await writeAuditLog(tx, "Product", productId, action, operatorId, {
+      before: {
+        name: old.name,
+        category: old.category,
+        subCategory: old.subCategory,
+        status: old.status,
+      },
+      after: { status: nextStatus },
+    });
+
+    return { id: productId, status: nextStatus };
   });
 }
 

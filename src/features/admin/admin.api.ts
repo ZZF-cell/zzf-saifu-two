@@ -4,6 +4,7 @@ import { z } from "zod";
 import { apiError, withValidation, parsePagination } from "@/shared/utils/api";
 import { ERROR_CODES } from "@/shared/errors/errors";
 import { requireRole } from "@/shared/api/auth";
+import { updateProductSchema } from "@/shared/validation/product";
 import * as adminQueries from "./admin.queries";
 import * as adminService from "./admin.service";
 import type { ReviewDecision } from "./admin.service";
@@ -105,6 +106,85 @@ export async function getProducts(req: Request) {
 
 export function reviewProduct(req: Request, ctx: { params: Promise<{ id: string }> }) {
   return handleReview(req, ctx, adminService.reviewProduct);
+}
+
+// ── 商品生命周期（下架/重新上架/编辑，与品牌方同一套状态机，操作人是管理员） ──
+
+/** GET /api/admin/products/[id] — 审核/管理详情（完整信息 + 该品类质检清单） */
+export async function getProductDetail(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  try {
+    await requireRole(req, ["ADMIN"]);
+    const { id } = await ctx.params;
+    const detail = await adminQueries.getAdminProductDetail(id);
+    if (!detail) {
+      return NextResponse.json(
+        { error: ERROR_CODES.PRODUCT_NOT_FOUND.code, message: "商品不存在" },
+        { status: 404 },
+      );
+    }
+    return NextResponse.json(detail);
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
+/** POST /api/admin/products/[id]/delist — 下架（APPROVED → DELISTED） */
+export async function delistProduct(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  try {
+    const admin = await requireRole(req, ["ADMIN"]);
+    const { id } = await ctx.params;
+    await adminService.delistProduct(id, admin.userId);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
+/** POST /api/admin/products/[id]/relist — 重新上架（DELISTED → APPROVED，不重质检） */
+export async function relistProduct(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  try {
+    const admin = await requireRole(req, ["ADMIN"]);
+    const { id } = await ctx.params;
+    await adminService.relistProduct(id, admin.userId);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
+/**
+ * PATCH /api/admin/products/[id] — 编辑商品
+ * 与品牌方同规则：改基本信息 → 回 PENDING 重审；仅改价格/库存 → 直改
+ */
+export async function updateProduct(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  try {
+    const admin = await requireRole(req, ["ADMIN"]);
+    const { id } = await ctx.params;
+    const body = await req.json().catch(() => null);
+    const parsed = updateProductSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: ERROR_CODES.VALIDATION_ERROR.code, message: "请求参数不符合预期" },
+        { status: 422 },
+      );
+    }
+    const result = await adminService.updateProduct(id, parsed.data, admin.userId);
+    return NextResponse.json(result);
+  } catch (error) {
+    return apiError(error);
+  }
 }
 
 // ── 订单管理 ──

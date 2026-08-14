@@ -5,12 +5,14 @@
 // 核心契约：提交商品要求品牌已 APPROVED（FORBIDDEN），价格必须以元→分存储，
 // 新商品默认 status=PENDING 待平台质检。
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
 
 vi.mock("@/shared/db/client", () => ({
   prisma: {
     brand: { findUnique: vi.fn(), update: vi.fn() },
-    product: { create: vi.fn() },
+    product: { create: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
+    auditLog: { create: vi.fn() },
+    $transaction: vi.fn(),
   },
 }));
 
@@ -18,11 +20,31 @@ import { prisma } from "@/shared/db/client";
 import { ERROR_CODES } from "@/shared/errors/errors";
 import {
   submitProduct,
+  withdrawProduct,
+  delistProduct,
+  relistProduct,
+  updateProduct,
   updateBrandProfile,
 } from "@/features/brand/brand.service";
 
+// ── 交互事务 mock：$transaction(fn) 以 tx 对象调用 fn（生命周期操作全部走事务） ──
+
+type Tx = {
+  product: { updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
+  auditLog: { create: ReturnType<typeof vi.fn> };
+};
+
+let tx: Tx;
+type TransactionImpl = (fn: (tx: Tx) => Promise<unknown>) => Promise<unknown>;
+const transactionMock = prisma.$transaction as unknown as Mock<TransactionImpl>;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  tx = {
+    product: { updateMany: vi.fn(), findUnique: vi.fn() },
+    auditLog: { create: vi.fn() },
+  };
+  transactionMock.mockImplementation((fn: (tx: Tx) => Promise<unknown>) => fn(tx));
 });
 
 // ── 提交商品 ──
@@ -180,5 +202,195 @@ describe("updateBrandProfile — 更新品牌资料", () => {
       where: { id: "brand-1" },
       data: {},
     });
+  });
+});
+
+// ── 商品生命周期：撤回 / 下架 / 重新上架 / 编辑（where 强制 brandId 归属） ──
+
+describe("withdrawProduct — 撤回待审提交（PENDING → WITHDRAWN）", () => {
+  it("PENDING 商品 → 置 WITHDRAWN + version bump + 审计 PRODUCT_WITHDRAWN", async () => {
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+
+    await withdrawProduct("brand-1", "product-1", "user-1");
+
+    expect(tx.product.updateMany).toHaveBeenCalledWith({
+      where: { id: "product-1", brandId: "brand-1", status: "PENDING" },
+      data: { status: "WITHDRAWN", version: { increment: 1 } },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: { targetType: "Product", targetId: "product-1", action: "PRODUCT_WITHDRAWN", operatorId: "user-1" },
+    });
+  });
+
+  it("守卫 0 行但商品属于其他品牌 → 抛 403 BRAND_NOT_OWNED", async () => {
+    tx.product.updateMany.mockResolvedValue({ count: 0 });
+    tx.product.findUnique.mockResolvedValue({ brandId: "brand-other" });
+
+    await expect(withdrawProduct("brand-1", "product-1", "user-1")).rejects.toMatchObject({
+      code: ERROR_CODES.BRAND_NOT_OWNED.code,
+      statusCode: 403,
+    });
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("守卫 0 行且商品不存在 → 抛 404 PRODUCT_NOT_FOUND", async () => {
+    tx.product.updateMany.mockResolvedValue({ count: 0 });
+    tx.product.findUnique.mockResolvedValue(null);
+
+    await expect(withdrawProduct("brand-1", "product-x", "user-1")).rejects.toMatchObject({
+      code: ERROR_CODES.PRODUCT_NOT_FOUND.code,
+    });
+  });
+
+  it("守卫 0 行且商品非 PENDING（已上架）→ 抛 409 PRODUCT_STATUS_INVALID", async () => {
+    tx.product.updateMany.mockResolvedValue({ count: 0 });
+    tx.product.findUnique.mockResolvedValue({ brandId: "brand-1" });
+
+    await expect(withdrawProduct("brand-1", "product-1", "user-1")).rejects.toMatchObject({
+      code: ERROR_CODES.PRODUCT_STATUS_INVALID.code,
+      statusCode: 409,
+    });
+  });
+});
+
+describe("delistProduct — 品牌下架（APPROVED → DELISTED）", () => {
+  it("APPROVED 商品 → 置 DELISTED + 审计（where 带 brandId）", async () => {
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+
+    await delistProduct("brand-1", "product-1", "user-1");
+
+    expect(tx.product.updateMany).toHaveBeenCalledWith({
+      where: { id: "product-1", brandId: "brand-1", status: "APPROVED" },
+      data: { status: "DELISTED", version: { increment: 1 } },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: { targetType: "Product", targetId: "product-1", action: "PRODUCT_DELISTED", operatorId: "user-1" },
+    });
+  });
+
+  it("商品属于其他品牌（守卫 0 行）→ 抛 403 BRAND_NOT_OWNED", async () => {
+    tx.product.updateMany.mockResolvedValue({ count: 0 });
+    tx.product.findUnique.mockResolvedValue({ brandId: "brand-other" });
+
+    await expect(delistProduct("brand-1", "product-1", "user-1")).rejects.toMatchObject({
+      code: ERROR_CODES.BRAND_NOT_OWNED.code,
+    });
+  });
+});
+
+describe("relistProduct — 品牌重新上架（DELISTED → APPROVED，不重质检）", () => {
+  it("DELISTED 商品 → 置 APPROVED + 审计 PRODUCT_RELISTED", async () => {
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+
+    await relistProduct("brand-1", "product-1", "user-1");
+
+    expect(tx.product.updateMany).toHaveBeenCalledWith({
+      where: { id: "product-1", brandId: "brand-1", status: "DELISTED" },
+      data: { status: "APPROVED", version: { increment: 1 } },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: { targetType: "Product", targetId: "product-1", action: "PRODUCT_RELISTED", operatorId: "user-1" },
+    });
+  });
+
+  it("非 DELISTED（如 WITHDRAWN）→ 抛 409，WITHDRAWN 不会误上架", async () => {
+    tx.product.updateMany.mockResolvedValue({ count: 0 });
+    tx.product.findUnique.mockResolvedValue({ brandId: "brand-1" });
+
+    await expect(relistProduct("brand-1", "product-1", "user-1")).rejects.toMatchObject({
+      code: ERROR_CODES.PRODUCT_STATUS_INVALID.code,
+    });
+  });
+});
+
+describe("updateProduct — 品牌编辑商品（归属守卫 + 状态机）", () => {
+  const baseOld = {
+    id: "product-1",
+    brandId: "brand-1",
+    name: "静音震动器",
+    category: "智能设备",
+    subCategory: "智能健康监测",
+    description: "低噪 50dB",
+    images: [],
+    specs: {},
+    status: "APPROVED",
+  };
+
+  it("改基本信息（name）→ 回 PENDING 重审 + 审计 PRODUCT_UPDATE_REVIEW", async () => {
+    tx.product.findUnique.mockResolvedValue(baseOld);
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await updateProduct("brand-1", "product-1", { name: "静音震动器 Pro" }, "user-1");
+
+    expect(result).toEqual({ id: "product-1", status: "PENDING" });
+    expect(tx.product.updateMany).toHaveBeenCalledWith({
+      where: { id: "product-1", brandId: "brand-1", status: "APPROVED" },
+      data: { name: "静音震动器 Pro", status: "PENDING", version: { increment: 1 } },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "PRODUCT_UPDATE_REVIEW" }),
+    });
+  });
+
+  it("仅改运营信息（price）→ 状态不变 + 价格元→分 + 审计 PRODUCT_UPDATE", async () => {
+    tx.product.findUnique.mockResolvedValue(baseOld);
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await updateProduct("brand-1", "product-1", { price: 199 }, "user-1");
+
+    expect(result).toEqual({ id: "product-1", status: "APPROVED" });
+    expect(tx.product.updateMany).toHaveBeenCalledWith({
+      where: { id: "product-1", brandId: "brand-1", status: "APPROVED" },
+      data: { price: 19900, version: { increment: 1 } },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "PRODUCT_UPDATE" }),
+    });
+  });
+
+  it("WITHDRAWN 任意修改 → 回 PENDING 重新提交 + 审计 PRODUCT_UPDATE_RESUBMIT", async () => {
+    tx.product.findUnique.mockResolvedValue({ ...baseOld, status: "WITHDRAWN" });
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await updateProduct("brand-1", "product-1", { stock: 20 }, "user-1");
+
+    expect(result).toEqual({ id: "product-1", status: "PENDING" });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "PRODUCT_UPDATE_RESUBMIT" }),
+    });
+  });
+
+  it("商品属于其他品牌 → 抛 403 BRAND_NOT_OWNED（读取即拒绝，不进入更新）", async () => {
+    tx.product.findUnique.mockResolvedValue({ ...baseOld, brandId: "brand-other" });
+
+    await expect(
+      updateProduct("brand-1", "product-1", { name: "越权改名" }, "user-1"),
+    ).rejects.toMatchObject({
+      code: ERROR_CODES.BRAND_NOT_OWNED.code,
+    });
+    expect(tx.product.updateMany).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("商品不存在 → 抛 404 PRODUCT_NOT_FOUND", async () => {
+    tx.product.findUnique.mockResolvedValue(null);
+
+    await expect(
+      updateProduct("brand-1", "product-x", { name: "x" }, "user-1"),
+    ).rejects.toMatchObject({
+      code: ERROR_CODES.PRODUCT_NOT_FOUND.code,
+    });
+  });
+
+  it("读后状态并发变更（守卫 0 行）→ 抛 409，不覆盖他人决策", async () => {
+    tx.product.findUnique.mockResolvedValue(baseOld);
+    tx.product.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      updateProduct("brand-1", "product-1", { name: "并发改动" }, "user-1"),
+    ).rejects.toMatchObject({
+      code: ERROR_CODES.PRODUCT_STATUS_INVALID.code,
+    });
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
 });

@@ -44,6 +44,9 @@ import { ERROR_CODES } from "@/shared/errors/errors";
 import {
   reviewBrand,
   reviewProduct,
+  delistProduct,
+  relistProduct,
+  updateProduct,
   shipOrder,
   deliverOrder,
   completeOrder,
@@ -162,14 +165,14 @@ describe("reviewBrand — 品牌入驻审核", () => {
 // ── 商品质检 ──
 
 describe("reviewProduct — 商品质检", () => {
-  it("PENDING 商品 → 置 APPROVED + 审计日志", async () => {
+  it("PENDING 商品 → 置 APPROVED + version bump + 审计日志", async () => {
     tx.product.updateMany.mockResolvedValue({ count: 1 });
 
     await reviewProduct("product-1", "APPROVED", "admin-1");
 
     expect(tx.product.updateMany).toHaveBeenCalledWith({
       where: { id: "product-1", status: "PENDING" },
-      data: { status: "APPROVED" },
+      data: { status: "APPROVED", version: { increment: 1 } },
     });
     expect(tx.auditLog.create).toHaveBeenCalledWith({
       data: { targetType: "Product", targetId: "product-1", action: "REVIEW_APPROVED", operatorId: "admin-1" },
@@ -194,6 +197,187 @@ describe("reviewProduct — 商品质检", () => {
     await expect(reviewProduct("product-x", "REJECTED", "admin-1")).rejects.toMatchObject({
       code: ERROR_CODES.PRODUCT_NOT_FOUND.code,
     });
+  });
+});
+
+// ── 商品生命周期：下架 / 重新上架 / 编辑 ──
+
+describe("delistProduct — 下架（APPROVED → DELISTED）", () => {
+  it("APPROVED 商品 → 置 DELISTED + version bump + 审计 PRODUCT_DELISTED", async () => {
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+
+    await delistProduct("product-1", "admin-1");
+
+    expect(tx.product.updateMany).toHaveBeenCalledWith({
+      where: { id: "product-1", status: "APPROVED" },
+      data: { status: "DELISTED", version: { increment: 1 } },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: { targetType: "Product", targetId: "product-1", action: "PRODUCT_DELISTED", operatorId: "admin-1" },
+    });
+  });
+
+  it("守卫 0 行但商品存在（非 APPROVED）→ 抛 409 PRODUCT_STATUS_INVALID", async () => {
+    tx.product.updateMany.mockResolvedValue({ count: 0 });
+    tx.product.findUnique.mockResolvedValue({ id: "product-1" });
+
+    await expect(delistProduct("product-1", "admin-1")).rejects.toMatchObject({
+      code: ERROR_CODES.PRODUCT_STATUS_INVALID.code,
+      statusCode: 409,
+    });
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("守卫 0 行且商品不存在 → 抛 404 PRODUCT_NOT_FOUND", async () => {
+    tx.product.updateMany.mockResolvedValue({ count: 0 });
+    tx.product.findUnique.mockResolvedValue(null);
+
+    await expect(delistProduct("product-x", "admin-1")).rejects.toMatchObject({
+      code: ERROR_CODES.PRODUCT_NOT_FOUND.code,
+    });
+  });
+});
+
+describe("relistProduct — 重新上架（DELISTED → APPROVED）", () => {
+  it("DELISTED 商品 → 置 APPROVED + version bump + 审计 PRODUCT_RELISTED（不重质检）", async () => {
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+
+    await relistProduct("product-1", "admin-1");
+
+    expect(tx.product.updateMany).toHaveBeenCalledWith({
+      where: { id: "product-1", status: "DELISTED" },
+      data: { status: "APPROVED", version: { increment: 1 } },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: { targetType: "Product", targetId: "product-1", action: "PRODUCT_RELISTED", operatorId: "admin-1" },
+    });
+  });
+
+  it("守卫 0 行但商品存在（非 DELISTED）→ 抛 409", async () => {
+    tx.product.updateMany.mockResolvedValue({ count: 0 });
+    tx.product.findUnique.mockResolvedValue({ id: "product-1" });
+
+    await expect(relistProduct("product-1", "admin-1")).rejects.toMatchObject({
+      code: ERROR_CODES.PRODUCT_STATUS_INVALID.code,
+    });
+  });
+});
+
+describe("updateProduct — 管理端编辑商品（状态机：基本信息→重审 / 仅运营→直改 / 拒绝撤回→重提）", () => {
+  const baseOld = {
+    id: "product-1",
+    name: "静音震动器",
+    category: "智能设备",
+    subCategory: "智能健康监测",
+    description: "低噪 50dB",
+    images: [],
+    specs: {},
+    status: "APPROVED",
+  };
+
+  it("APPROVED 改基本信息（name）→ 回 PENDING + 审计 PRODUCT_UPDATE_REVIEW + snapshot 留痕", async () => {
+    tx.product.findUnique.mockResolvedValue(baseOld);
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await updateProduct("product-1", { name: "静音震动器 Pro" }, "admin-1");
+
+    expect(result).toEqual({ id: "product-1", status: "PENDING" });
+    expect(tx.product.updateMany).toHaveBeenCalledWith({
+      where: { id: "product-1", status: "APPROVED" },
+      data: {
+        name: "静音震动器 Pro",
+        status: "PENDING",
+        version: { increment: 1 },
+      },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        targetType: "Product",
+        targetId: "product-1",
+        action: "PRODUCT_UPDATE_REVIEW",
+        operatorId: "admin-1",
+        snapshot: {
+          before: {
+            name: "静音震动器",
+            category: "智能设备",
+            subCategory: "智能健康监测",
+            status: "APPROVED",
+          },
+          after: { status: "PENDING" },
+        },
+      },
+    });
+  });
+
+  it("APPROVED 仅改运营信息（price）→ 状态不变 + 审计 PRODUCT_UPDATE（价格元→分写库）", async () => {
+    tx.product.findUnique.mockResolvedValue(baseOld);
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await updateProduct("product-1", { price: 99 }, "admin-1");
+
+    expect(result).toEqual({ id: "product-1", status: "APPROVED" });
+    expect(tx.product.updateMany).toHaveBeenCalledWith({
+      where: { id: "product-1", status: "APPROVED" },
+      data: {
+        price: 9900,
+        version: { increment: 1 },
+      },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "PRODUCT_UPDATE" }),
+    });
+  });
+
+  it("REJECTED 任意修改 → 回 PENDING 重新提交 + 审计 PRODUCT_UPDATE_RESUBMIT", async () => {
+    tx.product.findUnique.mockResolvedValue({ ...baseOld, status: "REJECTED" });
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await updateProduct("product-1", { stock: 5 }, "admin-1");
+
+    expect(result).toEqual({ id: "product-1", status: "PENDING" });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "PRODUCT_UPDATE_RESUBMIT" }),
+    });
+  });
+
+  it("WITHDRAWN 任意修改 → 回 PENDING 重新提交", async () => {
+    tx.product.findUnique.mockResolvedValue({ ...baseOld, status: "WITHDRAWN" });
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await updateProduct("product-1", { description: "补充资质说明" }, "admin-1");
+
+    expect(result).toEqual({ id: "product-1", status: "PENDING" });
+  });
+
+  it("description 传空字符串 → 归一化 null（防与旧 null 比较误判重审）", async () => {
+    tx.product.findUnique.mockResolvedValue({ ...baseOld, description: null });
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+
+    await updateProduct("product-1", { description: "" }, "admin-1");
+
+    expect(tx.product.updateMany).toHaveBeenCalledWith({
+      where: { id: "product-1", status: "APPROVED" },
+      data: { description: null, version: { increment: 1 } },
+    });
+  });
+
+  it("商品不存在 → 抛 404，不写审计", async () => {
+    tx.product.findUnique.mockResolvedValue(null);
+
+    await expect(updateProduct("product-x", { name: "x" }, "admin-1")).rejects.toMatchObject({
+      code: ERROR_CODES.PRODUCT_NOT_FOUND.code,
+    });
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("读后状态并发变更（守卫 0 行）→ 抛 409 PRODUCT_STATUS_INVALID，不覆盖他人决策", async () => {
+    tx.product.findUnique.mockResolvedValue(baseOld);
+    tx.product.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(updateProduct("product-1", { name: "并发改动" }, "admin-1")).rejects.toMatchObject({
+      code: ERROR_CODES.PRODUCT_STATUS_INVALID.code,
+    });
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
 });
 
