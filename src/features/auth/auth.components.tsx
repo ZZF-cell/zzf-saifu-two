@@ -53,13 +53,15 @@ export function PasswordInput({ value, onChange, placeholder = "请输入密码"
 
 interface CodeLoginFormProps {
   onSubmit: (phone: string, code: string) => Promise<void>;
-  onSendCode: (phone: string) => Promise<void>;
+  /** 发送验证码；短信未实际送达（演示模式）时返回验证码供页面提示展示，否则返回 null */
+  onSendCode: (phone: string) => Promise<string | null>;
   submitLabel?: string;
 }
 
 export function CodeLoginForm({ onSubmit, onSendCode, submitLabel = "登录 / 注册" }: CodeLoginFormProps) {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
+  const [demoCode, setDemoCode] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(0);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState("");
@@ -76,7 +78,8 @@ export function CodeLoginForm({ onSubmit, onSendCode, submitLabel = "登录 / �
     if (!/^1[3-9]\d{9}$/.test(phone)) return;
     startTransition(async () => {
       try {
-        await onSendCode(phone);
+        const demo = await onSendCode(phone);
+        if (demo) setDemoCode(demo);
         setCountdown(60);
         if (timerRef.current) clearInterval(timerRef.current);
         timerRef.current = setInterval(() => {
@@ -132,6 +135,16 @@ export function CodeLoginForm({ onSubmit, onSendCode, submitLabel = "登录 / �
           </button>
         </div>
       </div>
+
+      {demoCode && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+          演示模式验证码：
+          <span className="font-mono font-bold">{demoCode}</span>
+          <span className="mt-0.5 block text-xs text-amber-500">
+            短信未配置，验证码仅在页面提示显示（配置真实短信后自动隐藏）
+          </span>
+        </p>
+      )}
 
       <CodeInput value={code} onChange={setCode} />
 

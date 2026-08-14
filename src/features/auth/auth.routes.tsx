@@ -32,7 +32,9 @@ function LoginPageContent() {
   };
 
   const handleSendCode = async (phone: string) => {
-    await apiCall("/api/auth/send-code", { phone });
+    const data = await apiCall("/api/auth/send-code", { phone });
+    // 演示模式：短信未送达时接口回传 demoCode，供表单页面提示展示
+    return (data.demoCode as string | undefined) ?? null;
   };
 
   const handlePasswordLogin = async (phone: string, password: string) => {
@@ -101,7 +103,8 @@ export function RegisterPage() {
   };
 
   const handleSendCode = async (phone: string) => {
-    await apiCall("/api/auth/send-code", { phone });
+    const data = await apiCall("/api/auth/send-code", { phone });
+    return (data.demoCode as string | undefined) ?? null;
   };
 
   return (

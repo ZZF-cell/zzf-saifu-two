@@ -142,8 +142,14 @@ export interface AuthTokens {
   refreshToken: string;
 }
 
-/** 发送短信验证码 */
-export async function sendVerificationCode(phone: string): Promise<void> {
+/**
+ * 发送短信验证码。
+ * 返回「演示模式回显码」：短信未实际送达（未配置密钥 / SDK 未接入）时返回验证码供前端页面提示展示，
+ * 便于线上验收阶段无短信也能登录；真实送达（配好短信后）返回 null，届时前端不再显示。
+ */
+export async function sendVerificationCode(
+  phone: string,
+): Promise<string | null> {
   const phoneHash = hashPhone(phone);
   // 频率限制：60 秒内同号码不可重复发送
   const recent = await prisma.verificationCode.findFirst({
@@ -193,6 +199,9 @@ export async function sendVerificationCode(phone: string): Promise<void> {
       // Sentry 未初始化时静默（console.error 已兜底）
     }
   }
+
+  // 演示模式回显：短信未实际送达时把验证码交还调用方（前端展示），保证线上验收可登录
+  return actuallySent ? null : code;
 }
 
 /** 短信验证码登录（新用户自动注册） */

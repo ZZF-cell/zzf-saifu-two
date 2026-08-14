@@ -84,8 +84,12 @@ async function requireAuthFromRequest(req: Request): Promise<AuthUser> {
 
 /** POST /api/auth/send-code */
 export const sendCode = withValidation(sendCodeSchema, async ({ phone }) => {
-  await authService.sendVerificationCode(phone);
-  return NextResponse.json({ success: true });
+  const demoCode = await authService.sendVerificationCode(phone);
+  // 演示模式：短信未送达时响应携带 demoCode，前端页面提示展示（配好真短信后自动不返回）
+  return NextResponse.json({
+    success: true,
+    ...(demoCode ? { demoCode } : {}),
+  });
 });
 
 /** POST /api/auth/verify-code */
