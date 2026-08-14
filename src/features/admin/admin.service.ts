@@ -338,6 +338,19 @@ export async function upsertAuditTemplate(
   });
 }
 
+/** 删除质检模板 — 不存在 404；删除与审计同事务 */
+export async function deleteAuditTemplate(categoryId: string, operatorId: string): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const deleted = await tx.categoryAuditTemplate.deleteMany({
+      where: { categoryId },
+    });
+    if (deleted.count === 0) {
+      throw new AppError(ERROR_CODES.TEMPLATE_NOT_FOUND, "质检模板不存在");
+    }
+    await writeAuditLog(tx, "CategoryAuditTemplate", categoryId, "DELETE_TEMPLATE", operatorId);
+  });
+}
+
 // ── 邀请码管理 ──
 
 // 邀请码字符集：剔除易混淆的 0/O/1/I，余 32 字符（2^5）

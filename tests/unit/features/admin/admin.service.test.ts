@@ -18,7 +18,7 @@ vi.mock("@/shared/db/client", () => ({
     user: { update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
     inviteCode: { create: vi.fn() },
     auditLog: { create: vi.fn() },
-    categoryAuditTemplate: { upsert: vi.fn() },
+    categoryAuditTemplate: { upsert: vi.fn(), deleteMany: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -57,6 +57,7 @@ import {
   unlockUser,
   resetPassword,
   clearAgeVerification,
+  deleteAuditTemplate,
 } from "@/features/admin/admin.service";
 
 // ── 交互事务 mock：$transaction(fn) 以 tx 对象调用 fn ──
@@ -68,7 +69,7 @@ type Tx = {
   user: { update: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
   inviteCode: { create: ReturnType<typeof vi.fn> };
   auditLog: { create: ReturnType<typeof vi.fn> };
-  categoryAuditTemplate: { upsert: ReturnType<typeof vi.fn> };
+  categoryAuditTemplate: { upsert: ReturnType<typeof vi.fn>; deleteMany: ReturnType<typeof vi.fn> };
 };
 
 let tx: Tx;
@@ -84,7 +85,7 @@ beforeEach(() => {
     user: { update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
     inviteCode: { create: vi.fn() },
     auditLog: { create: vi.fn() },
-    categoryAuditTemplate: { upsert: vi.fn() },
+    categoryAuditTemplate: { upsert: vi.fn(), deleteMany: vi.fn() },
   };
   transactionMock.mockImplementation((fn: (tx: Tx) => Promise<unknown>) => fn(tx));
 });
@@ -728,6 +729,37 @@ describe("clearAgeVerification — 清除年龄验证", () => {
     await clearAgeVerification("user-1", "admin-1");
 
     expect(tx.user.updateMany).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+});
+
+// ── 质检模板删除 ──
+
+describe("deleteAuditTemplate — 删除质检模板", () => {
+  it("存在 → 删除 + 审计（同事务）", async () => {
+    tx.categoryAuditTemplate.deleteMany.mockResolvedValue({ count: 1 });
+
+    await deleteAuditTemplate("成人计生用品", "admin-1");
+
+    expect(tx.categoryAuditTemplate.deleteMany).toHaveBeenCalledWith({
+      where: { categoryId: "成人计生用品" },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        targetType: "CategoryAuditTemplate",
+        targetId: "成人计生用品",
+        action: "DELETE_TEMPLATE",
+        operatorId: "admin-1",
+      },
+    });
+  });
+
+  it("不存在 → 404 TEMPLATE_NOT_FOUND", async () => {
+    tx.categoryAuditTemplate.deleteMany.mockResolvedValue({ count: 0 });
+
+    await expect(deleteAuditTemplate("不存在类目", "admin-1")).rejects.toThrow(
+      expect.objectContaining({ code: ERROR_CODES.TEMPLATE_NOT_FOUND.code, statusCode: 404 }),
+    );
     expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
 });

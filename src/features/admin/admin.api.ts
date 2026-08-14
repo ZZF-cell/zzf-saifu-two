@@ -281,6 +281,25 @@ export const upsertAuditTemplate = withValidation(
   },
 );
 
+/** DELETE /api/admin/audit-templates?categoryId= — 删除质检模板 */
+export async function deleteAuditTemplate(req: Request) {
+  try {
+    const admin = await requireRole(req, ["ADMIN"]);
+    const url = new URL(req.url);
+    const categoryId = url.searchParams.get("categoryId");
+    if (!categoryId) {
+      return NextResponse.json(
+        { error: ERROR_CODES.VALIDATION_ERROR.code, message: "缺少 categoryId 参数" },
+        { status: 422 },
+      );
+    }
+    await adminService.deleteAuditTemplate(categoryId, admin.userId);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
 // ── 邀请码管理 ──
 
 export async function getInviteCodes(req: Request) {

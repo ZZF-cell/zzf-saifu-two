@@ -1307,17 +1307,185 @@ function UsersTab() {
   );
 }
 
+/** 质检模板编辑/新增弹窗：大类下拉 + 必交材料/检查项多行文本（每行一项） */
+function TemplateModal({
+  template,
+  onClose,
+  onSave,
+}: {
+  template: AuditTemplate | null; // null = 新增
+  onClose: () => void;
+  onSave: (input: { categoryId: string; requiredDocs: string[]; checkPoints: string[] }) => Promise<boolean>;
+}) {
+  const [categoryId, setCategoryId] = useState(template?.categoryId ?? "");
+  const [requiredDocs, setRequiredDocs] = useState(
+    (Array.isArray(template?.requiredDocs) ? (template!.requiredDocs as unknown[]).map(String) : []).join("\n"),
+  );
+  const [checkPoints, setCheckPoints] = useState(
+    (Array.isArray(template?.checkPoints) ? (template!.checkPoints as unknown[]).map(String) : []).join("\n"),
+  );
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const splitLines = (s: string): string[] =>
+    s
+      .split(/\n|，|、|,/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+
+  const submit = async () => {
+    setError("");
+    if (!categoryId) {
+      setError("请选择大类");
+      return;
+    }
+    setLoading(true);
+    const ok = await onSave({
+      categoryId,
+      requiredDocs: splitLines(requiredDocs),
+      checkPoints: splitLines(checkPoints),
+    });
+    setLoading(false);
+    if (!ok) setError("保存失败，请重试");
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg rounded-2xl bg-white p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-bold">{template ? `编辑质检模板（${template.categoryId}）` : "新增质检模板"}</h3>
+
+        <label className="mt-3 block">
+          <span className="text-sm text-gray-500">大类</span>
+          <select
+            value={categoryId}
+            disabled={!!template} // 编辑态大类不可改（categoryId 是唯一键）
+            onChange={(e) => setCategoryId(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary disabled:bg-gray-50"
+          >
+            <option value="">选择大类</option>
+            {PRODUCT_CATEGORIES.map((c) => (
+              <option key={c.category} value={c.category}>{c.category}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="mt-3 block">
+          <span className="text-sm text-gray-500">必交材料（每行一项，支持逗号/顿号分隔）</span>
+          <textarea
+            value={requiredDocs}
+            onChange={(e) => setRequiredDocs(e.target.value)}
+            rows={3}
+            placeholder={"例如：\n生产许可证\n第三方检测报告"}
+            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary"
+          />
+        </label>
+
+        <label className="mt-3 block">
+          <span className="text-sm text-gray-500">检查项（每行一项）</span>
+          <textarea
+            value={checkPoints}
+            onChange={(e) => setCheckPoints(e.target.value)}
+            rows={3}
+            placeholder={"例如：\n是否在有效期内\n检测项目覆盖国标"}
+            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary"
+          />
+        </label>
+
+        {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 transition hover:bg-gray-50"
+          >
+            取消
+          </button>
+          <button
+            onClick={submit}
+            disabled={loading}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+          >
+            {loading ? "保存中..." : "保存"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TemplatesTab() {
   const [templates, setTemplates] = useState<AuditTemplate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [acting, setActing] = useState(false);
+  const [editing, setEditing] = useState<AuditTemplate | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<AuditTemplate | null>(null);
+
+  const fetchTemplates = async () => {
+    try {
+      const res = await apiFetch("/api/admin/audit-templates");
+      const data = await res.json();
+      setTemplates(data.items || []);
+    } catch { /* 静默 */ }
+  };
 
   useEffect(() => {
-    apiFetch("/api/admin/audit-templates")
-      .then((r) => r.json())
-      .then((data) => setTemplates(data.items || []))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    fetchTemplates().finally(() => setLoading(false));
   }, []);
+
+  const handleSave = async (input: {
+    categoryId: string;
+    requiredDocs: string[];
+    checkPoints: string[];
+  }): Promise<boolean> => {
+    setError("");
+    try {
+      const res = await apiFetch("/api/admin/audit-templates", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.message || "保存失败");
+      await fetchTemplates();
+      setEditing(null);
+      setCreating(false);
+      setNotice("模板已保存");
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "保存失败");
+      return false;
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setActing(true);
+    setError("");
+    try {
+      const res = await apiFetch(
+        `/api/admin/audit-templates?categoryId=${encodeURIComponent(deleteTarget.categoryId)}`,
+        { method: "DELETE" },
+      );
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.message || "删除失败");
+      setTemplates((prev) => prev.filter((t) => t.categoryId !== deleteTarget.categoryId));
+      setNotice("模板已删除");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除失败");
+    } finally {
+      setActing(false);
+      setDeleteTarget(null);
+    }
+  };
 
   if (loading) {
     return <div className="h-32 animate-pulse rounded-xl bg-gray-100" />;
@@ -1328,18 +1496,76 @@ function TemplatesTab() {
 
   return (
     <div className="space-y-3">
+      {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
+      {notice && (
+        <div className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</div>
+      )}
+
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-gray-400">
+          共 {templates.length} 个大类已配置（品牌方提交商品时将按此清单要求必交材料）
+        </p>
+        <button
+          onClick={() => setCreating(true)}
+          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
+        >
+          + 新增模板
+        </button>
+      </div>
+
       {templates.length === 0 ? (
         <div className="py-12 text-center text-gray-400">暂无质检模板</div>
       ) : (
         templates.map((t) => (
           <div key={t.categoryId} className="rounded-2xl border border-gray-100 p-5">
-            <p className="text-base font-semibold text-gray-900">{t.categoryId}</p>
-            <div className="mt-2 space-y-1 text-sm text-gray-500">
-              <p>必交材料：{strList(t.requiredDocs).join("、") || "—"}</p>
-              <p>检查项：{strList(t.checkPoints).join("、") || "—"}</p>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-base font-semibold text-gray-900">{t.categoryId}</p>
+                <div className="mt-2 space-y-1 text-sm text-gray-500">
+                  <p>
+                    必交材料：{strList(t.requiredDocs).join("、") || "—"}
+                  </p>
+                  <p>
+                    检查项：{strList(t.checkPoints).join("、") || "—"}
+                  </p>
+                </div>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                <button
+                  onClick={() => setEditing(t)}
+                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 transition hover:bg-gray-50"
+                >
+                  编辑
+                </button>
+                <button
+                  onClick={() => setDeleteTarget(t)}
+                  className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-600 transition hover:bg-red-50"
+                >
+                  删除
+                </button>
+              </div>
             </div>
           </div>
         ))
+      )}
+
+      {(editing || creating) && (
+        <TemplateModal
+          template={editing}
+          onClose={() => { setEditing(null); setCreating(false); }}
+          onSave={handleSave}
+        />
+      )}
+
+      {deleteTarget && (
+        <ConfirmModal
+          title="删除质检模板"
+          message={`确认删除「${deleteTarget.categoryId}」的质检模板？删除后该品类商品审核将无质检清单对照。`}
+          confirmLabel="删除"
+          loading={acting}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={handleDelete}
+        />
       )}
     </div>
   );

@@ -112,6 +112,50 @@ async function main() {
     });
   }
 
+  // ── 质检模板（5 大类初始化：品牌方提交页读必交材料、审核详情对照「已交/缺」） ──
+  const seedTemplates = [
+    {
+      categoryId: "成人计生用品",
+      requiredDocs: ["生产许可证（二类医疗器械备案）", "第三方检测报告", "产品注册证"],
+      checkPoints: ["是否在有效期内", "检测项目是否覆盖国标（GB/T 7544）", "产品注册证与在售规格一致"],
+    },
+    {
+      categoryId: "情趣用品",
+      requiredDocs: ["产品质检报告", "材质安全认证（如 FDA/REACH 报告）"],
+      checkPoints: ["材质标注完整", "电气安全（如适用）", "质检报告在有效期内"],
+    },
+    {
+      categoryId: "智能设备",
+      requiredDocs: ["质检报告", "3C 认证（如适用）", "产品说明书"],
+      checkPoints: ["电池/电气安全", "数据隐私说明齐全", "质检报告在有效期内"],
+    },
+    {
+      categoryId: "身体护理",
+      requiredDocs: ["化妆品生产许可证（如适用）", "产品检测报告", "成分表"],
+      checkPoints: ["成分标注完整无敏感误导", "检测报告在有效期内", "生产资质齐全"],
+    },
+    {
+      categoryId: "其他",
+      requiredDocs: ["产品质检报告"],
+      checkPoints: ["基本质检信息齐全", "无违禁/夸大宣传"],
+    },
+  ];
+
+  for (const t of seedTemplates) {
+    await prisma.categoryAuditTemplate.upsert({
+      where: { categoryId: t.categoryId },
+      update: {
+        requiredDocs: t.requiredDocs as unknown as object,
+        checkPoints: t.checkPoints as unknown as object,
+      },
+      create: {
+        categoryId: t.categoryId,
+        requiredDocs: t.requiredDocs as unknown as object,
+        checkPoints: t.checkPoints as unknown as object,
+      },
+    });
+  }
+
   // ── 演示订单（覆盖全部状态，管理后台订单筛选可逐态查看；幂等可重跑） ──
   const hand = { name: "悦己手环 Pro", id: "seed-悦己手环 Pro", price: 19900 };
   const oil = { name: "山茶润体油", id: "seed-山茶润体油", price: 8900 };
@@ -244,6 +288,7 @@ async function main() {
   console.log(`  入驻邀请码: ${seedInviteCodes.map((c) => c.code).join("、")}`);
   console.log(`  商品:   ${products.map((p) => p.name).join("、")}`);
   console.log(`  演示订单: ${seedOrders.length} 笔（覆盖 PENDING→COMPLETED 全状态）`);
+  console.log(`  质检模板: ${seedTemplates.length} 个大类（必交材料 + 检查项）`);
 }
 
 main()

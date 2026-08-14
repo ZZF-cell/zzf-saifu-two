@@ -29,6 +29,7 @@ export const ERROR_CODES = {
   // 商品 6xxx
   PRODUCT_ALREADY_REVIEWED: { status: 409, code: "PRODUCT_ALREADY_REVIEWED" },
   PRODUCT_STATUS_INVALID: { status: 409, code: "PRODUCT_STATUS_INVALID" },
+  TEMPLATE_NOT_FOUND: { status: 404, code: "TEMPLATE_NOT_FOUND" },
 
   // 邀请码 7xxx
   INVITE_CODE_NOT_FOUND: { status: 404, code: "INVITE_CODE_NOT_FOUND" },
