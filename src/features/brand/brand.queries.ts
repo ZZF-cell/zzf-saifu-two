@@ -108,6 +108,8 @@ export interface BrandProductRow {
   stock: number;
   status: string;
   sales: number;
+  description: string | null;
+  images: unknown;
   createdAt: Date;
 }
 
@@ -138,6 +140,8 @@ export async function getBrandProducts(
         stock: true,
         status: true,
         sales: true,
+        description: true,
+        images: true,
         createdAt: true,
       },
       orderBy: { createdAt: "desc" },

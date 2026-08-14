@@ -52,6 +52,8 @@ interface BrandProduct {
   stock: number;
   status: string;
   sales: number;
+  description: string | null;
+  images: string[];
 }
 
 interface BrandOrder {
@@ -109,9 +111,33 @@ function OverviewTab() {
   );
 }
 
-// ── 提交商品 ──
+// ── 商品表单（提交页 / 编辑模态复用：字段 + 图片上传） ──
 
-function SubmitProductTab() {
+interface ProductFormValues {
+  name: string;
+  category: string;
+  subCategory: string;
+  price: number; // 元
+  stock: number;
+  description: string; // 已 trim，可为空字符串（编辑时传 "" 即清空）
+  images: string[];
+}
+
+function ProductForm({
+  initial,
+  submitLabel,
+  successMessage,
+  resetAfterSuccess,
+  onSubmit,
+}: {
+  initial?: BrandProduct;
+  submitLabel: string;
+  successMessage?: string;
+  /** 提交成功后清空表单（提交页用；编辑模态由父级关闭） */
+  resetAfterSuccess?: boolean;
+  /** 提交动作；抛错则表单展示错误 */
+  onSubmit: (values: ProductFormValues) => Promise<void>;
+}) {
   const [form, setForm] = useState({
     name: "",
     category: "",
@@ -126,6 +152,22 @@ function SubmitProductTab() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 编辑模态：进入时按初始值预填（price 分为单位 → 元展示）
+  useEffect(() => {
+    if (initial) {
+      setForm({
+        name: initial.name,
+        category: initial.category,
+        subCategory: initial.subCategory ?? "",
+        price: String(initial.price / 100),
+        stock: String(initial.stock),
+        description: initial.description ?? "",
+      });
+      setImages(initial.images ?? []);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅进入时预填一次，父级每次重建本组件
+  }, []);
 
   /** 上传商品图：POST /api/upload（multipart 字段 file + purpose=product）→ 成功后追加 URL，最多 5 张 */
   const handleImageUpload = async (file: File) => {
@@ -174,18 +216,20 @@ function SubmitProductTab() {
 
     setSubmitting(true);
     try {
-      await apiCall("POST", "/api/brand/products", {
+      await onSubmit({
         name: form.name.trim(),
         category: form.category.trim(),
         subCategory: form.subCategory,
         price,
         stock,
-        description: form.description.trim() || undefined,
-        images: images.length > 0 ? images : undefined,
+        description: form.description.trim(),
+        images,
       });
-      setSuccess("商品已提交，等待平台质检");
-      setForm({ name: "", category: "", subCategory: "", price: "", stock: "", description: "" });
-      setImages([]);
+      setSuccess(successMessage || "已保存");
+      if (resetAfterSuccess) {
+        setForm({ name: "", category: "", subCategory: "", price: "", stock: "", description: "" });
+        setImages([]);
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "提交失败");
     } finally {
@@ -318,10 +362,28 @@ function SubmitProductTab() {
           disabled={submitting || uploading}
           className="mt-4 w-full rounded-lg bg-primary py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
         >
-          {submitting ? "提交中..." : "提交审核"}
+          {submitting ? (initial ? "保存中..." : "提交中...") : submitLabel}
         </button>
       </div>
     </div>
+  );
+}
+
+// ── 提交商品 ──
+
+function SubmitProductTab() {
+  return (
+    <ProductForm
+      submitLabel="提交审核"
+      successMessage="商品已提交，等待平台质检"
+      resetAfterSuccess
+      onSubmit={async (values) => {
+        await apiCall("POST", "/api/brand/products", {
+          ...values,
+          description: values.description || undefined,
+        });
+      }}
+    />
   );
 }
 
@@ -330,14 +392,56 @@ function SubmitProductTab() {
 function ProductsTab() {
   const [products, setProducts] = useState<BrandProduct[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const [editing, setEditing] = useState<BrandProduct | null>(null);
+  const [notice, setNotice] = useState("");
+
+  const load = async () => {
+    const res = await apiFetch("/api/brand/products?pageSize=50");
+    const data = await res.json();
+    setProducts(data.items || []);
+  };
 
   useEffect(() => {
-    apiFetch("/api/brand/products?pageSize=50")
-      .then((r) => r.json())
-      .then((data) => setProducts(data.items || []))
+    load()
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  /** 撤回/下架/重新上架：POST 成功后刷新列表 */
+  const runAction = async (id: string, url: string) => {
+    setBusyId(id);
+    setError("");
+    setNotice("");
+    try {
+      await apiCall("POST", url);
+      await load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "操作失败");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const actionFor = (p: BrandProduct): { label: string; url: string }[] => {
+    switch (p.status) {
+      case "PENDING":
+        return [{ label: "撤回", url: `/api/brand/products/${p.id}/withdraw` }];
+      case "APPROVED":
+        return [{ label: "下架", url: `/api/brand/products/${p.id}/delist` }];
+      case "DELISTED":
+        return [{ label: "重新上架", url: `/api/brand/products/${p.id}/relist` }];
+      default:
+        return []; // REJECTED/WITHDRAWN 仅可编辑（重提交）
+    }
+  };
+
+  const handleEditSaved = async (result: { status?: string }) => {
+    await load();
+    setNotice(result.status === "PENDING" ? "已保存并重新提交质检" : "已保存");
+    setEditing(null);
+  };
 
   if (loading) {
     return <div className="h-32 animate-pulse rounded-xl bg-gray-100" />;
@@ -345,21 +449,80 @@ function ProductsTab() {
 
   return (
     <div className="space-y-3">
+      {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
+      {notice && !editing && (
+        <div className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</div>
+      )}
       {products.length === 0 ? (
         <div className="py-12 text-center text-gray-400">暂无商品，请先提交</div>
       ) : (
-        products.map((p) => (
-          <div key={p.id} className="rounded-xl border border-gray-100 p-4">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-medium text-gray-900">{p.name}</p>
-              <StatusBadge status={p.status} />
+        products.map((p) => {
+          const actions = actionFor(p);
+          return (
+            <div key={p.id} className="rounded-xl border border-gray-100 p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-gray-900">{p.name}</p>
+                <StatusBadge status={p.status} />
+              </div>
+              <p className="mt-1 text-xs text-gray-400">
+                {p.category}
+                {p.subCategory ? ` / ${p.subCategory}` : ""} · ¥{fenToYuan(p.price)} · 库存 {p.stock} · 已售 {p.sales}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {actions.map((a) => (
+                  <button
+                    key={a.label}
+                    onClick={() => runAction(p.id, a.url)}
+                    disabled={busyId === p.id}
+                    className="rounded-lg border border-gray-200 px-3 py-1 text-xs text-gray-600 transition hover:border-primary hover:text-primary disabled:opacity-50"
+                  >
+                    {busyId === p.id ? "处理中..." : a.label}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setEditing(p)}
+                  disabled={busyId === p.id}
+                  className="rounded-lg bg-primary px-3 py-1 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                >
+                  编辑
+                </button>
+              </div>
             </div>
-            <p className="mt-1 text-xs text-gray-400">
-              {p.category}
-              {p.subCategory ? ` / ${p.subCategory}` : ""} · ¥{fenToYuan(p.price)} · 库存 {p.stock} · 已售 {p.sales}
-            </p>
+          );
+        })
+      )}
+
+      {editing && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setEditing(null)}
+        >
+          <div
+            className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-base font-bold">编辑商品</h2>
+              <button
+                onClick={() => setEditing(null)}
+                className="text-2xl leading-none text-gray-400 hover:text-gray-600"
+                aria-label="关闭"
+              >
+                ×
+              </button>
+            </div>
+            <ProductForm
+              initial={editing}
+              submitLabel="保存修改"
+              onSubmit={async (values) => {
+                const res = await apiCall("PATCH", `/api/brand/products/${editing.id}`, {
+                  ...values,
+                });
+                await handleEditSaved(res as { status?: string });
+              }}
+            />
           </div>
-        ))
+        </div>
       )}
     </div>
   );
