@@ -79,11 +79,14 @@ interface AdminProductDetail {
 interface AdminOrder {
   id: string;
   userId: string;
+  buyerNickname: string | null;
+  recipient: { name: string; phone: string; city: string } | null;
   total: number;
   status: string;
   createdAt: string;
   paidAt: string | null;
   firstItemName: string;
+  itemCount: number;
   isDestroyed: boolean;
 }
 
@@ -708,7 +711,7 @@ function OrdersTab() {
   return (
     <div className="space-y-3">
       <div className="flex gap-2 overflow-x-auto pb-1">
-        {["", "PENDING", "PAID", "SHIPPED", "REFUND_REQUESTED", "COMPLETED", "CANCELLED"].map((s) => (
+        {["", "PENDING", "PAID", "SHIPPED", "DELIVERED", "REFUND_REQUESTED", "REFUNDED", "COMPLETED", "CANCELLED"].map((s) => (
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
@@ -726,19 +729,43 @@ function OrdersTab() {
       {loading ? (
         <div className="h-32 animate-pulse rounded-xl bg-gray-100" />
       ) : orders.length === 0 ? (
-        <div className="py-12 text-center text-gray-400">暂无订单</div>
+        <div className="py-12 text-center text-gray-400">
+          {statusFilter ? "该状态下暂无订单" : "暂无订单"}
+        </div>
       ) : (
         orders.map((o) => (
-          <div key={o.id} className="flex items-center justify-between rounded-2xl border border-gray-100 p-5">
-            <div className="min-w-0">
-              <p className="text-base font-semibold text-gray-900">{o.firstItemName}</p>
-              <p className="mt-0.5 text-sm text-gray-400">
-                <StatusBadge status={o.status} /> · ¥{fenToYuan(o.total)}
-                {o.isDestroyed && <span className="ml-1 text-red-400">已销毁</span>}
-              </p>
-              <p className="mt-0.5 truncate text-sm text-gray-400">订单号 {o.id}</p>
+          <div key={o.id} className="rounded-2xl border border-gray-100 p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-base font-semibold text-gray-900">
+                  {o.firstItemName}
+                  {o.itemCount > 1 && (
+                    <span className="ml-1.5 text-sm font-normal text-gray-400">
+                      等 {o.itemCount} 件
+                    </span>
+                  )}
+                </p>
+                <p className="mt-1 text-sm text-gray-400">
+                  <StatusBadge status={o.status} /> · ¥{fenToYuan(o.total)}
+                  {o.isDestroyed && <span className="ml-1 text-red-400">已销毁</span>}
+                </p>
+              </div>
+              <div className="shrink-0 text-right text-sm text-gray-400">
+                <p>{new Date(o.createdAt).toLocaleString("zh-CN", { hour12: false })}</p>
+                <p className="mt-0.5 truncate font-mono text-xs">{o.id}</p>
+              </div>
             </div>
-            <div className="flex shrink-0 gap-2">
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-gray-50 pt-2 text-sm text-gray-500">
+              <span>买家：{o.buyerNickname || "—"}</span>
+              {o.recipient && (
+                <>
+                  <span>收货人：{o.recipient.name}</span>
+                  <span>{o.recipient.phone}</span>
+                  {o.recipient.city && <span>{o.recipient.city}</span>}
+                </>
+              )}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
               {o.status === "PAID" && (
                 <button
                   onClick={() => handleAction(o.id, "ship")}

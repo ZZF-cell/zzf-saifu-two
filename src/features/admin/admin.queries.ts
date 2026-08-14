@@ -1,7 +1,24 @@
 // 管理后台查询 — 数据看板 + 管理列表（只读）
 import { prisma } from "@/shared/db/client";
 import { ORDER_STATUS } from "@/features/orders";
+import { decrypt } from "@/shared/utils/crypto";
 import type { Prisma } from "@prisma/client";
+
+/** 配送地址解密：ENCRYPTION_KEYS 未配置时明文；解密失败回退原文（兼容旧数据） */
+function decryptAddress(shippingAddress: string): string {
+  if (!process.env.ENCRYPTION_KEYS) return shippingAddress;
+  try {
+    return decrypt(shippingAddress);
+  } catch {
+    return shippingAddress;
+  }
+}
+
+/** 手机号脱敏：13800138000 → 138****8000 */
+function maskPhone(phone: string): string {
+  if (phone.length < 7) return phone;
+  return `${phone.slice(0, 3)}****${phone.slice(-4)}`;
+}
 
 // ── 数据看板 ──
 
@@ -230,6 +247,9 @@ export async function getAdminProductDetail(productId: string): Promise<AdminPro
 export interface AdminOrderRow {
   id: string;
   userId: string;
+  buyerNickname: string | null;
+  /** 收货人信息（姓名 + 脱敏手机号 + 城市），配送地址解密而来 */
+  recipient: { name: string; phone: string; city: string } | null;
   total: number;
   status: string;
   createdAt: Date;
@@ -265,8 +285,9 @@ export async function getAdminOrders(params: {
         createdAt: true,
         paidAt: true,
         privacy: true,
-        _count: { select: { items: true } },
-        items: { select: { productName: true }, take: 1, orderBy: { id: "asc" } },
+        shippingAddress: true,
+        user: { select: { nickname: true } },
+        items: { select: { productName: true, qty: true }, orderBy: { id: "asc" } },
       },
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * pageSize,
@@ -278,15 +299,36 @@ export async function getAdminOrders(params: {
   return {
     orders: orders.map((o) => {
       const privacy = o.privacy as { destroyed?: boolean } | null;
+      // 收货人信息：地址解密后取姓名/手机号/城市（手机号脱敏展示）
+      let recipient: AdminOrderRow["recipient"] = null;
+      try {
+        const addr = JSON.parse(decryptAddress(o.shippingAddress)) as {
+          name?: string;
+          phone?: string;
+          city?: string;
+        };
+        if (addr && (addr.name || addr.phone || addr.city)) {
+          recipient = {
+            name: addr.name || "—",
+            phone: addr.phone ? maskPhone(addr.phone) : "—",
+            city: addr.city || "",
+          };
+        }
+      } catch {
+        recipient = null; // 地址解析失败不阻断列表
+      }
       return {
         id: o.id,
         userId: o.userId,
+        buyerNickname: o.user.nickname,
+        recipient,
         total: o.total,
         status: o.status,
         createdAt: o.createdAt,
         paidAt: o.paidAt,
         firstItemName: o.items[0]?.productName || "商品",
-        itemCount: o._count.items, // 真实商品行数（_count 聚合）
+        // 件数 = 各明细数量之和（qty 累加，非明细行数）
+        itemCount: o.items.reduce((sum, i) => sum + i.qty, 0),
         isDestroyed: !!(privacy && privacy.destroyed),
       };
     }),
