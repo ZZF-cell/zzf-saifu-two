@@ -128,6 +128,7 @@ npx prisma db seed                 # 重新填充种子数据
 | **品牌入驻** | ✅ 已完成 | 管理员生成邀请码 → 品牌方激活 → 提交资料 → 审核 | `features/invite/`：激活=单事务原子消耗邀请码（`updateMany` 状态守卫含过期判断）+ 创建 PENDING 品牌；管理员审核通过时同事务将负责人升级为 BRAND 角色（品牌已过但角色未升是笔错账）；邀请码列表 EXPIRED 由 `expiresAt` 即时推导不落库 |
 | **OSS 图片上传** | ✅ 已完成 | 商品/品牌图片上传至阿里云 OSS（后端中转） | `features/upload/`：POST `/api/upload`（multipart + MIME 白名单 + ≤4MB，未配置 OSS 返回 503）；`shared/adapters/oss.adapter.ts` 仿 payment 懒初始化 + 纯函数；`shared/ui/Image` 双源（OSS URL + base64）+ 统一占位图；submitProduct 收 images、品牌 logo 校验收紧、`PUT /api/brand/profile` 改资料。Vercel 请求体上限 4.5MB → 图片限 ≤4MB；更大文件走 OSS 预签名直传（三期） |
 | **商品两级类目** | ✅ 已完成 | 大类+子类两级选择与筛选 | `shared/constants/product-categories.ts` 预设清单为唯一来源（改常量即可调整）；Product 增加 `subCategory` 字段（可空兼容旧数据）；品牌提交商品改为大类→子类级联下拉；首页两级筛选；详情/品牌后台/管理后台展示「大类/子类」 |
+| **商品生命周期** | ✅ 已完成 | 撤回待审 / 下架 / 重新上架 / 编辑（双方同状态机）+ 管理员完整审核详情 | `features/brand` 与 `features/admin` 同一套状态机（status 为 String 无需迁移）：`PENDING`→`WITHDRAWN`（品牌撤回）；`APPROVED`⇄`DELISTED`（品牌/管理员可做，重新上架不重质检）；编辑商品「基本信息变更→回 `PENDING` 重审、仅改运营信息（价格/库存）→直改」。所有变更用 `updateMany` 状态守卫（含品牌侧 `brandId` 归属守卫，越权 403）+ `version:{increment:1}` + AuditLog（snapshot 存 before/after）；守卫 0 行二次 `findUnique` 区分 404/403/409。公开商品详情仅放行 `APPROVED`（DB 层过滤，下架/待审深链 404）。管理端新增 `GET /api/admin/products/[id]` 返回完整信息 + 品类质检清单，审核决策信息闭环 |
 | **微信支付** | ⏳ 待开发 | 接入微信支付 SDK | `shared/adapters/payment.adapter.ts` 定义 `PaymentAdapter` 接口，微信支付实现同一接口；回调幂等逻辑直接复用 `payment.callback.ts` 的 `updateMany` 模式 |
 | **实名认证** | ⏳ 待开发 | 对接实名认证服务 | 新增 `shared/adapters/realname.adapter.ts`；用户表增加 `realNameVerified` 字段，不影响现有登录流程 |
 
@@ -280,7 +281,7 @@ features/orders/                   features/orders/
 | VerificationCode | phoneHash, code, expiresAt, **attempts** | 短信验证码（手机号哈希关联）| 不存明文手机号（同 User.phoneHash 规则）；`attempts` 验证码错误尝试计数，≥5 次删除记录（防爆破）；索引 `(phoneHash, createdAt)` 支持滑动窗口查询 |
 | Brand | name, status, inviteCode, ownerId | 品牌（归属用户 + 邀请码）| ownerId 指向 User，一个用户只能拥有一个品牌，防止品牌方多账号绕审核 |
 | InviteCode | code(unique), status, createdBy, usedBy, expiresAt | 品牌入驻邀请码 | `code` 为自然键（大写，剔除 0/O/1/I 混淆字符）；`EXPIRED` 为推导态（UNUSED + 过期）不落库，读取时即时推导；消耗用 `updateMany` 状态守卫（含过期判断）防并发重复激活；激活侧对无效码一律返回 400，防枚举探测码存在性 |
-| Product | brandId, category, **subCategory**, status, images, specs, **version, stock** | 商品（两级类目 + version 乐观锁防超卖）| `version` 字段配合 `updateMany` 实现乐观锁；specs 用 JSONB 存储灵活扩展；`subCategory` 可空（兼容旧数据），新提交商品必填且需与大类组合合法（`isValidCategoryPair`） |
+| Product | brandId, category, **subCategory**, status, images, specs, **version, stock** | 商品（两级类目 + version 乐观锁防超卖 + 生命周期状态）| `version` 字段配合 `updateMany` 实现乐观锁；specs 用 JSONB 存储灵活扩展；`subCategory` 可空（兼容旧数据），新提交商品必填且需与大类组合合法（`isValidCategoryPair`）；**status** 为 String 枚举：`PENDING`（待质检）→ `APPROVED`（已上架）/ `REJECTED`（已拒绝）；品牌可 `WITHDRAWN`（撤回待审）；双方可 `DELISTED`（下架）→ `APPROVED`（重新上架，不重质检）。改基本信息→回 `PENDING` 重审，仅改价格/库存→直改不重审。所有状态变更均 `version:{increment:1}` + AuditLog 留痕 |
 | CartItem | userId, productId, productName, price, qty | 购物车（唯一约束 userId+productId）| ⚠️ **资损关键点**：`productName` 和 `price` 为展示冗余，**下单时对最新价格进行实时校验并快照到 OrderItem**，不依赖于购物车缓存。商品调价后购物车中的旧价格仅作参考 |
 | Order | userId, total, status, privacy, shippingAddress, **outTradeNo** | 订单（outTradeNo 支付回调幂等）| `total` 为下单时快照的快照总价，不可后续修改；发货地址单独加密存储 |
 | OrderItem | orderId, productName, price, qty | 订单行项目 | **下单时从 Product 表快照**，不引用外键。商品下架或调价不影响历史订单的可追溯性。⚠️ **退款金额 = `price × qty`**，此 `price` 为**实付分摊价**（已含优惠券/满减按比例分摊），非商品原价。优惠分摊逻辑在 `orders.service.ts` 的 `calculateOrderItems` 中实现，单元测试覆盖边界 case（全部退款、部分退款、跨优惠门槛退款） |
@@ -421,8 +422,12 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | GET | `/api/admin/dashboard` | 数据看板（平台整体统计） |
 | GET | `/api/admin/brands` | 品牌列表 |
 | POST | `/api/admin/brands/[id]/review` | 品牌审核（PENDING → APPROVED/REJECTED，重复审核 409） |
-| GET | `/api/admin/products` | 商品列表 |
+| GET | `/api/admin/products` | 商品列表（可按 status 筛选） |
+| GET | `/api/admin/products/[id]` | 商品详情（完整信息 + 品类质检清单 requiredDocs/checkPoints，无模板返回 null） |
 | POST | `/api/admin/products/[id]/review` | 商品质检（PENDING → APPROVED/REJECTED，重复质检 409） |
+| POST | `/api/admin/products/[id]/delist` | 下架（APPROVED → DELISTED，守卫非该状态 409） |
+| POST | `/api/admin/products/[id]/relist` | 重新上架（DELISTED → APPROVED，不重质检） |
+| PATCH | `/api/admin/products/[id]` | 编辑商品（改基本信息→回 PENDING 重审；仅改价格/库存→直改；至少传一个字段） |
 | GET | `/api/admin/orders` | 订单列表 |
 | POST | `/api/admin/orders/[id]/ship` | 发货（PAID → SHIPPED） |
 | POST | `/api/admin/orders/[id]/deliver` | 标记送达（SHIPPED → DELIVERED） |
@@ -448,10 +453,18 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | 方法 | 路由 | 说明 |
 |------|------|------|
 | GET | `/api/brand/overview` | 品牌概览（商品/订单/销售额，只聚合本品牌数据） |
-| GET | `/api/brand/products` | 品牌商品列表 |
+| GET | `/api/brand/products` | 品牌商品列表（含 description/images，供编辑预填） |
 | POST | `/api/brand/products` | 提交新商品（价格转分存储，待平台质检；需传 `category`+`subCategory` 合法组合；可带 images 至多 5 张 OSS URL） |
+| POST | `/api/brand/products/[id]/withdraw` | 撤回待审提交（PENDING → WITHDRAWN，仅本品牌商品；越权/状态不符分别 403/409） |
+| POST | `/api/brand/products/[id]/delist` | 下架（APPROVED → DELISTED，仅本品牌商品） |
+| POST | `/api/brand/products/[id]/relist` | 重新上架（DELISTED → APPROVED，不重质检，仅本品牌商品） |
+| PATCH | `/api/brand/products/[id]` | 编辑商品（规则同管理端：改基本信息→回 PENDING；仅改价格/库存→直改；拒绝/撤回任意改→重新提交） |
 | GET | `/api/brand/orders` | 品牌订单（仅含本品牌商品的行） |
 | PUT | `/api/brand/profile` | 更新品牌资料（名称/logo，logo 需 OSS URL） |
+
+> **商品生命周期对 C 端与订单的影响**：商品下架/撤回/重审后 `status !== "APPROVED"`，购物车与结算的既有 `status` 守卫自动隐藏该行 / 拦截结算（消费侧零改动）；下单是订单快照（OrderItem 存商品名/价格），历史订单不受下架影响；公开商品详情 `GET /api/products/[id]` 仅放行 `APPROVED`，下架/待审商品深链返回 404。
+>
+> **页面宽度统一**：SiteHeader 与所有带 header 的内页统一 `max-w-6xl` frame，内容区收敛到 `max-w-lg`；body 底色 `#f3f4f6` 让白色 app 列在桌面端显形，头部与页面边缘全线对齐（避免桌面端头部与主体宽度断层）。首页为商城风彩色渐变（hero 横幅 + 类目 emoji + 激活渐变 pill + 销量角标）。
 
 ### Inngest
 | 方法 | 路由 | 说明 |
