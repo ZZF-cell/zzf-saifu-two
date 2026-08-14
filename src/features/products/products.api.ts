@@ -11,6 +11,7 @@ const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   category: z.string().optional(),
+  subCategory: z.string().optional(),
   search: z.string().optional(),
   sortBy: z.enum(["createdAt", "price", "sales"]).default("createdAt"),
   sortOrder: z.enum(["asc", "desc"]).default("desc"),

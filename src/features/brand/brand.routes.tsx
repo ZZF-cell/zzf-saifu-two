@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { apiFetch } from "@/shared/api/client";
 import { fenToYuan } from "@/shared/utils/money";
 import { SiteHeader } from "@/shared/ui/SiteHeader";
+import { PRODUCT_CATEGORIES, getSubcategories } from "@/shared/constants/product-categories";
 
 // ── helpers ──
 
@@ -38,6 +39,7 @@ interface BrandProduct {
   id: string;
   name: string;
   category: string;
+  subCategory: string | null;
   price: number;
   stock: number;
   status: string;
@@ -132,6 +134,7 @@ function SubmitProductTab() {
   const [form, setForm] = useState({
     name: "",
     category: "",
+    subCategory: "",
     price: "",
     stock: "",
     description: "",
@@ -146,7 +149,8 @@ function SubmitProductTab() {
     const price = Number(form.price);
     const stock = Number(form.stock);
     if (!form.name.trim()) return setError("请填写商品名称");
-    if (!form.category.trim()) return setError("请填写品类");
+    if (!form.category) return setError("请选择大类");
+    if (!form.subCategory) return setError("请选择子类");
     if (!price || price <= 0) return setError("请填写正确的价格");
     if (!Number.isInteger(stock) || stock < 0) return setError("请填写正确的库存");
 
@@ -155,12 +159,13 @@ function SubmitProductTab() {
       await apiCall("POST", "/api/brand/products", {
         name: form.name.trim(),
         category: form.category.trim(),
+        subCategory: form.subCategory,
         price,
         stock,
         description: form.description.trim() || undefined,
       });
       setSuccess("商品已提交，等待平台质检");
-      setForm({ name: "", category: "", price: "", stock: "", description: "" });
+      setForm({ name: "", category: "", subCategory: "", price: "", stock: "", description: "" });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "提交失败");
     } finally {
@@ -178,12 +183,37 @@ function SubmitProductTab() {
             placeholder="商品名称"
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
           />
-          <input
-            value={form.category}
-            onChange={(e) => setForm({ ...form, category: e.target.value })}
-            placeholder="品类（如：智能设备 / 身体护理）"
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-          />
+          <div className="flex gap-3">
+            <select
+              value={form.category}
+              onChange={(e) =>
+                setForm({ ...form, category: e.target.value, subCategory: "" })
+              }
+              className="w-1/2 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+            >
+              <option value="">请选择大类</option>
+              {PRODUCT_CATEGORIES.map((node) => (
+                <option key={node.category} value={node.category}>
+                  {node.category}
+                </option>
+              ))}
+            </select>
+            <select
+              value={form.subCategory}
+              onChange={(e) => setForm({ ...form, subCategory: e.target.value })}
+              disabled={!form.category}
+              className="w-1/2 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:bg-gray-50 disabled:text-gray-400"
+            >
+              <option value="">
+                {form.category ? "请选择子类" : "请先选择大类"}
+              </option>
+              {getSubcategories(form.category).map((sub) => (
+                <option key={sub} value={sub}>
+                  {sub}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="flex gap-3">
             <input
               value={form.price}
@@ -252,7 +282,8 @@ function ProductsTab() {
               <StatusBadge status={p.status} />
             </div>
             <p className="mt-1 text-xs text-gray-400">
-              {p.category} · ¥{fenToYuan(p.price)} · 库存 {p.stock} · 已售 {p.sales}
+              {p.category}
+              {p.subCategory ? ` / ${p.subCategory}` : ""} · ¥{fenToYuan(p.price)} · 库存 {p.stock} · 已售 {p.sales}
             </p>
           </div>
         ))

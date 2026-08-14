@@ -3,6 +3,7 @@
 import Link from "next/link";
 import Image from "@/shared/ui/Image";
 import { fenToYuan } from "@/shared/utils/money";
+import { type ProductCategory } from "@/shared/constants/product-categories";
 
 // ── 类型 ──
 
@@ -68,44 +69,80 @@ export function ProductGrid({ products }: { products: ProductCardData[] }) {
   );
 }
 
-// ── 分类筛选器 ──
+// ── 分类筛选器（两级：大类 pill 行 + 选中大类后的子类 pill 行） ──
 
 interface CategoryFilterProps {
-  categories: string[];
-  active: string | undefined;
-  onChange: (category: string | undefined) => void;
+  categories: ProductCategory[];
+  activeCategory: string | undefined;
+  activeSubCategory: string | undefined;
+  onCategoryChange: (category: string | undefined) => void;
+  onSubCategoryChange: (subCategory: string | undefined) => void;
 }
 
 export function CategoryFilter({
   categories,
-  active,
-  onChange,
+  activeCategory,
+  activeSubCategory,
+  onCategoryChange,
+  onSubCategoryChange,
 }: CategoryFilterProps) {
+  const activeNode = categories.find((n) => n.category === activeCategory);
+  const subcategories = activeNode?.subcategories ?? [];
+
   return (
-    <div className="flex gap-2 overflow-x-auto pb-2">
-      <button
-        onClick={() => onChange(undefined)}
-        className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition ${
-          !active
-            ? "bg-primary text-white"
-            : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-        }`}
-      >
-        全部
-      </button>
-      {categories.map((cat) => (
+    <div className="space-y-2">
+      <div className="flex gap-2 overflow-x-auto pb-1">
         <button
-          key={cat}
-          onClick={() => onChange(cat)}
+          onClick={() => onCategoryChange(undefined)}
           className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition ${
-            active === cat
+            !activeCategory
               ? "bg-primary text-white"
               : "bg-gray-100 text-gray-600 hover:bg-gray-200"
           }`}
         >
-          {cat}
+          全部
         </button>
-      ))}
+        {categories.map((node) => (
+          <button
+            key={node.category}
+            onClick={() => onCategoryChange(node.category)}
+            className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition ${
+              activeCategory === node.category
+                ? "bg-primary text-white"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            {node.category}
+          </button>
+        ))}
+      </div>
+      {activeCategory && subcategories.length > 0 && (
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          <button
+            onClick={() => onSubCategoryChange(undefined)}
+            className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition ${
+              !activeSubCategory
+                ? "bg-primary/10 text-primary"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            全部子类
+          </button>
+          {subcategories.map((sub) => (
+            <button
+              key={sub}
+              onClick={() => onSubCategoryChange(sub)}
+              className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition ${
+                activeSubCategory === sub
+                  ? "bg-primary text-white"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              }`}
+            >
+              {sub}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

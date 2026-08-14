@@ -14,6 +14,7 @@ import {
 import type { ProductCardData } from "./products.components";
 import { fenToYuan } from "@/shared/utils/money";
 import { apiFetch } from "@/shared/api/client";
+import type { ProductCategory } from "@/shared/constants/product-categories";
 
 // ── API helpers ──
 
@@ -29,12 +30,13 @@ interface ProductListResponse {
 
 export function HomePage() {
   const [products, setProducts] = useState<ProductCardData[]>([]);
-  const [categories, setCategories] = useState<string[]>([]);
+  const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [totalPages, setTotalPages] = useState(1);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
   const [category, setCategory] = useState<string | undefined>();
+  const [subCategory, setSubCategory] = useState<string | undefined>();
   const [sort, setSort] = useState({ sortBy: "createdAt", sortOrder: "desc" });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -50,6 +52,7 @@ export function HomePage() {
       params.set("sortOrder", sort.sortOrder);
       if (activeSearch) params.set("search", activeSearch);
       if (category) params.set("category", category);
+      if (subCategory) params.set("subCategory", subCategory);
 
       const res = await fetch(`/api/products?${params.toString()}`);
       // 错误响应形如 { error, message }，与成功响应 ProductListResponse 并存
@@ -67,7 +70,7 @@ export function HomePage() {
     } finally {
       setLoading(false);
     }
-  }, [page, activeSearch, category, sort]);
+  }, [page, activeSearch, category, subCategory, sort]);
 
   const fetchCategories = useCallback(async () => {
     try {
@@ -90,6 +93,12 @@ export function HomePage() {
   const handleCategoryChange = (cat: string | undefined) => {
     setPage(1);
     setCategory(cat);
+    setSubCategory(undefined); // 切换大类时清空子类，回到该大类全部
+  };
+
+  const handleSubCategoryChange = (sub: string | undefined) => {
+    setPage(1);
+    setSubCategory(sub);
   };
 
   return (
@@ -111,8 +120,10 @@ export function HomePage() {
           <div className="mb-4">
             <CategoryFilter
               categories={categories}
-              active={category}
-              onChange={handleCategoryChange}
+              activeCategory={category}
+              activeSubCategory={subCategory}
+              onCategoryChange={handleCategoryChange}
+              onSubCategoryChange={handleSubCategoryChange}
             />
           </div>
         )}
@@ -166,6 +177,7 @@ interface ProductDetailData {
   images: string[];
   specs: Record<string, string> | null;
   category: string;
+  subCategory: string | null;
   stock: number;
   sales: number;
   brand: { id: string; name: string };
@@ -246,7 +258,10 @@ export function ProductDetailPage({ id }: { id: string }) {
         <div className="mt-3 flex gap-4 text-xs text-gray-500">
           <span>已售 {product.sales}</span>
           <span>库存 {product.stock}</span>
-          <span>{product.category}</span>
+          <span>
+            {product.category}
+            {product.subCategory ? ` / ${product.subCategory}` : ""}
+          </span>
         </div>
 
         {/* 商品描述 */}

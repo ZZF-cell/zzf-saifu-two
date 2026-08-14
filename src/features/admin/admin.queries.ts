@@ -106,6 +106,7 @@ export interface AdminProductRow {
   id: string;
   name: string;
   category: string;
+  subCategory: string | null;
   price: number;
   stock: number;
   status: string;
@@ -137,6 +138,7 @@ export async function getAdminProducts(params: {
         id: true,
         name: true,
         category: true,
+        subCategory: true,
         price: true,
         stock: true,
         status: true,

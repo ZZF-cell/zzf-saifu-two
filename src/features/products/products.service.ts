@@ -2,6 +2,7 @@
 import { prisma } from "@/shared/db/client";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import { toJsonStringArray } from "@/shared/utils/format";
+import { PRODUCT_CATEGORIES, type ProductCategory } from "@/shared/constants/product-categories";
 import type { Prisma } from "@prisma/client";
 
 // ── 类型 ──
@@ -10,6 +11,7 @@ export interface ProductListParams {
   page: number;
   pageSize: number;
   category?: string;
+  subCategory?: string;
   search?: string;
   sortBy: "createdAt" | "price" | "sales";
   sortOrder: "asc" | "desc";
@@ -21,6 +23,7 @@ export interface ProductListItem {
   price: number;
   images: string[];
   category: string;
+  subCategory: string | null;
   sales: number;
   createdAt: Date;
 }
@@ -33,6 +36,7 @@ export interface ProductDetail {
   images: string[];
   specs: unknown;
   category: string;
+  subCategory: string | null;
   stock: number;
   version: number;
   sales: number;
@@ -56,12 +60,13 @@ export interface ProductListResult {
 export async function getProductList(
   params: ProductListParams,
 ): Promise<ProductListResult> {
-  const { page, pageSize, category, search, sortBy, sortOrder } = params;
+  const { page, pageSize, category, subCategory, search, sortBy, sortOrder } = params;
 
   const where: Prisma.ProductWhereInput = {
     status: "APPROVED", // 只展示审核通过的商品
     stock: { gt: 0 },   // 只展示有库存的商品
     ...(category ? { category } : {}),
+    ...(subCategory ? { subCategory } : {}),
     ...(search
       ? {
           OR: [
@@ -81,6 +86,7 @@ export async function getProductList(
         price: true,
         images: true,
         category: true,
+        subCategory: true,
         sales: true,
         createdAt: true,
       },
@@ -134,14 +140,10 @@ export async function requireProductById(id: string): Promise<ProductDetail> {
   return product;
 }
 
-// ── 获取所有品类（用于分类筛选器） ──
+// ── 获取所有品类（两级结构：大类 + 子类，用于分类筛选器） ──
 
-export async function getCategories(): Promise<string[]> {
-  const rows = await prisma.product.findMany({
-    where: { status: "APPROVED", stock: { gt: 0 } },
-    select: { category: true },
-    distinct: ["category"],
-    orderBy: { category: "asc" },
-  });
-  return rows.map((r) => r.category);
+export async function getCategories(): Promise<ProductCategory[]> {
+  // 平台预设类目清单（唯一来源：src/shared/constants/product-categories.ts）
+  // 不再从在售商品反推：全部大类恒出现，前端渲染完整两级树
+  return PRODUCT_CATEGORIES;
 }

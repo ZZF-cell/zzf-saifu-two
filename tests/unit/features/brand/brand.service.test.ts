@@ -36,6 +36,7 @@ describe("submitProduct — 品牌提交商品", () => {
       name: "静音震动器",
       description: "低噪 50dB",
       category: "智能设备",
+      subCategory: "智能健康监测",
       price: 199,
       stock: 10,
     });
@@ -47,6 +48,7 @@ describe("submitProduct — 品牌提交商品", () => {
         name: "静音震动器",
         description: "低噪 50dB",
         category: "智能设备",
+        subCategory: "智能健康监测",
         price: 19900, // 元 → 分（整数精度，避免浮点误差）
         stock: 10,
         status: "PENDING",
@@ -66,6 +68,7 @@ describe("submitProduct — 品牌提交商品", () => {
     await submitProduct("brand-1", {
       name: "静音震动器",
       category: "智能设备",
+      subCategory: "智能健康监测",
       price: 199,
       stock: 10,
       images: ["https://img.example.com/product/a.jpg", "https://img.example.com/product/b.jpg"],
@@ -87,6 +90,7 @@ describe("submitProduct — 品牌提交商品", () => {
     await submitProduct("brand-1", {
       name: "无图商品",
       category: "测试",
+      subCategory: "测试子类",
       price: 10,
       stock: 1,
     });
@@ -104,6 +108,7 @@ describe("submitProduct — 品牌提交商品", () => {
     await submitProduct("brand-1", {
       name: "润滑剂",
       category: "身体护理",
+      subCategory: "身体乳/润体",
       price: 0.5,
       stock: 100,
     });
@@ -121,6 +126,7 @@ describe("submitProduct — 品牌提交商品", () => {
     await submitProduct("brand-1", {
       name: "测试商品",
       category: "测试",
+      subCategory: "测试子类",
       price: 10,
       stock: 1,
     });
@@ -135,7 +141,7 @@ describe("submitProduct — 品牌提交商品", () => {
     vi.mocked(prisma.brand.findUnique).mockResolvedValue(null);
 
     await expect(
-      submitProduct("brand-x", { name: "x", category: "c", price: 1, stock: 1 }),
+      submitProduct("brand-x", { name: "x", category: "c", subCategory: "c", price: 1, stock: 1 }),
     ).rejects.toMatchObject({ code: ERROR_CODES.BRAND_NOT_FOUND.code });
     expect(prisma.product.create).not.toHaveBeenCalled();
   });
@@ -144,7 +150,7 @@ describe("submitProduct — 品牌提交商品", () => {
     vi.mocked(prisma.brand.findUnique).mockResolvedValue({ status: "PENDING" } as never);
 
     await expect(
-      submitProduct("brand-1", { name: "x", category: "c", price: 1, stock: 1 }),
+      submitProduct("brand-1", { name: "x", category: "c", subCategory: "c", price: 1, stock: 1 }),
     ).rejects.toMatchObject({ code: ERROR_CODES.FORBIDDEN.code });
     expect(prisma.product.create).not.toHaveBeenCalled();
   });

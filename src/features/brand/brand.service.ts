@@ -9,6 +9,7 @@ export interface SubmitProductInput {
   name: string;
   description?: string;
   category: string;
+  subCategory: string; // 子类（API 层已校验与大类组合合法）
   price: number; // 元
   stock: number;
   specs?: Record<string, string>;
@@ -34,6 +35,7 @@ export async function submitProduct(
       name: input.name,
       description: input.description ?? null,
       category: input.category,
+      subCategory: input.subCategory,
       price: yuanToFen(input.price),
       stock: input.stock,
       specs: input.specs as unknown as object | undefined,

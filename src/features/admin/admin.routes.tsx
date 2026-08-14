@@ -46,6 +46,7 @@ interface AdminProduct {
   id: string;
   name: string;
   category: string;
+  subCategory: string | null;
   price: number;
   stock: number;
   status: string;
@@ -287,7 +288,8 @@ function ProductReviewTab() {
             <div className="min-w-0">
               <p className="text-sm font-medium text-gray-900">{p.name}</p>
               <p className="mt-0.5 text-xs text-gray-400">
-                {p.brandName} · {p.category} · ¥{fenToYuan(p.price)} · 库存 {p.stock}
+                {p.brandName} · {p.category}
+                {p.subCategory ? ` / ${p.subCategory}` : ""} · ¥{fenToYuan(p.price)} · 库存 {p.stock}
               </p>
             </div>
             <div className="flex shrink-0 gap-2">

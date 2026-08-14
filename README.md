@@ -112,7 +112,7 @@ npx prisma db seed                 # 重新填充种子数据
 | 模块 | 功能 |
 |------|------|
 | **用户认证** | 短信验证码登录/注册、密码登录/注册、JWT 双 Token 鉴权、角色分级 |
-| **用户商城** | 商品浏览/搜索/分类筛选/价格排序、商品详情 |
+| **用户商城** | 商品浏览/搜索/两级类目筛选/价格排序、商品详情 |
 | **购物车** | 添加/修改/删除（服务端同步） |
 | **订单系统** | 创建订单（乐观锁防超卖）、支付查询、取消订单、申请退款、一键销毁 |
 | **隐私保护** | 年龄确认门禁、匿名包装、订单销毁、AES-256-GCM 加密、手机号哈希 |
@@ -127,6 +127,7 @@ npx prisma db seed                 # 重新填充种子数据
 | **订单超时自动取消** | ✅ 已完成 | 下单 30 分钟未支付自动取消并回补库存 | `inngest/functions/order-timeout-cancel.ts`：`order/created` 事件 → `step.sleep(30min)` → `cancelExpiredOrder`（**updateMany 状态守卫先于回补库存**，防并发双重回补）；下单时用 `next/server` 的 `after()` 保证 serverless 中事件投递完成 |
 | **品牌入驻** | ✅ 已完成 | 管理员生成邀请码 → 品牌方激活 → 提交资料 → 审核 | `features/invite/`：激活=单事务原子消耗邀请码（`updateMany` 状态守卫含过期判断）+ 创建 PENDING 品牌；管理员审核通过时同事务将负责人升级为 BRAND 角色（品牌已过但角色未升是笔错账）；邀请码列表 EXPIRED 由 `expiresAt` 即时推导不落库 |
 | **OSS 图片上传** | ✅ 已完成 | 商品/品牌图片上传至阿里云 OSS（后端中转） | `features/upload/`：POST `/api/upload`（multipart + MIME 白名单 + ≤4MB，未配置 OSS 返回 503）；`shared/adapters/oss.adapter.ts` 仿 payment 懒初始化 + 纯函数；`shared/ui/Image` 双源（OSS URL + base64）+ 统一占位图；submitProduct 收 images、品牌 logo 校验收紧、`PUT /api/brand/profile` 改资料。Vercel 请求体上限 4.5MB → 图片限 ≤4MB；更大文件走 OSS 预签名直传（三期） |
+| **商品两级类目** | ✅ 已完成 | 大类+子类两级选择与筛选 | `shared/constants/product-categories.ts` 预设清单为唯一来源（改常量即可调整）；Product 增加 `subCategory` 字段（可空兼容旧数据）；品牌提交商品改为大类→子类级联下拉；首页两级筛选；详情/品牌后台/管理后台展示「大类/子类」 |
 | **微信支付** | ⏳ 待开发 | 接入微信支付 SDK | `shared/adapters/payment.adapter.ts` 定义 `PaymentAdapter` 接口，微信支付实现同一接口；回调幂等逻辑直接复用 `payment.callback.ts` 的 `updateMany` 模式 |
 | **实名认证** | ⏳ 待开发 | 对接实名认证服务 | 新增 `shared/adapters/realname.adapter.ts`；用户表增加 `realNameVerified` 字段，不影响现有登录流程 |
 
@@ -220,6 +221,8 @@ src/
 │   │   └── client.ts               #   Prisma Client 单例
 │   ├── errors/
 │   │   └── errors.ts               #   AppError 类 + 错误码枚举
+│   ├── constants/
+│   │   └── product-categories.ts   #   商品两级类目（平台预设，唯一来源）
 │   ├── utils/
 │   │   ├── crypto.ts               #   AES-256-GCM + scrypt 密码哈希 + 手机号哈希
 │   │   ├── money.ts                #   金额处理（整数分，避免浮点精度）
@@ -275,12 +278,14 @@ features/orders/                   features/orders/
 | VerificationCode | phoneHash, code, expiresAt, **attempts** | 短信验证码（手机号哈希关联）| 不存明文手机号（同 User.phoneHash 规则）；`attempts` 验证码错误尝试计数，≥5 次删除记录（防爆破）；索引 `(phoneHash, createdAt)` 支持滑动窗口查询 |
 | Brand | name, status, inviteCode, ownerId | 品牌（归属用户 + 邀请码）| ownerId 指向 User，一个用户只能拥有一个品牌，防止品牌方多账号绕审核 |
 | InviteCode | code(unique), status, createdBy, usedBy, expiresAt | 品牌入驻邀请码 | `code` 为自然键（大写，剔除 0/O/1/I 混淆字符）；`EXPIRED` 为推导态（UNUSED + 过期）不落库，读取时即时推导；消耗用 `updateMany` 状态守卫（含过期判断）防并发重复激活；激活侧对无效码一律返回 400，防枚举探测码存在性 |
-| Product | brandId, category, status, images, specs, **version, stock** | 商品（version 乐观锁防超卖）| `version` 字段配合 `updateMany` 实现乐观锁；specs 用 JSONB 存储灵活扩展 |
+| Product | brandId, category, **subCategory**, status, images, specs, **version, stock** | 商品（两级类目 + version 乐观锁防超卖）| `version` 字段配合 `updateMany` 实现乐观锁；specs 用 JSONB 存储灵活扩展；`subCategory` 可空（兼容旧数据），新提交商品必填且需与大类组合合法（`isValidCategoryPair`） |
 | CartItem | userId, productId, productName, price, qty | 购物车（唯一约束 userId+productId）| ⚠️ **资损关键点**：`productName` 和 `price` 为展示冗余，**下单时对最新价格进行实时校验并快照到 OrderItem**，不依赖于购物车缓存。商品调价后购物车中的旧价格仅作参考 |
 | Order | userId, total, status, privacy, shippingAddress, **outTradeNo** | 订单（outTradeNo 支付回调幂等）| `total` 为下单时快照的快照总价，不可后续修改；发货地址单独加密存储 |
 | OrderItem | orderId, productName, price, qty | 订单行项目 | **下单时从 Product 表快照**，不引用外键。商品下架或调价不影响历史订单的可追溯性。⚠️ **退款金额 = `price × qty`**，此 `price` 为**实付分摊价**（已含优惠券/满减按比例分摊），非商品原价。优惠分摊逻辑在 `orders.service.ts` 的 `calculateOrderItems` 中实现，单元测试覆盖边界 case（全部退款、部分退款、跨优惠门槛退款） |
 | CategoryAuditTemplate | categoryId, requiredDocs, checkPoints | 品类质检模板 | checkPoints 用 JSONB 数组存储，支持不同品类差异化质检项 |
 | AuditLog | targetType, targetId, action, snapshot | 操作审计日志 | snapshot 为操作前数据快照（JSONB），用于回溯和合规审计 |
+
+> **商品类目树（两级）**：类目为平台预设清单，代码常量 `src/shared/constants/product-categories.ts` 为唯一来源（C 端筛选 / 品牌提交下拉 / 后端校验均引用，调整类目只需改该常量）。当前清单：**成人计生用品**（避孕套、润滑液）、**情趣用品**（震动器具、男用器具、女用器具、情趣内衣、情趣玩具套装）、**智能设备**（智能健康监测、智能情趣设备）、**身体护理**（身体乳/润体、私密护理）、**其他**（其他）。`CategoryAuditTemplate.categoryId` 仍为自由文本键，未与类目树绑定。
 
 ### 核心安全机制
 
@@ -401,7 +406,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 |------|------|------|
 | GET | `/api/products` | 商品列表（搜索/分类/排序/分页） |
 | GET | `/api/products/[id]` | 商品详情 |
-| GET | `/api/products/categories` | 品类列表 |
+| GET | `/api/products/categories` | 品类列表（两级结构 `{category, subcategories[]}`，平台预设清单） |
 
 ### 支付
 | 方法 | 路由 | 说明 |
@@ -442,7 +447,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 |------|------|------|
 | GET | `/api/brand/overview` | 品牌概览（商品/订单/销售额，只聚合本品牌数据） |
 | GET | `/api/brand/products` | 品牌商品列表 |
-| POST | `/api/brand/products` | 提交新商品（价格转分存储，待平台质检；可带 images 至多 5 张 OSS URL） |
+| POST | `/api/brand/products` | 提交新商品（价格转分存储，待平台质检；需传 `category`+`subCategory` 合法组合；可带 images 至多 5 张 OSS URL） |
 | GET | `/api/brand/orders` | 品牌订单（仅含本品牌商品的行） |
 | PUT | `/api/brand/profile` | 更新品牌资料（名称/logo，logo 需 OSS URL） |
 
@@ -596,7 +601,7 @@ npm start
      └───────────┘
   ┌─────────────────┐
   │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证/管理/品牌/邀请码/上传/OSS 适配器服务层
-  │    ~155 条        │     （Vitest，mock Prisma 与 $transaction）
+  │    ~168 条        │     （Vitest，mock Prisma 与 $transaction）
   └─────────────────┘
 ```
 

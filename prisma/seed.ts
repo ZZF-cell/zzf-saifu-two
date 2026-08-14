@@ -67,6 +67,7 @@ async function main() {
     {
       name: "悦己手环 Pro",
       category: "智能设备",
+      subCategory: "智能健康监测",
       description: "智能生理期管理手环（示例商品，沙箱支付测试用）",
       price: 19900, // 199.00 元（分）
       stock: 100,
@@ -74,6 +75,7 @@ async function main() {
     {
       name: "山茶润体油",
       category: "身体护理",
+      subCategory: "身体乳/润体",
       description: "温和植物润体油（示例商品，沙箱支付测试用）",
       price: 8900, // 89.00 元（分）
       stock: 200,
@@ -83,13 +85,15 @@ async function main() {
   for (const p of products) {
     await prisma.product.upsert({
       where: { id: `seed-${p.name}` },
-      update: { status: "APPROVED" },
+      // update 分支同步补 subCategory：已存在（旧数据）的 seed 商品也能幂等补齐两级类目
+      update: { status: "APPROVED", subCategory: p.subCategory },
       create: {
         id: `seed-${p.name}`,
         brandId: brand.id,
         name: p.name,
         description: p.description,
         category: p.category,
+        subCategory: p.subCategory,
         price: p.price,
         stock: p.stock,
         status: "APPROVED",

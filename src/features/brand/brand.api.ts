@@ -4,22 +4,35 @@ import { z } from "zod";
 import { withValidation, apiError, parsePagination } from "@/shared/utils/api";
 import { requireRole } from "@/shared/api/auth";
 import { ossImageUrlSchema } from "@/shared/validation/schemas";
+import { isValidCategoryPair } from "@/shared/constants/product-categories";
 import * as brandQueries from "./brand.queries";
 import * as brandService from "./brand.service";
 
 // ── Schemas ──
 
-const submitProductSchema = z.object({
-  name: z.string().trim().min(1, "商品名称不能为空").max(100),
-  description: z.string().trim().max(2000).optional(),
-  category: z.string().trim().min(1, "请填写品类").max(50),
-  images: z.array(ossImageUrlSchema).max(5, "最多 5 张图片").optional(),
-  // 价格（元）：min 0.01 保证元→分后至少 1 分（0.001 会 round 成 0 分免费商品）；
-  // max 21_474_836 保证 ×100 后不超 PostgreSQL Int 上限（2^31-1），防溢出写库报 500
-  price: z.number().positive("价格必须大于 0").min(0.01).max(21_474_836),
-  stock: z.number().int().min(0, "库存不能为负").max(2_147_483_647), // Int 上限
-  specs: z.record(z.string(), z.string()).optional(),
-});
+export const submitProductSchema = z
+  .object({
+    name: z.string().trim().min(1, "商品名称不能为空").max(100),
+    description: z.string().trim().max(2000).optional(),
+    category: z.string().trim().min(1, "请选择大类").max(50),
+    subCategory: z.string().trim().min(1, "请选择子类").max(50),
+    images: z.array(ossImageUrlSchema).max(5, "最多 5 张图片").optional(),
+    // 价格（元）：min 0.01 保证元→分后至少 1 分（0.001 会 round 成 0 分免费商品）；
+    // max 21_474_836 保证 ×100 后不超 PostgreSQL Int 上限（2^31-1），防溢出写库报 500
+    price: z.number().positive("价格必须大于 0").min(0.01).max(21_474_836),
+    stock: z.number().int().min(0, "库存不能为负").max(2_147_483_647), // Int 上限
+    specs: z.record(z.string(), z.string()).optional(),
+  })
+  .superRefine((data, ctx) => {
+    // 大类 + 子类必须是类目树中的合法组合（空字符串/非法组合统一拦截，错误指向子类）
+    if (!isValidCategoryPair(data.category, data.subCategory)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["subCategory"],
+        message: "大类与子类不是合法组合",
+      });
+    }
+  });
 
 // ── 品牌归属（所有品牌接口先取当前用户品牌） ──
 // 仅 BRAND 角色：品牌中心是品牌方自己的后台，ADMIN 看订单/商品走 /api/admin；
