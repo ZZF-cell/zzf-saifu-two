@@ -2,17 +2,60 @@
 
 // 品牌入驻激活页（/invite）— 输入邀请码 + 品牌资料 → 创建 PENDING 品牌
 // 游客可访问本页（年龄门禁后），提交需登录（apiFetch 401 自动跳登录）
-import { useState } from "react";
+//
+// 品牌 Logo：支持「上传本地图片」（调 POST /api/upload → OSS URL 自动填入）或
+// 直接粘贴已有 OSS URL。上传限制与后端 uploadFormSchema 保持一致（前端预检，避免无效请求）。
+import { useState, useRef } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/shared/api/client";
+import { Image } from "@/shared/ui/Image";
+
+// 与 src/features/upload/upload.api.ts 的校验一致
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
 export function InvitePage() {
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [logo, setLogo] = useState("");
+  const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /** 上传品牌 Logo：POST /api/upload（multipart，字段 file + purpose=brand）→ 成功回填 URL */
+  const handleLogoUpload = async (file: File) => {
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      setError("仅支持 JPG/PNG/WebP 图片");
+      return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError("图片不能超过 4MB");
+      return;
+    }
+    setUploading(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("purpose", "brand");
+      const res = await apiFetch("/api/upload", { method: "POST", body: form });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        // 后端 422 带 details（字段 → 具体原因），优先展示具体原因而非笼统的"请求参数不符合预期"
+        const firstDetail = data?.details
+          ? (Object.values(data.details as Record<string, string[]>) as string[][]).flat()[0]
+          : null;
+        throw new Error(firstDetail || data?.message || "上传失败");
+      }
+      setLogo(data.url);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "上传失败");
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -92,13 +135,46 @@ export function InvitePage() {
         </div>
 
         <div>
-          <label className="text-xs font-medium text-gray-500">品牌 Logo URL（可选）</label>
-          <input
-            value={logo}
-            onChange={(e) => setLogo(e.target.value)}
-            placeholder="https://…"
-            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
-          />
+          <label className="text-xs font-medium text-gray-500">品牌 Logo（可选）</label>
+          <div className="mt-1 flex gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void handleLogoUpload(file);
+                e.target.value = ""; // 允许重复选择同一文件
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="shrink-0 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+            >
+              {uploading ? "上传中…" : "上传 Logo"}
+            </button>
+            <input
+              value={logo}
+              onChange={(e) => setLogo(e.target.value)}
+              placeholder="https://…"
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+            />
+          </div>
+          {logo && (
+            <div className="mt-2 flex items-center gap-2">
+              <Image
+                src={logo}
+                alt="品牌 Logo 预览"
+                width={64}
+                height={64}
+                className="h-16 w-16 rounded-lg border border-gray-100 object-cover"
+              />
+              <span className="max-w-[16rem] truncate text-xs text-gray-400">{logo}</span>
+            </div>
+          )}
         </div>
 
         <button
