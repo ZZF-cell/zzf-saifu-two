@@ -394,8 +394,11 @@ export async function getAdminOrders(params: {
 export interface AdminUserRow {
   id: string;
   role: string;
+  status: string; // ACTIVE | DISABLED
   nickname: string | null;
   ageVerified: boolean;
+  /** 密码登录锁定截止（null = 未锁定）；判断是否可「解锁」 */
+  lockUntil: Date | null;
   createdAt: Date;
   orderCount: number;
 }
@@ -419,8 +422,10 @@ export async function getAdminUsers(params: {
       select: {
         id: true,
         role: true,
+        status: true,
         nickname: true,
         ageVerified: true,
+        lockUntil: true,
         createdAt: true,
         _count: { select: { orders: true } },
       },

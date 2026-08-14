@@ -139,4 +139,18 @@ describe("loginWithPassword — 密码登录与爆破防护", () => {
     expect(updateCall.data.lockUntil).toBeNull();
     expect(updateCall.data.passwordHash).toMatch(/^scrypt\./);
   });
+
+  it("被管理员禁用（status=DISABLED）→ 403 USER_DISABLED，即使密码正确", async () => {
+    const passwordHash = await makeScryptHash("real-pass-123");
+    const user = makeUser({ passwordHash, status: "DISABLED" });
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(user as never);
+
+    await expect(loginWithPassword(PHONE, "real-pass-123")).rejects.toMatchObject({
+      code: ERROR_CODES.USER_DISABLED.code,
+      statusCode: 403,
+    });
+    // 禁用门禁先于锁定/失败计数检查：不触发任何写、不签发 Token
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+  });
 });

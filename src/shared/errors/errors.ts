@@ -9,6 +9,12 @@ export const ERROR_CODES = {
   TOKEN_EXPIRED: { status: 401, code: "TOKEN_EXPIRED" },
   INVALID_CREDENTIALS: { status: 401, code: "INVALID_CREDENTIALS" },
   PHONE_ALREADY_EXISTS: { status: 409, code: "PHONE_ALREADY_EXISTS" },
+  USER_DISABLED: { status: 403, code: "USER_DISABLED" },
+
+  // 用户管理 9xxx
+  USER_NOT_FOUND: { status: 404, code: "USER_NOT_FOUND" },
+  CANNOT_OPERATE_SELF: { status: 403, code: "CANNOT_OPERATE_SELF" },
+  USER_NOT_LOCKED: { status: 409, code: "USER_NOT_LOCKED" },
 
   // 库存/商品 2xxx
   STOCK_CONFLICT: { status: 409, code: "STOCK_CONFLICT" },

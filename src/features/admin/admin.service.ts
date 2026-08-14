@@ -5,6 +5,7 @@ import { prisma } from "@/shared/db/client";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import { ORDER_STATUS } from "@/features/orders";
 import { yuanToFen } from "@/shared/utils/money";
+import { hashPassword } from "@/shared/utils/crypto";
 import type { Prisma } from "@prisma/client";
 
 export type ReviewDecision = "APPROVED" | "REJECTED";
@@ -390,4 +391,134 @@ export async function generateInviteCodes(
   });
 
   return codes;
+}
+
+// ── 用户管理：改角色 / 禁用启用 / 解锁 / 重置密码 / 清除年龄验证 ──
+// 约束：管理员不能对自己操作（setRole / setStatus）；解锁仅限锁定用户（未锁定 409）；
+// 全部状态变更沿用 updateMany + 同事务审计策略，防并发竞态
+
+export type UserRoleOp = "USER" | "BRAND" | "ADMIN";
+export type UserStatusOp = "ACTIVE" | "DISABLED";
+
+/** 事务内取目标用户；不存在 → 404 */
+async function getTargetUser(
+  tx: Prisma.TransactionClient,
+  userId: string,
+): Promise<{ role: string; status: string; lockUntil: Date | null; ageVerified: boolean }> {
+  const user = await tx.user.findUnique({
+    where: { id: userId },
+    select: { role: true, status: true, lockUntil: true, ageVerified: true },
+  });
+  if (!user) throw new AppError(ERROR_CODES.USER_NOT_FOUND, "用户不存在");
+  return user;
+}
+
+/** 改角色 — USER/BRAND/ADMIN 互转；不可操作自己 */
+export async function setUserRole(
+  userId: string,
+  role: UserRoleOp,
+  operatorId: string,
+): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    if (userId === operatorId) {
+      throw new AppError(ERROR_CODES.CANNOT_OPERATE_SELF, "不能修改自己的角色");
+    }
+    const target = await getTargetUser(tx, userId);
+    if (target.role === role) return; // 幂等：角色未变不落审计
+    const updated = await tx.user.updateMany({
+      where: { id: userId, role: target.role }, // 读后守卫，防并发覆盖他人修改
+      data: { role },
+    });
+    if (updated.count === 0) {
+      throw new AppError(ERROR_CODES.INTERNAL_ERROR, "用户状态已变更，请刷新后重试");
+    }
+    await writeAuditLog(tx, "User", userId, "SET_ROLE", operatorId, {
+      before: target.role,
+      after: role,
+    });
+  });
+}
+
+/** 禁用/启用 — 不可操作自己 */
+export async function setUserStatus(
+  userId: string,
+  status: UserStatusOp,
+  operatorId: string,
+): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    if (userId === operatorId) {
+      throw new AppError(ERROR_CODES.CANNOT_OPERATE_SELF, "不能禁用/启用自己");
+    }
+    const target = await getTargetUser(tx, userId);
+    if (target.status === status) return;
+    const updated = await tx.user.updateMany({
+      where: { id: userId, status: target.status },
+      data: { status },
+    });
+    if (updated.count === 0) {
+      throw new AppError(ERROR_CODES.INTERNAL_ERROR, "用户状态已变更，请刷新后重试");
+    }
+    await writeAuditLog(tx, "User", userId, status === "DISABLED" ? "USER_DISABLED" : "USER_ENABLED", operatorId, {
+      before: target.status,
+      after: status,
+    });
+  });
+}
+
+/** 解锁 — 仅锁定（lockUntil 未过期）用户可解锁；未锁定 409 */
+export async function unlockUser(userId: string, operatorId: string): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const target = await getTargetUser(tx, userId);
+    if (!target.lockUntil || target.lockUntil <= new Date()) {
+      throw new AppError(ERROR_CODES.USER_NOT_LOCKED, "该用户未处于锁定状态");
+    }
+    const updated = await tx.user.updateMany({
+      where: { id: userId, lockUntil: target.lockUntil },
+      data: { lockUntil: null, failedLoginAttempts: 0 },
+    });
+    if (updated.count === 0) {
+      throw new AppError(ERROR_CODES.INTERNAL_ERROR, "用户状态已变更，请刷新后重试");
+    }
+    await writeAuditLog(tx, "User", userId, "USER_UNLOCKED", operatorId);
+  });
+}
+
+/** 重置密码 — 覆盖 passwordHash（scrypt 哈希），同时解除锁定状态；返回临时密码由管理员转达 */
+export async function resetPassword(
+  userId: string,
+  tempPassword: string,
+  operatorId: string,
+): Promise<{ tempPassword: string }> {
+  if (!/^.{6,20}$/.test(tempPassword)) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "临时密码需 6-20 位");
+  }
+  const passwordHash = await hashPassword(tempPassword);
+  await prisma.$transaction(async (tx) => {
+    await getTargetUser(tx, userId); // 不存在 → 404，避免对不存在用户「成功」
+    await tx.user.updateMany({
+      where: { id: userId },
+      data: { passwordHash, failedLoginAttempts: 0, lockUntil: null },
+    });
+    await writeAuditLog(tx, "User", userId, "PASSWORD_RESET", operatorId);
+  });
+  return { tempPassword };
+}
+
+/** 清除年龄验证 — ageVerified → false（用户下次需重新过年龄门禁） */
+export async function clearAgeVerification(userId: string, operatorId: string): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const target = await getTargetUser(tx, userId);
+    if (!target.ageVerified) return; // 幂等：已未验证不落审计
+    const updated = await tx.user.updateMany({
+      where: { id: userId, ageVerified: true },
+      data: { ageVerified: false },
+    });
+    if (updated.count === 0) {
+      throw new AppError(ERROR_CODES.INTERNAL_ERROR, "用户状态已变更，请刷新后重试");
+    }
+    await writeAuditLog(tx, "User", userId, "CLEAR_AGE_VERIFICATION", operatorId, {
+      before: true,
+      after: false,
+    });
+  });
 }

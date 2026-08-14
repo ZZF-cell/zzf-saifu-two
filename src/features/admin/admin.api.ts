@@ -307,3 +307,57 @@ export const generateInviteCodes = withValidation(
     return NextResponse.json({ success: true, codes });
   },
 );
+
+// ── 用户管理操作 ──
+
+const userActionSchema = z.object({
+  action: z.enum(["setRole", "setStatus", "unlock", "resetPassword", "clearAgeVerification"]),
+  role: z.enum(["USER", "BRAND", "ADMIN"]).optional(),
+  status: z.enum(["ACTIVE", "DISABLED"]).optional(),
+  tempPassword: z.string().min(6).max(20).optional(),
+});
+
+/**
+ * PATCH /api/admin/users/[id] — 用户管理操作
+ * action 分发：setRole / setStatus / unlock / resetPassword（返回一次临时密码）/ clearAgeVerification
+ */
+export async function patchUser(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  try {
+    const admin = await requireRole(req, ["ADMIN"]);
+    const { id } = await ctx.params;
+    const body = await req.json().catch(() => null);
+    const parsed = userActionSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: ERROR_CODES.VALIDATION_ERROR.code, message: "请求参数不符合预期" },
+        { status: 422 },
+      );
+    }
+    const { action, ...rest } = parsed.data;
+
+    switch (action) {
+      case "setRole":
+        await adminService.setUserRole(id, rest.role!, admin.userId);
+        break;
+      case "setStatus":
+        await adminService.setUserStatus(id, rest.status!, admin.userId);
+        break;
+      case "unlock":
+        await adminService.unlockUser(id, admin.userId);
+        break;
+      case "resetPassword": {
+        const result = await adminService.resetPassword(id, rest.tempPassword!, admin.userId);
+        return NextResponse.json({ success: true, tempPassword: result.tempPassword });
+      }
+      case "clearAgeVerification":
+        await adminService.clearAgeVerification(id, admin.userId);
+        break;
+    }
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return apiError(error);
+  }
+}

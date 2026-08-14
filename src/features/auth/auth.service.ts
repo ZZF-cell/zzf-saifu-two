@@ -219,6 +219,11 @@ export async function loginWithCode(
     }
   }
 
+  // 被管理员禁用的用户不可登录（含验证码登录）
+  if (user.status === "DISABLED") {
+    throw new AppError(ERROR_CODES.USER_DISABLED, "账号已被禁用，请联系管理员");
+  }
+
   return issueTokens(user);
 }
 
@@ -288,6 +293,11 @@ export async function loginWithPassword(
       ERROR_CODES.INVALID_CREDENTIALS,
       "该手机号未注册密码登录，请使用验证码登录",
     );
+  }
+
+  // 被管理员禁用的用户不可登录
+  if (user.status === "DISABLED") {
+    throw new AppError(ERROR_CODES.USER_DISABLED, "账号已被禁用，请联系管理员");
   }
 
   // 锁定检查：锁定期间统一 INVALID_CREDENTIALS（不泄露账号状态）

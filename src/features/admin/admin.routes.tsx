@@ -99,8 +99,10 @@ interface AdminOrder {
 interface AdminUser {
   id: string;
   role: string;
+  status: string; // ACTIVE | DISABLED
   nickname: string | null;
   ageVerified: boolean;
+  lockUntil: string | null;
   createdAt: string;
   orderCount: number;
 }
@@ -936,50 +938,371 @@ function OrdersTab({
   );
 }
 
+/** 用户操作确认弹窗（禁用/启用/清除年龄验证等一次性操作） */
+function ConfirmModal({
+  title,
+  message,
+  confirmLabel,
+  loading,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  loading: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl bg-white p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-bold">{title}</h3>
+        <p className="mt-2 text-sm leading-relaxed text-gray-500">{message}</p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 transition hover:bg-gray-50"
+          >
+            取消
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading}
+            className="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 重置密码弹窗：输入临时密码 → 提交 → 展示一次临时密码（管理员转达用户） */
+function ResetPasswordModal({
+  user,
+  onClose,
+  onReset,
+}: {
+  user: AdminUser;
+  onClose: () => void;
+  onReset: (tempPassword: string) => Promise<{ success: boolean; tempPassword?: string; message?: string }>;
+}) {
+  const [tempPassword, setTempPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<string | null>(null);
+
+  const submit = async () => {
+    setError("");
+    if (tempPassword.length < 6 || tempPassword.length > 20) {
+      setError("临时密码需 6-20 位");
+      return;
+    }
+    setLoading(true);
+    const r = await onReset(tempPassword);
+    setLoading(false);
+    if (r.success) {
+      setResult(r.tempPassword || tempPassword);
+    } else {
+      setError(r.message || "重置失败");
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl bg-white p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-base font-bold">重置密码</h3>
+        <p className="mt-1 text-sm text-gray-400">
+          用户 {user.nickname || user.id.slice(-6)}
+        </p>
+
+        {result ? (
+          <div className="mt-3 rounded-lg bg-green-50 p-3 text-sm text-green-700">
+            <p>重置成功，请将以下临时密码转达用户：</p>
+            <p className="mt-1 font-mono text-lg font-bold">{result}</p>
+            <p className="mt-1 text-xs text-green-600">请提醒用户尽快登录并修改密码</p>
+          </div>
+        ) : (
+          <>
+            <input
+              value={tempPassword}
+              onChange={(e) => setTempPassword(e.target.value)}
+              placeholder="输入 6-20 位临时密码"
+              className="mt-3 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary"
+            />
+            {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={onClose}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 transition hover:bg-gray-50"
+              >
+                取消
+              </button>
+              <button
+                onClick={submit}
+                disabled={loading}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+              >
+                {loading ? "提交中..." : "确认重置"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function UsersTab() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [actingId, setActingId] = useState<string | null>(null);
+  // 当前管理员 id：自己所在行隐藏操作（后端 403 兜底，前端不给入口）
+  const [meId, setMeId] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<{
+    user: AdminUser;
+    action: "disable" | "enable" | "clearAge";
+  } | null>(null);
+  const [resetFor, setResetFor] = useState<AdminUser | null>(null);
+
+  const fetchUsers = async () => {
+    try {
+      const res = await apiFetch("/api/admin/users?pageSize=50");
+      const data = await res.json();
+      setUsers(data.items || []);
+    } catch { /* 静默 */ }
+  };
 
   useEffect(() => {
-    apiFetch("/api/admin/users?pageSize=50")
-      .then((r) => r.json())
-      .then((data) => setUsers(data.items || []))
+    fetchUsers()
+      .then(() => apiFetch("/api/auth/me").then((r) => r.json()).then((m) => setMeId(m?.user?.id ?? null)))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  /** 通用 PATCH 操作：成功后刷新列表 + 提示 */
+  const runAction = async (
+    user: AdminUser,
+    patch: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | null> => {
+    setActingId(user.id);
+    setError("");
+    try {
+      const res = await apiFetch(`/api/admin/users/${user.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.message || "操作失败");
+      await fetchUsers();
+      setNotice("操作成功");
+      return data;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "操作失败");
+      return null;
+    } finally {
+      setActingId(null);
+    }
+  };
+
+  const handleRoleChange = async (user: AdminUser, role: string) => {
+    if (role === user.role) return;
+    await runAction(user, { action: "setRole", role });
+  };
+
+  const handleConfirm = async () => {
+    if (!confirm) return;
+    if (confirm.action === "disable") {
+      await runAction(confirm.user, { action: "setStatus", status: "DISABLED" });
+    } else if (confirm.action === "enable") {
+      await runAction(confirm.user, { action: "setStatus", status: "ACTIVE" });
+    } else {
+      await runAction(confirm.user, { action: "clearAgeVerification" });
+    }
+    setConfirm(null);
+  };
+
+  const handleUnlock = async (user: AdminUser) => {
+    await runAction(user, { action: "unlock" });
+  };
+
+  const handleReset = async (tempPassword: string) => {
+    const data = await runAction(resetFor!, { action: "resetPassword", tempPassword });
+    if (!data) return { success: false, message: "重置失败" };
+    return { success: true, tempPassword: data.tempPassword as string };
+  };
 
   if (loading) {
     return <div className="h-32 animate-pulse rounded-xl bg-gray-100" />;
   }
 
+  const isLocked = (u: AdminUser) =>
+    !!u.lockUntil && new Date(u.lockUntil).getTime() > Date.now();
+
   return (
-    <div className="overflow-x-auto rounded-xl border border-gray-100">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b bg-gray-50 text-left text-sm text-gray-500">
-            <th className="px-4 py-3 font-medium">ID</th>
-            <th className="px-4 py-3 font-medium">角色</th>
-            <th className="px-4 py-3 font-medium">昵称</th>
-            <th className="px-4 py-3 font-medium">年龄验证</th>
-            <th className="px-4 py-3 font-medium">订单数</th>
-            <th className="px-4 py-3 font-medium">注册时间</th>
-          </tr>
-        </thead>
-        <tbody>
-          {users.map((u) => (
-            <tr key={u.id} className="border-b border-gray-50 last:border-0">
-              <td className="max-w-[120px] truncate px-3 py-2 text-sm text-gray-400">{u.id}</td>
-              <td className="px-4 py-3 text-sm">{u.role}</td>
-              <td className="px-4 py-3 text-sm text-gray-900">{u.nickname || "—"}</td>
-              <td className="px-4 py-3 text-sm">{u.ageVerified ? "✓" : "—"}</td>
-              <td className="px-4 py-3 text-sm">{u.orderCount}</td>
-              <td className="px-3 py-2 text-sm text-gray-400">
-                {new Date(u.createdAt).toLocaleDateString("zh-CN")}
-              </td>
+    <div className="space-y-3">
+      {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
+      {notice && (
+        <div className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</div>
+      )}
+
+      <div className="overflow-x-auto rounded-xl border border-gray-100">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b bg-gray-50 text-left text-sm text-gray-500">
+              <th className="px-4 py-3 font-medium">ID</th>
+              <th className="px-4 py-3 font-medium">角色</th>
+              <th className="px-4 py-3 font-medium">状态</th>
+              <th className="px-4 py-3 font-medium">昵称</th>
+              <th className="px-4 py-3 font-medium">年龄验证</th>
+              <th className="px-4 py-3 font-medium">订单数</th>
+              <th className="px-4 py-3 font-medium">注册时间</th>
+              <th className="px-4 py-3 font-medium">操作</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {users.map((u) => {
+              const isSelf = u.id === meId;
+              return (
+                <tr key={u.id} className="border-b border-gray-50 last:border-0">
+                  <td className="max-w-[110px] truncate px-3 py-2 text-xs text-gray-400">{u.id}</td>
+                  <td className="px-4 py-3">
+                    {isSelf ? (
+                      <span className="text-sm">{u.role}</span>
+                    ) : (
+                      <select
+                        value={u.role}
+                        disabled={actingId === u.id}
+                        onChange={(e) => handleRoleChange(u, e.target.value)}
+                        className="rounded-lg border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-primary disabled:opacity-50"
+                      >
+                        {["USER", "BRAND", "ADMIN"].map((r) => (
+                          <option key={r} value={r}>{r}</option>
+                        ))}
+                      </select>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                        u.status === "DISABLED"
+                          ? "bg-red-50 text-red-600"
+                          : "bg-green-50 text-green-600"
+                      }`}
+                    >
+                      {u.status === "DISABLED" ? "已禁用" : "正常"}
+                    </span>
+                    {isLocked(u) && (
+                      <span className="ml-1.5 rounded-full bg-orange-50 px-2.5 py-1 text-xs font-medium text-orange-600">
+                        已锁定
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-gray-900">{u.nickname || "—"}</td>
+                  <td className="px-4 py-3 text-sm">{u.ageVerified ? "✓" : "—"}</td>
+                  <td className="px-4 py-3 text-sm">{u.orderCount}</td>
+                  <td className="px-4 py-3 text-sm text-gray-400">
+                    {new Date(u.createdAt).toLocaleDateString("zh-CN")}
+                  </td>
+                  <td className="px-4 py-3">
+                    {!isSelf && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {u.status === "ACTIVE" ? (
+                          <button
+                            onClick={() => setConfirm({ user: u, action: "disable" })}
+                            disabled={actingId === u.id}
+                            className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+                          >
+                            禁用
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setConfirm({ user: u, action: "enable" })}
+                            disabled={actingId === u.id}
+                            className="rounded-lg border border-green-200 px-2.5 py-1 text-xs font-medium text-green-600 transition hover:bg-green-50 disabled:opacity-50"
+                          >
+                            启用
+                          </button>
+                        )}
+                        {isLocked(u) && (
+                          <button
+                            onClick={() => handleUnlock(u)}
+                            disabled={actingId === u.id}
+                            className="rounded-lg border border-orange-200 px-2.5 py-1 text-xs font-medium text-orange-600 transition hover:bg-orange-50 disabled:opacity-50"
+                          >
+                            解锁
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setResetFor(u)}
+                          disabled={actingId === u.id}
+                          className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+                        >
+                          重置密码
+                        </button>
+                        {u.ageVerified && (
+                          <button
+                            onClick={() => setConfirm({ user: u, action: "clearAge" })}
+                            disabled={actingId === u.id}
+                            className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+                          >
+                            清除年龄验证
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {isSelf && <span className="text-xs text-gray-300">当前账号</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {confirm && (
+        <ConfirmModal
+          title={
+            confirm.action === "clearAge" ? "清除年龄验证" : confirm.action === "disable" ? "禁用账号" : "启用账号"
+          }
+          message={
+            confirm.action === "clearAge"
+              ? `将清除 ${confirm.user.nickname || "该用户"} 的年龄验证状态，该用户下次需重新完成年龄确认。`
+              : confirm.action === "disable"
+                ? `禁用后 ${confirm.user.nickname || "该用户"} 将无法登录（商品/订单数据保留）。确认禁用？`
+                : `确认重新启用 ${confirm.user.nickname || "该用户"} 的登录权限？`
+          }
+          confirmLabel={confirm.action === "clearAge" ? "清除" : confirm.action === "disable" ? "禁用" : "启用"}
+          loading={actingId === confirm.user.id}
+          onCancel={() => setConfirm(null)}
+          onConfirm={handleConfirm}
+        />
+      )}
+
+      {resetFor && (
+        <ResetPasswordModal
+          user={resetFor}
+          onClose={() => setResetFor(null)}
+          onReset={handleReset}
+        />
+      )}
     </div>
   );
 }

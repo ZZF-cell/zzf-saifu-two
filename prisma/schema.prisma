@@ -21,6 +21,7 @@ model User {
   passwordHash String?
   nickname     String?
   role         String   @default("USER") // USER | BRAND | ADMIN
+  status       String   @default("ACTIVE") // ACTIVE | DISABLED（管理后台禁用/启用；禁用用户不可登录）
   ageVerified  Boolean  @default(false)
   failedLoginAttempts Int      @default(0) // 密码登录连续失败次数（≥5 触发锁定）
   lockUntil    DateTime?                    // 密码登录锁定至该时间（爆破防护）
