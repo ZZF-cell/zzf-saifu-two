@@ -52,8 +52,9 @@ export function ProductCard({ product }: { product: ProductCardData }) {
 
 export function ProductGrid({ products }: { products: ProductCardData[] }) {
   if (products.length === 0) {
+    // min-h 与网格区一致（外层同为 min-h-[50vh]），空态不产生高度跳变
     return (
-      <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+      <div className="flex min-h-[50vh] flex-col items-center justify-center text-gray-400">
         <p className="text-lg">暂无商品</p>
         <p className="mt-2 text-sm">换个关键词试试</p>
       </div>

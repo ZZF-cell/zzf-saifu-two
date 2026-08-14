@@ -136,33 +136,37 @@ export function HomePage() {
           <SortSelector value={sort} onChange={setSort} />
         </div>
 
-        {/* Product Grid：首次加载才显示骨架；分类/排序/翻页刷新时保留旧网格（置灰）避免高度跳变 */}
-        {loading && products.length === 0 ? (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {Array.from({ length: 8 }).map((_, i) => (
-              // 骨架结构与 ProductCard（方形图 + 文本块）对齐，切换时不产生高度差
-              <div
-                key={i}
-                className="overflow-hidden rounded-xl border border-border bg-white"
-              >
-                <div className="aspect-square animate-pulse bg-gray-100" />
-                <div className="space-y-2 p-3">
-                  <div className="h-4 w-3/4 animate-pulse rounded bg-gray-100" />
-                  <div className="h-5 w-1/3 animate-pulse rounded bg-gray-100" />
-                  <div className="h-3 w-1/4 animate-pulse rounded bg-gray-100" />
+        {/* Product Grid：首次加载才显示骨架；分类/排序/翻页刷新时保留旧网格避免高度跳变。
+            网格区保留 min-h-[50vh]：切到少商品/空类目时不整块塌缩，分页条不跳动。
+            不置灰旧网格（opacity 切换会闪烁），加载反馈靠排序行「加载中...」 */}
+        <div className="min-h-[50vh]">
+          {loading && products.length === 0 ? (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              {Array.from({ length: 8 }).map((_, i) => (
+                // 骨架结构与 ProductCard（方形图 + 文本块）对齐，切换时不产生高度差
+                <div
+                  key={i}
+                  className="overflow-hidden rounded-xl border border-border bg-white"
+                >
+                  <div className="aspect-square animate-pulse bg-gray-100" />
+                  <div className="space-y-2 p-3">
+                    <div className="h-4 w-3/4 animate-pulse rounded bg-gray-100" />
+                    <div className="h-5 w-1/3 animate-pulse rounded bg-gray-100" />
+                    <div className="h-3 w-1/4 animate-pulse rounded bg-gray-100" />
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        ) : loadError && products.length === 0 ? (
-          <div className="py-20 text-center text-gray-400">
-            <p className="text-lg">{loadError}</p>
-          </div>
-        ) : (
-          <div className={loading ? "pointer-events-none opacity-60 transition-opacity" : "transition-opacity"}>
-            <ProductGrid products={products} />
-          </div>
-        )}
+              ))}
+            </div>
+          ) : loadError && products.length === 0 ? (
+            <div className="flex min-h-[50vh] flex-col items-center justify-center text-center text-gray-400">
+              <p className="text-lg">{loadError}</p>
+            </div>
+          ) : (
+            <div className={loading ? "pointer-events-none" : ""}>
+              <ProductGrid products={products} />
+            </div>
+          )}
+        </div>
 
         {/* Pagination */}
         <div className="mt-6 mb-20">
