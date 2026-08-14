@@ -586,16 +586,16 @@ export function BrandCenterPage() {
   return (
     <main className="mx-auto min-h-screen max-w-6xl bg-white pb-24">
       <SiteHeader />
-      <div className="mx-auto w-full max-w-lg px-4 pt-3">
-        <h1 className="text-center text-base font-bold">品牌中心</h1>
-        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+      <div className="mx-auto w-full max-w-3xl px-4 pt-4">
+        <h1 className="text-center text-xl font-bold text-gray-900">品牌中心</h1>
+        <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
           {TABS.map((t) => (
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
-              className={`shrink-0 rounded-full px-3 py-1 text-xs transition ${
+              className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition ${
                 tab === t.key
-                  ? "bg-primary text-white"
+                  ? "bg-linear-to-r from-primary to-accent text-white"
                   : "bg-gray-100 text-gray-600 hover:bg-gray-200"
               }`}
             >
@@ -605,7 +605,7 @@ export function BrandCenterPage() {
         </div>
       </div>
 
-      <div className="mx-auto w-full max-w-lg p-4">
+      <div className="mx-auto w-full max-w-3xl p-4 pt-3">
         {tab === "overview" && <OverviewTab />}
         {tab === "submit" && <SubmitProductTab />}
         {tab === "products" && <ProductsTab />}

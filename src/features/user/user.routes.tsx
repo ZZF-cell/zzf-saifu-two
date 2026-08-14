@@ -75,7 +75,7 @@ export function AccountPage() {
   if (loading) {
     return (
       <main className="mx-auto min-h-screen max-w-6xl p-4">
-        <div className="mx-auto mt-8 w-full max-w-lg space-y-3">
+        <div className="mx-auto mt-8 w-full max-w-2xl space-y-3">
           <div className="h-24 animate-pulse rounded-xl bg-gray-100" />
           <div className="h-24 animate-pulse rounded-xl bg-gray-100" />
           <div className="h-32 animate-pulse rounded-xl bg-gray-100" />
@@ -87,7 +87,7 @@ export function AccountPage() {
   if (!profile) {
     return (
       <main className="mx-auto min-h-screen max-w-6xl p-4">
-        <div className="mx-auto w-full max-w-lg py-20 text-center text-gray-400">
+        <div className="mx-auto w-full max-w-2xl py-20 text-center text-gray-400">
           {error || "个人信息加载失败"}
         </div>
       </main>
@@ -104,11 +104,11 @@ export function AccountPage() {
   return (
     <main className="mx-auto min-h-screen max-w-6xl bg-white pb-24">
       <SiteHeader />
-      <div className="mx-auto w-full max-w-lg px-4 pt-4">
-        <h1 className="text-center text-base font-bold">个人中心</h1>
+      <div className="mx-auto w-full max-w-2xl px-4 pt-4">
+        <h1 className="text-center text-xl font-bold text-gray-900">个人中心</h1>
       </div>
 
-      <div className="mx-auto w-full max-w-lg p-4 space-y-6">
+      <div className="mx-auto w-full max-w-2xl p-4 space-y-6">
         {/* 账户信息 */}
         <section>
           <h3 className="mb-3 text-sm font-semibold text-gray-700">账户信息</h3>

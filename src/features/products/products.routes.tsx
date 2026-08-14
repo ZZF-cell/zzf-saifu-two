@@ -234,7 +234,7 @@ export function ProductDetailPage({ id }: { id: string }) {
 
   if (loading) {
     return (
-      <main className="mx-auto min-h-screen max-w-lg p-4">
+      <main className="mx-auto min-h-screen max-w-2xl p-4">
         <div className="aspect-square animate-pulse rounded-xl bg-gray-100" />
         <div className="mt-4 h-6 w-2/3 animate-pulse rounded bg-gray-100" />
         <div className="mt-2 h-4 w-1/3 animate-pulse rounded bg-gray-100" />
@@ -248,7 +248,7 @@ export function ProductDetailPage({ id }: { id: string }) {
   const images = product.images;
 
   return (
-    <main className="mx-auto min-h-screen max-w-lg bg-white pb-24">
+    <main className="mx-auto min-h-screen max-w-2xl bg-white pb-24">
       {/* 图片轮播 */}
       <div className="relative aspect-square bg-gray-50">
         {/* 返回：深链直达时无历史记录则回首页，避免浏览器退出 */}
@@ -334,7 +334,7 @@ export function ProductDetailPage({ id }: { id: string }) {
 
       {/* 底部操作栏 */}
       <div className="fixed bottom-0 left-0 right-0 border-t bg-white px-4 py-3">
-        <div className="mx-auto flex max-w-lg gap-3">
+        <div className="mx-auto flex max-w-2xl gap-3">
           <button
             onClick={() => {
               // apiFetch：未登录/401 自动刷新 Token；Refresh 失效时自行跳登录页

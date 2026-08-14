@@ -105,7 +105,7 @@ export function CartPage() {
     return (
       <main className="mx-auto min-h-screen max-w-6xl bg-white pb-32">
         <SiteHeader />
-        <div className="mx-auto w-full max-w-lg">
+        <div className="mx-auto w-full max-w-2xl">
           <div className="flex items-center gap-2 px-4 pt-4">
             <button
               onClick={() => router.push("/")}
@@ -128,7 +128,7 @@ export function CartPage() {
   return (
     <main className="mx-auto min-h-screen max-w-6xl bg-white pb-32">
       <SiteHeader />
-      <div className="mx-auto w-full max-w-lg">
+      <div className="mx-auto w-full max-w-2xl">
         <div className="flex items-center gap-2 px-4 pt-4">
           <button
             onClick={() => router.push("/")}
@@ -169,7 +169,7 @@ export function CartPage() {
 
       {cart && cart.items.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 border-t bg-white px-4 py-3">
-          <div className="mx-auto flex max-w-lg items-center justify-between">
+          <div className="mx-auto flex max-w-2xl items-center justify-between">
             <div>
               <p className="text-xs text-gray-500">共 {cart.totalCount} 件</p>
               <p className="text-xl font-bold text-primary">

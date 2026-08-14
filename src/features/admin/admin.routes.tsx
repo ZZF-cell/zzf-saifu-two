@@ -151,12 +151,12 @@ function DashboardTab() {
       {cards.map((c) => (
         <div
           key={c.label}
-          className={`rounded-xl p-4 ${c.highlight ? "bg-primary/5" : "bg-gray-50"}`}
+          className={`rounded-2xl p-5 ${c.highlight ? "bg-primary/5" : "bg-gray-50"}`}
         >
-          <p className={`text-xl font-bold ${c.highlight ? "text-primary" : "text-gray-900"}`}>
+          <p className={`text-3xl font-bold tracking-tight ${c.highlight ? "text-primary" : "text-gray-900"}`}>
             {c.value}
           </p>
-          <p className="mt-1 text-xs text-gray-500">{c.label}</p>
+          <p className="mt-1.5 text-sm text-gray-500">{c.label}</p>
         </div>
       ))}
     </div>
@@ -204,10 +204,10 @@ function BrandReviewTab() {
         <div className="py-12 text-center text-gray-400">暂无待审核品牌</div>
       ) : (
         brands.map((b) => (
-          <div key={b.id} className="flex items-center justify-between rounded-xl border border-gray-100 p-4">
+          <div key={b.id} className="flex items-center justify-between rounded-2xl border border-gray-100 p-5">
             <div className="min-w-0">
-              <p className="text-sm font-medium text-gray-900">{b.name}</p>
-              <p className="mt-0.5 text-xs text-gray-400">
+              <p className="text-base font-semibold text-gray-900">{b.name}</p>
+              <p className="mt-0.5 text-sm text-gray-400">
                 入驻码 {b.inviteCode} · 商品 {b.productCount} 个
                 {b.ownerNickname ? ` · 负责人 ${b.ownerNickname}` : ""}
               </p>
@@ -216,14 +216,14 @@ function BrandReviewTab() {
               <button
                 onClick={() => handleReview(b.id, "APPROVED")}
                 disabled={acting === b.id}
-                className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
               >
                 通过
               </button>
               <button
                 onClick={() => handleReview(b.id, "REJECTED")}
                 disabled={acting === b.id}
-                className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
               >
                 拒绝
               </button>
@@ -287,27 +287,27 @@ function ProductDetailModal({
             <p className="font-medium text-gray-900">{detail.name}</p>
             <StatusBadge status={detail.status} />
           </div>
-          <p className="text-xs text-gray-400">
+          <p className="text-sm text-gray-400">
             品牌：{detail.brand?.name || "—"} · {detail.category}
             {detail.subCategory ? ` / ${detail.subCategory}` : ""}
           </p>
-          <p className="text-xs text-gray-400">
+          <p className="text-sm text-gray-400">
             价格 ¥{fenToYuan(detail.price)} · 库存 {detail.stock} · 已售 {detail.sales}
           </p>
-          <p className="text-xs text-gray-400">
+          <p className="text-sm text-gray-400">
             提交于 {new Date(detail.createdAt).toLocaleString("zh-CN", { hour12: false })}
           </p>
           {detail.description && (
-            <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs leading-relaxed text-gray-600">
+            <p className="rounded-lg bg-gray-50 px-4 py-3 text-sm leading-relaxed text-gray-600">
               {detail.description}
             </p>
           )}
           {specEntries.length > 0 && (
             <div className="rounded-lg border border-gray-100 p-3">
-              <p className="text-xs font-medium text-gray-500">规格参数</p>
+              <p className="text-sm font-medium text-gray-500">规格参数</p>
               <div className="mt-1 space-y-1">
                 {specEntries.map(([k, v]) => (
-                  <p key={k} className="text-xs text-gray-600">
+                  <p key={k} className="text-sm text-gray-600">
                     <span className="text-gray-400">{k}：</span>
                     {v}
                   </p>
@@ -319,8 +319,8 @@ function ProductDetailModal({
 
         {/* 质检清单：该品类 CategoryAuditTemplate 的必交材料 + 检查项 */}
         <div className="mt-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
-          <p className="text-xs font-medium text-primary">质检清单（{detail.category}）</p>
-          <div className="mt-1 space-y-1 text-xs text-gray-600">
+          <p className="text-sm font-medium text-primary">质检清单（{detail.category}）</p>
+          <div className="mt-1 space-y-1 text-sm text-gray-600">
             <p>
               必交材料：{detail.qcTemplate ? strList(detail.qcTemplate.requiredDocs).join("、") || "—" : "暂无该品类质检模板"}
             </p>
@@ -557,7 +557,7 @@ function ProductReviewTab() {
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
-            className={`shrink-0 rounded-full px-3 py-1 text-xs transition ${
+            className={`shrink-0 rounded-full px-4 py-2 text-sm transition ${
               statusFilter === s
                 ? "bg-primary text-white"
                 : "bg-gray-100 text-gray-600 hover:bg-gray-200"
@@ -581,12 +581,12 @@ function ProductReviewTab() {
         products.map((p) => {
           const lc = lifecycleAction(p);
           return (
-            <div key={p.id} className="rounded-xl border border-gray-100 p-4">
+            <div key={p.id} className="rounded-2xl border border-gray-100 p-5">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-medium text-gray-900">{p.name}</p>
+                <p className="text-base font-semibold text-gray-900">{p.name}</p>
                 <StatusBadge status={p.status} />
               </div>
-              <p className="mt-0.5 text-xs text-gray-400">
+              <p className="mt-0.5 text-sm text-gray-400">
                 {p.brandName} · {p.category}
                 {p.subCategory ? ` / ${p.subCategory}` : ""} · ¥{fenToYuan(p.price)} · 库存 {p.stock}
               </p>
@@ -596,14 +596,14 @@ function ProductReviewTab() {
                     <button
                       onClick={() => handleReview(p.id, "APPROVED")}
                       disabled={acting === p.id}
-                      className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                      className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
                     >
                       通过
                     </button>
                     <button
                       onClick={() => handleReview(p.id, "REJECTED")}
                       disabled={acting === p.id}
-                      className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+                      className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
                     >
                       拒绝
                     </button>
@@ -613,7 +613,7 @@ function ProductReviewTab() {
                   <button
                     onClick={() => handleLifecycle(p.id, lc.action)}
                     disabled={acting === p.id}
-                    className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:border-primary hover:text-primary disabled:opacity-50"
+                    className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 transition hover:border-primary hover:text-primary disabled:opacity-50"
                   >
                     {acting === p.id ? "处理中..." : lc.label}
                   </button>
@@ -621,14 +621,14 @@ function ProductReviewTab() {
                 <button
                   onClick={() => openDetail(p.id)}
                   disabled={detailLoading || acting === p.id}
-                  className="rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-gray-700 disabled:opacity-50"
+                  className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-gray-700 disabled:opacity-50"
                 >
                   详情
                 </button>
                 <button
                   onClick={() => openEdit(p.id)}
                   disabled={detailLoading || acting === p.id}
-                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:border-primary hover:text-primary disabled:opacity-50"
+                  className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 transition hover:border-primary hover:text-primary disabled:opacity-50"
                 >
                   编辑
                 </button>
@@ -712,7 +712,7 @@ function OrdersTab() {
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
-            className={`shrink-0 rounded-full px-3 py-1 text-xs transition ${
+            className={`shrink-0 rounded-full px-4 py-2 text-sm transition ${
               statusFilter === s
                 ? "bg-primary text-white"
                 : "bg-gray-100 text-gray-600 hover:bg-gray-200"
@@ -729,21 +729,21 @@ function OrdersTab() {
         <div className="py-12 text-center text-gray-400">暂无订单</div>
       ) : (
         orders.map((o) => (
-          <div key={o.id} className="flex items-center justify-between rounded-xl border border-gray-100 p-4">
+          <div key={o.id} className="flex items-center justify-between rounded-2xl border border-gray-100 p-5">
             <div className="min-w-0">
-              <p className="text-sm font-medium text-gray-900">{o.firstItemName}</p>
-              <p className="mt-0.5 text-xs text-gray-400">
+              <p className="text-base font-semibold text-gray-900">{o.firstItemName}</p>
+              <p className="mt-0.5 text-sm text-gray-400">
                 <StatusBadge status={o.status} /> · ¥{fenToYuan(o.total)}
                 {o.isDestroyed && <span className="ml-1 text-red-400">已销毁</span>}
               </p>
-              <p className="mt-0.5 truncate text-xs text-gray-400">订单号 {o.id}</p>
+              <p className="mt-0.5 truncate text-sm text-gray-400">订单号 {o.id}</p>
             </div>
             <div className="flex shrink-0 gap-2">
               {o.status === "PAID" && (
                 <button
                   onClick={() => handleAction(o.id, "ship")}
                   disabled={acting === o.id}
-                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
                 >
                   发货
                 </button>
@@ -752,7 +752,7 @@ function OrdersTab() {
                 <button
                   onClick={() => handleAction(o.id, "deliver")}
                   disabled={acting === o.id}
-                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
                 >
                   标记送达
                 </button>
@@ -761,7 +761,7 @@ function OrdersTab() {
                 <button
                   onClick={() => handleAction(o.id, "complete")}
                   disabled={acting === o.id}
-                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
                 >
                   完成
                 </button>
@@ -770,7 +770,7 @@ function OrdersTab() {
                 <button
                   onClick={() => handleAction(o.id, "refund-confirm")}
                   disabled={acting === o.id}
-                  className="rounded-lg border border-orange-200 px-3 py-1.5 text-xs font-medium text-orange-600 transition hover:bg-orange-50 disabled:opacity-50"
+                  className="rounded-lg border border-orange-200 px-4 py-2 text-sm font-medium text-orange-600 transition hover:bg-orange-50 disabled:opacity-50"
                 >
                   确认退款
                 </button>
@@ -803,24 +803,24 @@ function UsersTab() {
     <div className="overflow-x-auto rounded-xl border border-gray-100">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b bg-gray-50 text-left text-xs text-gray-500">
-            <th className="px-3 py-2 font-medium">ID</th>
-            <th className="px-3 py-2 font-medium">角色</th>
-            <th className="px-3 py-2 font-medium">昵称</th>
-            <th className="px-3 py-2 font-medium">年龄验证</th>
-            <th className="px-3 py-2 font-medium">订单数</th>
-            <th className="px-3 py-2 font-medium">注册时间</th>
+          <tr className="border-b bg-gray-50 text-left text-sm text-gray-500">
+            <th className="px-4 py-3 font-medium">ID</th>
+            <th className="px-4 py-3 font-medium">角色</th>
+            <th className="px-4 py-3 font-medium">昵称</th>
+            <th className="px-4 py-3 font-medium">年龄验证</th>
+            <th className="px-4 py-3 font-medium">订单数</th>
+            <th className="px-4 py-3 font-medium">注册时间</th>
           </tr>
         </thead>
         <tbody>
           {users.map((u) => (
             <tr key={u.id} className="border-b border-gray-50 last:border-0">
-              <td className="max-w-[120px] truncate px-3 py-2 text-xs text-gray-400">{u.id}</td>
-              <td className="px-3 py-2 text-xs">{u.role}</td>
-              <td className="px-3 py-2 text-xs text-gray-900">{u.nickname || "—"}</td>
-              <td className="px-3 py-2 text-xs">{u.ageVerified ? "✓" : "—"}</td>
-              <td className="px-3 py-2 text-xs">{u.orderCount}</td>
-              <td className="px-3 py-2 text-xs text-gray-400">
+              <td className="max-w-[120px] truncate px-3 py-2 text-sm text-gray-400">{u.id}</td>
+              <td className="px-4 py-3 text-sm">{u.role}</td>
+              <td className="px-4 py-3 text-sm text-gray-900">{u.nickname || "—"}</td>
+              <td className="px-4 py-3 text-sm">{u.ageVerified ? "✓" : "—"}</td>
+              <td className="px-4 py-3 text-sm">{u.orderCount}</td>
+              <td className="px-3 py-2 text-sm text-gray-400">
                 {new Date(u.createdAt).toLocaleDateString("zh-CN")}
               </td>
             </tr>
@@ -856,9 +856,9 @@ function TemplatesTab() {
         <div className="py-12 text-center text-gray-400">暂无质检模板</div>
       ) : (
         templates.map((t) => (
-          <div key={t.categoryId} className="rounded-xl border border-gray-100 p-4">
-            <p className="text-sm font-medium text-gray-900">{t.categoryId}</p>
-            <div className="mt-2 space-y-1 text-xs text-gray-500">
+          <div key={t.categoryId} className="rounded-2xl border border-gray-100 p-5">
+            <p className="text-base font-semibold text-gray-900">{t.categoryId}</p>
+            <div className="mt-2 space-y-1 text-sm text-gray-500">
               <p>必交材料：{strList(t.requiredDocs).join("、") || "—"}</p>
               <p>检查项：{strList(t.checkPoints).join("、") || "—"}</p>
             </div>
@@ -902,11 +902,11 @@ function InviteCodesTab() {
 
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border border-gray-100 p-4">
+      <div className="rounded-2xl border border-gray-100 p-5">
         <div className="flex items-end justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-sm font-medium text-gray-900">生成入驻邀请码</p>
-            <p className="mt-0.5 text-xs text-gray-400">格式 INV-XXXX-XXXX，发放给意向品牌方</p>
+            <p className="text-base font-semibold text-gray-900">生成入驻邀请码</p>
+            <p className="mt-0.5 text-sm text-gray-400">格式 INV-XXXX-XXXX，发放给意向品牌方</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <input
@@ -920,7 +920,7 @@ function InviteCodesTab() {
             <button
               onClick={handleGenerate}
               disabled={generating}
-              className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+              className="rounded-lg bg-primary px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
             >
               {generating ? "生成中…" : "生成"}
             </button>
@@ -935,22 +935,22 @@ function InviteCodesTab() {
         <div className="overflow-x-auto rounded-xl border border-gray-100">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b bg-gray-50 text-left text-xs text-gray-500">
-                <th className="px-3 py-2 font-medium">邀请码</th>
-                <th className="px-3 py-2 font-medium">状态</th>
-                <th className="px-3 py-2 font-medium">使用人</th>
-                <th className="px-3 py-2 font-medium">过期时间</th>
-                <th className="px-3 py-2 font-medium">使用时间</th>
+              <tr className="border-b bg-gray-50 text-left text-sm text-gray-500">
+                <th className="px-4 py-3 font-medium">邀请码</th>
+                <th className="px-4 py-3 font-medium">状态</th>
+                <th className="px-4 py-3 font-medium">使用人</th>
+                <th className="px-4 py-3 font-medium">过期时间</th>
+                <th className="px-4 py-3 font-medium">使用时间</th>
               </tr>
             </thead>
             <tbody>
               {codes.map((c) => (
                 <tr key={c.id} className="border-b border-gray-50 last:border-0">
-                  <td className="px-3 py-2 font-mono text-xs text-gray-900">{c.code}</td>
-                  <td className="px-3 py-2 text-xs">
+                  <td className="px-4 py-3 font-mono text-sm text-gray-900">{c.code}</td>
+                  <td className="px-4 py-3 text-sm">
                     <StatusBadge status={c.status} />
                   </td>
-                  <td className="max-w-[120px] truncate px-3 py-2 text-xs text-gray-400">
+                  <td className="max-w-[120px] truncate px-3 py-2 text-sm text-gray-400">
                     {c.usedBy ? (
                       <>
                         {c.usedBy.slice(0, 12)}…
@@ -959,8 +959,8 @@ function InviteCodesTab() {
                       "—"
                     )}
                   </td>
-                  <td className="px-3 py-2 text-xs text-gray-400">{fmtTime(c.expiresAt)}</td>
-                  <td className="px-3 py-2 text-xs text-gray-400">{fmtTime(c.usedAt)}</td>
+                  <td className="px-3 py-2 text-sm text-gray-400">{fmtTime(c.expiresAt)}</td>
+                  <td className="px-3 py-2 text-sm text-gray-400">{fmtTime(c.usedAt)}</td>
                 </tr>
               ))}
             </tbody>
@@ -991,16 +991,16 @@ export function AdminDashboardPage() {
   return (
     <main className="mx-auto min-h-screen max-w-6xl bg-white pb-24">
       <SiteHeader />
-      <div className="mx-auto w-full max-w-lg px-4 pt-3">
-        <h1 className="text-center text-base font-bold">管理后台</h1>
-        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+      <div className="mx-auto w-full max-w-5xl px-4 pt-4">
+        <h1 className="text-center text-xl font-bold text-gray-900">管理后台</h1>
+        <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
           {TABS.map((t) => (
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
-              className={`shrink-0 rounded-full px-3 py-1 text-xs transition ${
+              className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition ${
                 tab === t.key
-                  ? "bg-primary text-white"
+                  ? "bg-linear-to-r from-primary to-accent text-white"
                   : "bg-gray-100 text-gray-600 hover:bg-gray-200"
               }`}
             >
@@ -1010,7 +1010,7 @@ export function AdminDashboardPage() {
         </div>
       </div>
 
-      <div className="mx-auto w-full max-w-lg p-4">
+      <div className="mx-auto w-full max-w-5xl p-4 pt-3">
         {tab === "dashboard" && <DashboardTab />}
         {tab === "brands" && <BrandReviewTab />}
         {tab === "products" && <ProductReviewTab />}
