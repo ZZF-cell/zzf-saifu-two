@@ -106,6 +106,12 @@ export function HomePage() {
       <SiteHeader />
       <div className="mx-auto max-w-6xl px-4 py-4">
 
+        {/* 运营横幅：彩色渐变商城风（from-primary 深蓝黑 → accent 玫红） */}
+        <div className="mb-4 overflow-hidden rounded-2xl bg-linear-to-r from-primary via-primary-light to-accent px-6 py-6 text-white shadow-lg">
+          <p className="text-2xl font-bold tracking-wide">赛夫严选 · 品质严选</p>
+          <p className="mt-1 text-sm text-white/80">成人用品正品保障 · 全流程隐私发货</p>
+        </div>
+
         {/* Search */}
         <div className="mb-4">
           <SearchBar

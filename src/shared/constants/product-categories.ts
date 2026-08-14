@@ -37,6 +37,19 @@ export function getSubcategories(category: string): string[] {
   return PRODUCT_CATEGORIES.find((node) => node.category === category)?.subcategories ?? [];
 }
 
+/** 大类展示 emoji（C 端分类筛选/商品卡片视觉点缀；未知大类回退 📦） */
+export const CATEGORY_EMOJI: Record<string, string> = {
+  成人计生用品: "🩷",
+  情趣用品: "✨",
+  智能设备: "🤖",
+  身体护理: "🧴",
+  其他: "📦",
+};
+
+export function categoryEmoji(category: string): string {
+  return CATEGORY_EMOJI[category] ?? "📦";
+}
+
 /** 校验「大类 + 子类」是否为合法组合（子类为空 / 未知 / 不属于该大类 → false） */
 export function isValidCategoryPair(
   category: string,

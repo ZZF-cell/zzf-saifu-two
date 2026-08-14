@@ -103,8 +103,32 @@ export function CartPage() {
 
   if (loading) {
     return (
-      <main className="mx-auto min-h-screen max-w-lg bg-white pb-32">
+      <main className="mx-auto min-h-screen max-w-6xl bg-white pb-32">
         <SiteHeader />
+        <div className="mx-auto w-full max-w-lg">
+          <div className="flex items-center gap-2 px-4 pt-4">
+            <button
+              onClick={() => router.push("/")}
+              className="shrink-0 rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 transition hover:bg-gray-50"
+            >
+              ← 返回首页
+            </button>
+            <h1 className="flex-1 text-center text-base font-bold">购物车</h1>
+          </div>
+          <div className="mt-6 space-y-3 px-4">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-24 animate-pulse rounded-xl bg-gray-100" />
+            ))}
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="mx-auto min-h-screen max-w-6xl bg-white pb-32">
+      <SiteHeader />
+      <div className="mx-auto w-full max-w-lg">
         <div className="flex items-center gap-2 px-4 pt-4">
           <button
             onClick={() => router.push("/")}
@@ -112,55 +136,35 @@ export function CartPage() {
           >
             ← 返回首页
           </button>
-          <h1 className="flex-1 text-center text-base font-bold">购物车</h1>
+          <h1 className="flex-1 text-center text-base font-bold">
+            购物车 ({cart?.totalCount || 0})
+          </h1>
         </div>
-        <div className="mt-6 space-y-3 px-4">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-24 animate-pulse rounded-xl bg-gray-100" />
-          ))}
+
+        <div className="p-4">
+          {errorMsg && (
+            <div className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
+              {errorMsg}
+              <button onClick={() => setErrorMsg("")} className="ml-2 underline">关闭</button>
+            </div>
+          )}
+
+          {!cart || cart.items.length === 0 ? (
+            <EmptyCart />
+          ) : (
+            <div className="space-y-3">
+              {cart.items.map((item) => (
+                <CartItemRow
+                  key={item.id}
+                  item={item}
+                  onQtyChange={handleQtyChange}
+                  onRemove={deleteItem}
+                  disabled={updating}
+                />
+              ))}
+            </div>
+          )}
         </div>
-      </main>
-    );
-  }
-
-  return (
-    <main className="mx-auto min-h-screen max-w-lg bg-white pb-32">
-      <SiteHeader />
-      <div className="flex items-center gap-2 px-4 pt-4">
-        <button
-          onClick={() => router.push("/")}
-          className="shrink-0 rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 transition hover:bg-gray-50"
-        >
-          ← 返回首页
-        </button>
-        <h1 className="flex-1 text-center text-base font-bold">
-          购物车 ({cart?.totalCount || 0})
-        </h1>
-      </div>
-
-      <div className="p-4">
-        {errorMsg && (
-          <div className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
-            {errorMsg}
-            <button onClick={() => setErrorMsg("")} className="ml-2 underline">关闭</button>
-          </div>
-        )}
-
-        {!cart || cart.items.length === 0 ? (
-          <EmptyCart />
-        ) : (
-          <div className="space-y-3">
-            {cart.items.map((item) => (
-              <CartItemRow
-                key={item.id}
-                item={item}
-                onQtyChange={handleQtyChange}
-                onRemove={deleteItem}
-                disabled={updating}
-              />
-            ))}
-          </div>
-        )}
       </div>
 
       {cart && cart.items.length > 0 && (

@@ -16,6 +16,9 @@
 
 /* 全局基础样式 */
 body {
+  /* 灰底 + 各页白 main 列：桌面端所有页面呈现为统一宽度的白色 app 卡片，
+     SiteHeader 与页面边缘全线对齐（此前内页 max-w-lg 与头部 max-w-6xl 宽度断层） */
+  background-color: #f3f4f6;
   font-family: system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

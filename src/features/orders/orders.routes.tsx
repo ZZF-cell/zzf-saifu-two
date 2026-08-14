@@ -129,8 +129,8 @@ export function CheckoutPage() {
 
   if (loading) {
     return (
-      <main className="mx-auto min-h-screen max-w-lg p-4">
-        <div className="mt-8 space-y-3">
+      <main className="mx-auto min-h-screen max-w-6xl p-4">
+        <div className="mx-auto mt-8 w-full max-w-lg space-y-3">
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-16 animate-pulse rounded-xl bg-gray-100" />
           ))}
@@ -141,8 +141,8 @@ export function CheckoutPage() {
 
   if (!cart || cart.items.length === 0) {
     return (
-      <main className="mx-auto min-h-screen max-w-lg p-4">
-        <div className="mt-20 text-center text-gray-400">
+      <main className="mx-auto min-h-screen max-w-6xl p-4">
+        <div className="mx-auto mt-20 w-full max-w-lg text-center text-gray-400">
           <p className="text-lg">购物车为空</p>
           <button
             onClick={() => router.push("/")}
@@ -156,12 +156,12 @@ export function CheckoutPage() {
   }
 
   return (
-    <main className="mx-auto min-h-screen max-w-lg bg-white pb-24">
-      <div className="sticky top-0 z-10 border-b bg-white/90 backdrop-blur px-4 py-3">
+    <main className="mx-auto min-h-screen max-w-6xl bg-white pb-24">
+      <div className="sticky top-0 z-10 mx-auto w-full max-w-6xl border-b bg-white/90 px-4 py-3 backdrop-blur">
         <h1 className="text-center text-base font-bold">确认订单</h1>
       </div>
 
-      <div className="p-4 space-y-6">
+      <div className="mx-auto w-full max-w-lg p-4 space-y-6">
         {/* 收货地址 */}
         <section>
           <h3 className="mb-3 text-sm font-semibold text-gray-700">收货地址</h3>
@@ -256,8 +256,8 @@ export function OrderListPage() {
 
   if (loading) {
     return (
-      <main className="mx-auto min-h-screen max-w-lg p-4">
-        <div className="mt-8 space-y-3">
+      <main className="mx-auto min-h-screen max-w-6xl p-4">
+        <div className="mx-auto mt-8 w-full max-w-lg space-y-3">
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-20 animate-pulse rounded-xl bg-gray-100" />
           ))}
@@ -267,15 +267,15 @@ export function OrderListPage() {
   }
 
   return (
-    <main className="mx-auto min-h-screen max-w-lg bg-white">
+    <main className="mx-auto min-h-screen max-w-6xl bg-white">
       <SiteHeader />
-      <div className="px-4 pt-4">
+      <div className="mx-auto w-full max-w-lg px-4 pt-4">
         <h1 className="text-center text-base font-bold">我的订单</h1>
       </div>
 
-      <div className="p-4">
+      <div className="mx-auto w-full max-w-lg p-4">
         {orders.length === 0 ? (
-          <div className="py-20 text-center text-gray-400">
+          <div className="mx-auto w-full max-w-lg py-20 text-center text-gray-400">
             <p className="text-lg">暂无订单</p>
             <button
               onClick={() => router.push("/")}
@@ -355,8 +355,8 @@ export function OrderDetailPage({ id }: { id: string }) {
 
   if (loading) {
     return (
-      <main className="mx-auto min-h-screen max-w-lg p-4">
-        <div className="mt-8 space-y-3">
+      <main className="mx-auto min-h-screen max-w-6xl p-4">
+        <div className="mx-auto mt-8 w-full max-w-lg space-y-3">
           <div className="h-40 animate-pulse rounded-xl bg-gray-100" />
           <div className="h-20 animate-pulse rounded-xl bg-gray-100" />
         </div>
@@ -366,8 +366,8 @@ export function OrderDetailPage({ id }: { id: string }) {
 
   if (!order) {
     return (
-      <main className="mx-auto min-h-screen max-w-lg p-4">
-        <div className="py-20 text-center text-gray-400">{error || "订单不存在"}</div>
+      <main className="mx-auto min-h-screen max-w-6xl p-4">
+        <div className="mx-auto w-full max-w-lg py-20 text-center text-gray-400">{error || "订单不存在"}</div>
       </main>
     );
   }
@@ -382,12 +382,12 @@ export function OrderDetailPage({ id }: { id: string }) {
   ];
 
   return (
-    <main className="mx-auto min-h-screen max-w-lg bg-white pb-24">
-      <div className="sticky top-0 z-10 border-b bg-white/90 backdrop-blur px-4 py-3">
+    <main className="mx-auto min-h-screen max-w-6xl bg-white pb-24">
+      <div className="sticky top-0 z-10 mx-auto w-full max-w-6xl border-b bg-white/90 px-4 py-3 backdrop-blur">
         <h1 className="text-center text-base font-bold">订单详情</h1>
       </div>
 
-      <div className="p-4 space-y-6">
+      <div className="mx-auto w-full max-w-lg p-4 space-y-6">
         {/* 状态 */}
         <div className="flex items-center justify-between">
           <OrderStatusBadge status={order.status} />

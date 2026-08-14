@@ -77,8 +77,8 @@ export function InvitePage() {
   // 成功态：引导「审核通过后重新登录」——因 access_token 15min 内仍携带 USER 角色
   if (submitted) {
     return (
-      <main className="mx-auto min-h-screen max-w-lg bg-white px-4 py-10">
-        <div className="rounded-xl border border-green-100 bg-green-50 p-6 text-center">
+      <main className="mx-auto min-h-screen max-w-6xl bg-white px-4 py-10">
+        <div className="mx-auto w-full max-w-lg rounded-xl border border-green-100 bg-green-50 p-6 text-center">
           <p className="text-lg font-bold text-green-700">品牌入驻申请已提交</p>
           <p className="mt-2 text-sm text-green-600">请等待平台审核。</p>
           <p className="mt-4 text-xs leading-relaxed text-gray-500">
@@ -97,11 +97,11 @@ export function InvitePage() {
   }
 
   return (
-    <main className="mx-auto min-h-screen max-w-lg bg-white px-4 py-10">
+    <main className="mx-auto min-h-screen max-w-6xl bg-white px-4 py-10">
       <h1 className="text-center text-xl font-bold">品牌方入驻</h1>
       <p className="mt-1 text-center text-xs text-gray-400">凭管理员发放的入驻邀请码激活品牌</p>
 
-      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+      <form onSubmit={handleSubmit} className="mx-auto mt-6 w-full max-w-lg space-y-4">
         {error && (
           <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>
         )}

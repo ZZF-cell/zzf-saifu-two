@@ -5,6 +5,7 @@ import { apiFetch } from "@/shared/api/client";
 import { fenToYuan } from "@/shared/utils/money";
 import { firstFieldError } from "@/shared/utils/api-errors";
 import { SiteHeader } from "@/shared/ui/SiteHeader";
+import { StatusBadge } from "@/shared/ui/StatusBadge";
 import { Image } from "@/shared/ui/Image";
 import { PRODUCT_CATEGORIES, getSubcategories } from "@/shared/constants/product-categories";
 import {
@@ -60,33 +61,6 @@ interface BrandOrder {
   createdAt: string;
   firstItemName: string;
   isDestroyed: boolean;
-}
-
-const STATUS_LABEL: Record<string, string> = {
-  PENDING: "待审核",
-  APPROVED: "已通过",
-  REJECTED: "已拒绝",
-  PAID: "已支付",
-  SHIPPED: "已发货",
-  DELIVERED: "已送达",
-  COMPLETED: "已完成",
-  CANCELLED: "已取消",
-  REFUND_REQUESTED: "退款中",
-  REFUNDED: "已退款",
-};
-
-function StatusBadge({ status }: { status: string }) {
-  const color =
-    status === "APPROVED" || status === "PAID" || status === "COMPLETED"
-      ? "bg-green-100 text-green-700"
-      : status === "PENDING" || status === "REFUND_REQUESTED"
-        ? "bg-yellow-100 text-yellow-700"
-        : "bg-gray-100 text-gray-600";
-  return (
-    <span className={`rounded-full px-2 py-0.5 text-xs ${color}`}>
-      {STATUS_LABEL[status] || status}
-    </span>
-  );
 }
 
 // ── 品牌概览 ──
@@ -447,9 +421,9 @@ export function BrandCenterPage() {
   const [tab, setTab] = useState<TabKey>("overview");
 
   return (
-    <main className="mx-auto min-h-screen max-w-lg bg-white pb-24">
+    <main className="mx-auto min-h-screen max-w-6xl bg-white pb-24">
       <SiteHeader />
-      <div className="px-4 pt-3">
+      <div className="mx-auto w-full max-w-lg px-4 pt-3">
         <h1 className="text-center text-base font-bold">品牌中心</h1>
         <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
           {TABS.map((t) => (
@@ -468,7 +442,7 @@ export function BrandCenterPage() {
         </div>
       </div>
 
-      <div className="p-4">
+      <div className="mx-auto w-full max-w-lg p-4">
         {tab === "overview" && <OverviewTab />}
         {tab === "submit" && <SubmitProductTab />}
         {tab === "products" && <ProductsTab />}

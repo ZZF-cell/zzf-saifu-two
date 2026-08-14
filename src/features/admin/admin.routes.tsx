@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "@/shared/api/client";
 import { fenToYuan } from "@/shared/utils/money";
 import { SiteHeader } from "@/shared/ui/SiteHeader";
+import { StatusBadge, STATUS_LABEL } from "@/shared/ui/StatusBadge";
 
 // ── helpers ──
 
@@ -89,36 +90,6 @@ interface AdminInviteCode {
   createdAt: string;
   usedAt: string | null;
   expiresAt: string | null;
-}
-
-const STATUS_LABEL: Record<string, string> = {
-  PENDING: "待处理",
-  APPROVED: "已通过",
-  REJECTED: "已拒绝",
-  PAID: "已支付",
-  SHIPPED: "已发货",
-  DELIVERED: "已送达",
-  COMPLETED: "已完成",
-  CANCELLED: "已取消",
-  REFUND_REQUESTED: "退款中",
-  REFUNDED: "已退款",
-  UNUSED: "待使用",
-  USED: "已使用",
-  EXPIRED: "已过期",
-};
-
-function StatusBadge({ status }: { status: string }) {
-  const color =
-    status === "APPROVED" || status === "PAID" || status === "COMPLETED"
-      ? "bg-green-100 text-green-700"
-      : status === "PENDING" || status === "REFUND_REQUESTED"
-        ? "bg-yellow-100 text-yellow-700"
-        : "bg-gray-100 text-gray-600";
-  return (
-    <span className={`rounded-full px-2 py-0.5 text-xs ${color}`}>
-      {STATUS_LABEL[status] || status}
-    </span>
-  );
 }
 
 // ── 标签页组件 ──
@@ -632,9 +603,9 @@ export function AdminDashboardPage() {
   const [tab, setTab] = useState<TabKey>("dashboard");
 
   return (
-    <main className="mx-auto min-h-screen max-w-lg bg-white pb-24">
+    <main className="mx-auto min-h-screen max-w-6xl bg-white pb-24">
       <SiteHeader />
-      <div className="px-4 pt-3">
+      <div className="mx-auto w-full max-w-lg px-4 pt-3">
         <h1 className="text-center text-base font-bold">管理后台</h1>
         <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
           {TABS.map((t) => (
@@ -653,7 +624,7 @@ export function AdminDashboardPage() {
         </div>
       </div>
 
-      <div className="p-4">
+      <div className="mx-auto w-full max-w-lg p-4">
         {tab === "dashboard" && <DashboardTab />}
         {tab === "brands" && <BrandReviewTab />}
         {tab === "products" && <ProductReviewTab />}

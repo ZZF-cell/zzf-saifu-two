@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "@/shared/ui/Image";
 import { fenToYuan } from "@/shared/utils/money";
-import { type ProductCategory } from "@/shared/constants/product-categories";
+import { type ProductCategory, categoryEmoji } from "@/shared/constants/product-categories";
 
 // ── 类型 ──
 
@@ -32,6 +32,11 @@ export function ProductCard({ product }: { product: ProductCardData }) {
           sizes="(max-width: 768px) 50vw, 33vw"
           className="object-cover"
         />
+        {product.sales > 0 && (
+          <span className="absolute right-1.5 top-1.5 rounded-full bg-linear-to-r from-primary to-accent px-2 py-0.5 text-[10px] font-medium text-white">
+            已售 {product.sales}
+          </span>
+        )}
       </div>
       <div className="p-3">
         <h3 className="text-sm font-medium leading-tight text-gray-900 group-hover:text-primary">
@@ -98,7 +103,7 @@ export function CategoryFilter({
           onClick={() => onCategoryChange(undefined)}
           className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition ${
             !activeCategory
-              ? "bg-primary text-white"
+              ? "bg-linear-to-r from-primary to-accent text-white"
               : "bg-gray-100 text-gray-600 hover:bg-gray-200"
           }`}
         >
@@ -110,11 +115,11 @@ export function CategoryFilter({
             onClick={() => onCategoryChange(node.category)}
             className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition ${
               activeCategory === node.category
-                ? "bg-primary text-white"
+                ? "bg-linear-to-r from-primary to-accent text-white"
                 : "bg-gray-100 text-gray-600 hover:bg-gray-200"
             }`}
           >
-            {node.category}
+            {categoryEmoji(node.category)} {node.category}
           </button>
         ))}
       </div>
@@ -144,7 +149,7 @@ export function CategoryFilter({
                   onClick={() => onSubCategoryChange(sub)}
                   className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-medium transition ${
                     activeSubCategory === sub
-                      ? "bg-primary text-white"
+                      ? "bg-linear-to-r from-primary to-accent text-white"
                       : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                   }`}
                 >
