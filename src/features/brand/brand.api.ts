@@ -153,6 +153,27 @@ export const updateProfile = withValidation(
   },
 );
 
+// ── 质检模板（品牌提交页读该品类必交材料） ──
+
+/** GET /api/brand/audit-template?category= — 该大类质检模板（requiredDocs/checkPoints），无模板 → null */
+export async function getAuditTemplate(req: Request) {
+  try {
+    await requireBrand(req);
+    const url = new URL(req.url);
+    const category = url.searchParams.get("category");
+    if (!category) {
+      return NextResponse.json(
+        { error: ERROR_CODES.VALIDATION_ERROR.code, message: "缺少 category 参数" },
+        { status: 422 },
+      );
+    }
+    const template = await brandQueries.getAuditTemplateByCategory(category);
+    return NextResponse.json(template);
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
 // ── 品牌订单列表 ──
 
 export async function getOrders(req: Request) {

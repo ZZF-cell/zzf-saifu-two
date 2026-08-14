@@ -107,6 +107,7 @@ export interface AdminProductUpdateInput {
   price?: number; // 元
   stock?: number;
   images?: string[];
+  certificates?: { url: string; name: string; mime: string }[];
   specs?: Record<string, string>;
 }
 
@@ -119,6 +120,7 @@ function basicInfoChanged(
     subCategory: string | null;
     description: string | null;
     images: unknown;
+    certificates: unknown;
     specs: unknown;
   },
   input: AdminProductUpdateInput,
@@ -130,6 +132,8 @@ function basicInfoChanged(
   // 旧值为 null 时清空不误判为重审
   if (input.description !== undefined && (input.description || null) !== old.description) return true;
   if (input.images !== undefined && JSON.stringify(input.images) !== JSON.stringify(old.images)) return true;
+  // 检测证书属基本信息（质检依据）：改证书需重审
+  if (input.certificates !== undefined && JSON.stringify(input.certificates) !== JSON.stringify(old.certificates)) return true;
   if (input.specs !== undefined && JSON.stringify(input.specs) !== JSON.stringify(old.specs)) return true;
   return false;
 }
@@ -192,6 +196,7 @@ export async function updateProduct(
         subCategory: true,
         description: true,
         images: true,
+        certificates: true,
         specs: true,
         status: true,
       },
@@ -221,6 +226,7 @@ export async function updateProduct(
       ...(input.price !== undefined ? { price: yuanToFen(input.price) } : {}),
       ...(input.stock !== undefined ? { stock: input.stock } : {}),
       ...(input.images !== undefined ? { images: input.images as unknown as object } : {}),
+      ...(input.certificates !== undefined ? { certificates: input.certificates as unknown as object } : {}),
       ...(input.specs !== undefined ? { specs: input.specs as unknown as object } : {}),
       ...(nextStatus !== old.status ? { status: nextStatus } : {}),
       version: { increment: 1 },

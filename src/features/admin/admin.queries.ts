@@ -243,6 +243,7 @@ export interface AdminProductDetail {
   status: string;
   sales: number;
   images: unknown;
+  certificates: unknown;
   specs: unknown;
   createdAt: Date;
   updatedAt: Date;
@@ -284,6 +285,7 @@ export async function getAdminProductDetail(productId: string): Promise<AdminPro
     status: product.status,
     sales: product.sales,
     images: product.images,
+    certificates: product.certificates,
     specs: product.specs,
     createdAt: product.createdAt,
     updatedAt: product.updatedAt,

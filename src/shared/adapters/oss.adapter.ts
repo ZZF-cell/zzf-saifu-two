@@ -14,12 +14,13 @@ import { randomUUID } from "crypto";
 
 // ── 纯函数（导出供单测，仿 payment.adapter.getBeijingTimestamp） ──
 
-export const ALLOWED_IMAGE_MIME_TYPES = [
+export const ALLOWED_UPLOAD_MIME_TYPES = [
   "image/jpeg",
   "image/png",
   "image/webp",
+  "application/pdf",
 ] as const;
-export type AllowedImageMime = (typeof ALLOWED_IMAGE_MIME_TYPES)[number];
+export type AllowedUploadMime = (typeof ALLOWED_UPLOAD_MIME_TYPES)[number];
 
 /** 宽松的 env 形状：纯函数可注入任意对象供单测（process.env 天然兼容） */
 export type OssEnvLike = Record<string, string | undefined>;
@@ -79,15 +80,17 @@ export function getExtensionForMime(mime: string): string {
       return "png";
     case "image/webp":
       return "webp";
+    case "application/pdf":
+      return "pdf";
     default:
-      throw new Error(`不支持的图片 MIME: ${mime}`);
+      throw new Error(`不支持的文件 MIME: ${mime}`);
   }
 }
 
 export function buildObjectKey(opts: {
   folder: string;
   userId: string;
-  mime: AllowedImageMime;
+  mime: AllowedUploadMime;
   randomId: string;
   date?: Date;
 }): string {
@@ -111,9 +114,9 @@ export function isOssUrl(url: string): boolean {
 // ── 接口 ──
 
 export interface PutObjectInput {
-  folder: string; // "product" | "brand"，决定 key 前缀（来自路由 purpose 白名单）
+  folder: string; // "product" | "brand" | "cert"，决定 key 前缀（来自路由 purpose 白名单）
   userId: string; // 来自鉴权 token，绝不取自客户端
-  mime: AllowedImageMime;
+  mime: AllowedUploadMime;
   buffer: Buffer;
 }
 

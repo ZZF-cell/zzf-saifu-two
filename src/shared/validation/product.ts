@@ -1,6 +1,7 @@
 // 商品字段共享 Zod 校验 — 品牌提交 / 品牌编辑 / 管理端编辑复用同一套约束
 import { z } from "zod";
 import { ossImageUrlSchema } from "@/shared/validation/schemas";
+import { ALLOWED_UPLOAD_MIME_TYPES } from "@/shared/adapters/oss.adapter";
 import { isValidCategoryPair } from "@/shared/constants/product-categories";
 
 // 商品字段对象：抽自原 brand.api submitProductSchema 的字段层
@@ -13,6 +14,17 @@ export const productFields = {
   category: z.string().trim().min(1, "请选择大类").max(50),
   subCategory: z.string().trim().min(1, "请选择子类").max(50),
   images: z.array(ossImageUrlSchema).max(5, "最多 5 张图片").optional(),
+  // 检测证书（随商品提交）：url 必须过 OSS host 校验，mime 必须来自白名单（图片+PDF）
+  certificates: z
+    .array(
+      z.object({
+        url: ossImageUrlSchema,
+        name: z.string().trim().min(1, "证书名称不能为空").max(100),
+        mime: z.enum(ALLOWED_UPLOAD_MIME_TYPES),
+      }),
+    )
+    .max(5, "最多 5 份检测证书")
+    .optional(),
   // 价格（元）：min 0.01 保证元→分后至少 1 分（0.001 会 round 成 0 分免费商品）；
   // max 21_474_836 保证 ×100 后不超 PostgreSQL Int 上限（2^31-1），防溢出写库报 500
   price: z.number().positive("价格必须大于 0").min(0.01).max(21_474_836),

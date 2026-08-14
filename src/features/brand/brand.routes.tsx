@@ -10,8 +10,11 @@ import { Image } from "@/shared/ui/Image";
 import { PRODUCT_CATEGORIES, getSubcategories } from "@/shared/constants/product-categories";
 import {
   MAX_UPLOAD_BYTES,
+  MAX_CERT_BYTES,
   ALLOWED_IMAGE_TYPES,
+  ALLOWED_CERT_TYPES,
   MAX_PRODUCT_IMAGES,
+  MAX_PRODUCT_CERTIFICATES,
 } from "@/shared/constants/upload";
 
 // ── helpers ──
@@ -43,6 +46,12 @@ interface BrandOverview {
   paidRevenue: number;
 }
 
+interface ProductCertificate {
+  url: string;
+  name: string;
+  mime: string;
+}
+
 interface BrandProduct {
   id: string;
   name: string;
@@ -54,6 +63,7 @@ interface BrandProduct {
   sales: number;
   description: string | null;
   images: string[];
+  certificates?: ProductCertificate[];
 }
 
 interface BrandOrder {
@@ -121,6 +131,7 @@ interface ProductFormValues {
   stock: number;
   description: string; // 已 trim，可为空字符串（编辑时传 "" 即清空）
   images: string[];
+  certificates: ProductCertificate[];
 }
 
 function ProductForm({
@@ -147,11 +158,15 @@ function ProductForm({
     description: "",
   });
   const [images, setImages] = useState<string[]>([]);
+  const [certificates, setCertificates] = useState<ProductCertificate[]>([]);
+  const [requiredDocs, setRequiredDocs] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [certUploading, setCertUploading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const certInputRef = useRef<HTMLInputElement>(null);
 
   // 编辑模态：进入时按初始值预填（price 分为单位 → 元展示）
   useEffect(() => {
@@ -165,9 +180,43 @@ function ProductForm({
         description: initial.description ?? "",
       });
       setImages(initial.images ?? []);
+      setCertificates(initial.certificates ?? []);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅进入时预填一次，父级每次重建本组件
   }, []);
+
+  // 编辑模态：进入时按初始类目读必交材料（切换类目在 handleCategoryChange 里重读）
+  useEffect(() => {
+    if (initial?.category) {
+      void fetchRequiredDocs(initial.category);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅进入时加载一次
+  }, []);
+
+  /** 读该品类质检模板的必交材料（GET /api/brand/audit-template） */
+  const fetchRequiredDocs = async (category: string) => {
+    setRequiredDocs([]);
+    if (!category) return;
+    try {
+      const res = await apiFetch(
+        `/api/brand/audit-template?category=${encodeURIComponent(category)}`,
+      );
+      const data = await res.json().catch(() => null);
+      const docs = Array.isArray(data?.requiredDocs)
+        ? data.requiredDocs.map((d: unknown) => String(d))
+        : [];
+      setRequiredDocs(docs);
+    } catch {
+      setRequiredDocs([]);
+    }
+  };
+
+  /** 切换大类：级联清空子类 + 清空已传证书（避免证书与类目错配）+ 重读必交材料 */
+  const handleCategoryChange = (category: string) => {
+    setForm((prev) => ({ ...prev, category, subCategory: "" }));
+    setCertificates([]);
+    void fetchRequiredDocs(category);
+  };
 
   /** 上传商品图：POST /api/upload（multipart 字段 file + purpose=product）→ 成功后追加 URL，最多 5 张 */
   const handleImageUpload = async (file: File) => {
@@ -203,6 +252,44 @@ function ProductForm({
     }
   };
 
+  /** 上传检测证书：POST /api/upload（multipart 字段 file + purpose=cert）→ 图片/PDF 都支持，最多 5 份 */
+  const handleCertificateUpload = async (file: File) => {
+    if (!ALLOWED_CERT_TYPES.includes(file.type)) {
+      setError("仅支持 JPG/PNG/WebP 图片或 PDF");
+      return;
+    }
+    const isPdf = file.type === "application/pdf";
+    if (file.size > (isPdf ? MAX_CERT_BYTES : MAX_UPLOAD_BYTES)) {
+      setError(isPdf ? "PDF 不能超过 10MB" : "图片不能超过 4MB");
+      return;
+    }
+    if (certificates.length >= MAX_PRODUCT_CERTIFICATES) {
+      setError(`最多上传 ${MAX_PRODUCT_CERTIFICATES} 份检测证书`);
+      return;
+    }
+    setCertUploading(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("purpose", "cert");
+      const res = await apiFetch("/api/upload", { method: "POST", body: form });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        // 后端 422 带 details（字段 → 具体原因），优先展示具体原因
+        throw new Error(firstFieldError(data?.details) || data?.message || "上传失败");
+      }
+      setCertificates((prev) => [
+        ...prev,
+        { url: data.url, name: file.name, mime: file.type },
+      ]);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "上传失败");
+    } finally {
+      setCertUploading(false);
+    }
+  };
+
   const handleSubmit = async () => {
     setError("");
     setSuccess("");
@@ -224,11 +311,14 @@ function ProductForm({
         stock,
         description: form.description.trim(),
         images,
+        certificates,
       });
       setSuccess(successMessage || "已保存");
       if (resetAfterSuccess) {
         setForm({ name: "", category: "", subCategory: "", price: "", stock: "", description: "" });
         setImages([]);
+        setCertificates([]);
+        setRequiredDocs([]);
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "提交失败");
@@ -250,9 +340,7 @@ function ProductForm({
           <div className="flex gap-3">
             <select
               value={form.category}
-              onChange={(e) =>
-                setForm({ ...form, category: e.target.value, subCategory: "" })
-              }
+              onChange={(e) => handleCategoryChange(e.target.value)}
               className="w-1/2 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
             >
               <option value="">请选择大类</option>
@@ -354,12 +442,97 @@ function ProductForm({
               )}
             </div>
           </div>
+          {/* 检测证书：按该品类必交材料上传（图片/PDF，purpose=cert） */}
+          <div>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <p className="text-xs font-medium text-gray-500">检测证书</p>
+              {requiredDocs.length > 0 && (
+                <p className="text-xs text-gray-400">该品类必交：{requiredDocs.join("、")}</p>
+              )}
+            </div>
+            {requiredDocs.length > 0 && (
+              <p className="mt-1 text-xs text-amber-600">
+                请按上方清单上传对应的检测证书，随商品一同提交审核
+              </p>
+            )}
+            <div className="mt-2 space-y-2">
+              {certificates.map((cert, i) => (
+                <div
+                  key={cert.url}
+                  className="flex items-center gap-2 rounded-lg border border-gray-100 px-3 py-2"
+                >
+                  {cert.mime === "application/pdf" ? (
+                    <a
+                      href={cert.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex min-w-0 flex-1 items-center gap-2 text-sm text-primary hover:underline"
+                    >
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-red-50 text-[10px] font-bold text-red-500">
+                        PDF
+                      </span>
+                      <span className="truncate">{cert.name}</span>
+                    </a>
+                  ) : (
+                    <a
+                      href={cert.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex min-w-0 flex-1 items-center gap-2 text-sm text-gray-700 hover:underline"
+                    >
+                      <Image
+                        src={cert.url}
+                        alt={cert.name}
+                        width={32}
+                        height={32}
+                        className="h-8 w-8 shrink-0 rounded border border-gray-100 object-cover"
+                      />
+                      <span className="truncate">{cert.name}</span>
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCertificates((prev) => prev.filter((_, idx) => idx !== i))
+                    }
+                    aria-label={`删除第 ${i + 1} 份证书`}
+                    className="shrink-0 rounded-full bg-gray-800 px-2 py-0.5 text-xs leading-none text-white transition hover:bg-gray-900"
+                  >
+                    删除
+                  </button>
+                </div>
+              ))}
+              {certificates.length < MAX_PRODUCT_CERTIFICATES && (
+                <>
+                  <input
+                    ref={certInputRef}
+                    type="file"
+                    accept={ALLOWED_CERT_TYPES.join(",")}
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) void handleCertificateUpload(file);
+                      e.target.value = ""; // 允许重复选择同一文件
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => certInputRef.current?.click()}
+                    disabled={certUploading || submitting}
+                    className="w-full rounded-lg border border-dashed border-gray-300 px-3 py-2.5 text-sm text-gray-400 transition hover:border-primary hover:text-primary disabled:opacity-50"
+                  >
+                    {certUploading ? "上传中..." : "+ 上传检测证书（图片或 PDF）"}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
         </div>
         {error && <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
         {success && <div className="mt-3 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{success}</div>}
         <button
           onClick={handleSubmit}
-          disabled={submitting || uploading}
+          disabled={submitting || uploading || certUploading}
           className="mt-4 w-full rounded-lg bg-primary py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
         >
           {submitting ? (initial ? "保存中..." : "提交中...") : submitLabel}

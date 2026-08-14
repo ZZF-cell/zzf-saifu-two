@@ -110,6 +110,7 @@ export interface BrandProductRow {
   sales: number;
   description: string | null;
   images: unknown;
+  certificates: unknown;
   createdAt: Date;
 }
 
@@ -142,6 +143,7 @@ export async function getBrandProducts(
         sales: true,
         description: true,
         images: true,
+        certificates: true,
         createdAt: true,
       },
       orderBy: { createdAt: "desc" },
@@ -158,6 +160,17 @@ export async function getBrandProducts(
     pageSize,
     totalPages: Math.ceil(total / pageSize),
   };
+}
+
+// ── 质检模板按大类查询（品牌提交页读「该品类必交材料」；无模板 → null） ──
+
+export async function getAuditTemplateByCategory(
+  categoryId: string,
+): Promise<{ requiredDocs: unknown; checkPoints: unknown } | null> {
+  return prisma.categoryAuditTemplate.findUnique({
+    where: { categoryId },
+    select: { requiredDocs: true, checkPoints: true },
+  });
 }
 
 // ── 品牌订单列表（复用 orders 模块 getOrderListByBrand，按品牌商品过滤） ──

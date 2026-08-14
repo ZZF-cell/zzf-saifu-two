@@ -120,13 +120,14 @@ describe("getOssPublicUrl — 公开访问 URL 拼接", () => {
 });
 
 describe("getExtensionForMime — MIME → 扩展名白名单映射", () => {
-  it("jpeg/png/webp 各映射正确", () => {
+  it("jpeg/png/webp/pdf 各映射正确", () => {
     expect(getExtensionForMime("image/jpeg")).toBe("jpg");
     expect(getExtensionForMime("image/png")).toBe("png");
     expect(getExtensionForMime("image/webp")).toBe("webp");
+    expect(getExtensionForMime("application/pdf")).toBe("pdf");
   });
 
-  it("白名单外 MIME → 抛错（拒绝非图片内容写库）", () => {
+  it("白名单外 MIME → 抛错（拒绝非白名单内容写库）", () => {
     expect(() => getExtensionForMime("application/octet-stream")).toThrow();
   });
 });
@@ -153,6 +154,17 @@ describe("buildObjectKey — 安全 key 生成", () => {
     });
     expect(key).toBe("brand/user-2/20260814/xyz789.png");
     expect(key).not.toContain("../../");
+  });
+
+  it("PDF 证书 → cert/{userId}/{date}/{uuid}.pdf（purpose=cert 走 cert 目录）", () => {
+    const key = buildObjectKey({
+      folder: "cert",
+      userId: "user-1",
+      mime: "application/pdf",
+      randomId: "cert001",
+      date: new Date("2026-08-14T00:00:00Z"),
+    });
+    expect(key).toBe("cert/user-1/20260814/cert001.pdf");
   });
 
   it("不同 randomId → 不同 key（随机唯一性）", () => {

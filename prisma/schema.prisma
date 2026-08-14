@@ -92,6 +92,7 @@ model Product {
   category    String
   subCategory String?   // 子类（两级类目；新提交必填，旧数据可空兼容）
   images      Json     @default("[]")  // 图片列表 JSON: ["url1", "url2"]
+  certificates Json    @default("[]")  // 检测证书 JSON: [{url, name, mime}]
   specs       Json?                    // 规格参数 JSONB
   price       Int                      // 价格（分）
   stock       Int                      // 库存

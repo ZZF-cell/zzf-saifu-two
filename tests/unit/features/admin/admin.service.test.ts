@@ -277,6 +277,7 @@ describe("updateProduct — 管理端编辑商品（状态机：基本信息→�
     subCategory: "智能健康监测",
     description: "低噪 50dB",
     images: [],
+    certificates: [],
     specs: {},
     status: "APPROVED",
   };
@@ -312,6 +313,36 @@ describe("updateProduct — 管理端编辑商品（状态机：基本信息→�
           after: { status: "PENDING" },
         },
       },
+    });
+  });
+
+  it("APPROVED 仅改检测证书 → 回 PENDING 重审（证书属基本信息）", async () => {
+    tx.product.findUnique.mockResolvedValue(baseOld);
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await updateProduct(
+      "product-1",
+      {
+        certificates: [
+          { url: "https://img.example.com/cert/new.pdf", name: "新质检报告.pdf", mime: "application/pdf" },
+        ],
+      },
+      "admin-1",
+    );
+
+    expect(result).toEqual({ id: "product-1", status: "PENDING" });
+    expect(tx.product.updateMany).toHaveBeenCalledWith({
+      where: { id: "product-1", status: "APPROVED" },
+      data: expect.objectContaining({
+        certificates: [
+          { url: "https://img.example.com/cert/new.pdf", name: "新质检报告.pdf", mime: "application/pdf" },
+        ],
+        status: "PENDING",
+        version: { increment: 1 },
+      }),
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "PRODUCT_UPDATE_REVIEW" }),
     });
   });
 

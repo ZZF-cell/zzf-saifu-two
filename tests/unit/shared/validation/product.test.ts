@@ -3,8 +3,17 @@
 // 类目只在 category 与 subCategory「同时出现」时校验组合（兼容部分更新）；
 // 非法组合错误指向 subCategory。
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { updateProductSchema } from "@/shared/validation/product";
+
+// ossImageUrlSchema 依赖 OSS host 白名单（isOssUrl 运行时读 env），测试内 stub 固定桶域名
+const BUCKET_URL = "https://mybucket.oss-cn-hangzhou.aliyuncs.com/cert/a.pdf";
+
+function stubOssEnv() {
+  vi.stubEnv("OSS_BUCKET", "mybucket");
+  vi.stubEnv("OSS_REGION", "oss-cn-hangzhou");
+}
+afterEach(() => vi.unstubAllEnvs());
 
 describe("updateProductSchema — 部分更新校验", () => {
   it("仅改价格 → 通过（运营信息直改）", () => {
@@ -56,5 +65,45 @@ describe("updateProductSchema — 部分更新校验", () => {
   it("库存非法（负数/小数）→ 失败", () => {
     expect(updateProductSchema.safeParse({ stock: -1 }).success).toBe(false);
     expect(updateProductSchema.safeParse({ stock: 1.5 }).success).toBe(false);
+  });
+
+  it("certificates 合法（图片/PDF + 白名单 mime + OSS url）→ 通过", () => {
+    stubOssEnv();
+    const res = updateProductSchema.safeParse({
+      certificates: [
+        { url: "https://mybucket.oss-cn-hangzhou.aliyuncs.com/cert/report.pdf", name: "质检报告.pdf", mime: "application/pdf" },
+        { url: "https://mybucket.oss-cn-hangzhou.aliyuncs.com/cert/ccc.jpg", name: "3C 认证.jpg", mime: "image/jpeg" },
+      ],
+    });
+    expect(res.success).toBe(true);
+  });
+
+  it("certificates 非法（白名单外 mime / 非 OSS url / 空 name）→ 失败", () => {
+    stubOssEnv();
+    expect(
+      updateProductSchema.safeParse({
+        certificates: [{ url: BUCKET_URL, name: "x", mime: "application/octet-stream" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      updateProductSchema.safeParse({
+        certificates: [{ url: "https://evil.com/x.pdf", name: "x", mime: "application/pdf" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      updateProductSchema.safeParse({
+        certificates: [{ url: BUCKET_URL, name: "", mime: "application/pdf" }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("certificates 超过 5 份 → 失败（上限 5）", () => {
+    stubOssEnv();
+    const certs = Array.from({ length: 6 }, (_, i) => ({
+      url: BUCKET_URL,
+      name: `证书 ${i}`,
+      mime: "application/pdf" as const,
+    }));
+    expect(updateProductSchema.safeParse({ certificates: certs }).success).toBe(false);
   });
 });

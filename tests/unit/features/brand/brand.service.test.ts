@@ -105,6 +105,49 @@ describe("submitProduct — 品牌提交商品", () => {
     ]);
   });
 
+  it("传入 certificates → 证书数组原样写库（随商品提交）", async () => {
+    vi.mocked(prisma.brand.findUnique).mockResolvedValue({ status: "APPROVED" } as never);
+    vi.mocked(prisma.product.create).mockResolvedValue({ id: "product-1" } as never);
+
+    await submitProduct("brand-1", {
+      name: "静音震动器",
+      category: "智能设备",
+      subCategory: "智能健康监测",
+      price: 199,
+      stock: 10,
+      certificates: [
+        { url: "https://img.example.com/cert/a.pdf", name: "质检报告.pdf", mime: "application/pdf" },
+        { url: "https://img.example.com/cert/b.jpg", name: "3C 认证.jpg", mime: "image/jpeg" },
+      ],
+    });
+
+    const createArgs = vi.mocked(prisma.product.create).mock.calls[0][0] as {
+      data: { certificates: unknown };
+    };
+    expect(createArgs.data.certificates).toEqual([
+      { url: "https://img.example.com/cert/a.pdf", name: "质检报告.pdf", mime: "application/pdf" },
+      { url: "https://img.example.com/cert/b.jpg", name: "3C 认证.jpg", mime: "image/jpeg" },
+    ]);
+  });
+
+  it("不传 certificates → 落库空数组（默认）", async () => {
+    vi.mocked(prisma.brand.findUnique).mockResolvedValue({ status: "APPROVED" } as never);
+    vi.mocked(prisma.product.create).mockResolvedValue({ id: "product-1" } as never);
+
+    await submitProduct("brand-1", {
+      name: "无证书商品",
+      category: "测试",
+      subCategory: "测试子类",
+      price: 10,
+      stock: 1,
+    });
+
+    const createArgs = vi.mocked(prisma.product.create).mock.calls[0][0] as {
+      data: { certificates: unknown };
+    };
+    expect(createArgs.data.certificates).toEqual([]);
+  });
+
   it("不传 images → 落库空数组（默认）", async () => {
     vi.mocked(prisma.brand.findUnique).mockResolvedValue({ status: "APPROVED" } as never);
     vi.mocked(prisma.product.create).mockResolvedValue({ id: "product-1" } as never);
@@ -312,6 +355,7 @@ describe("updateProduct — 品牌编辑商品（归属守卫 + 状态机）", (
     subCategory: "智能健康监测",
     description: "低噪 50dB",
     images: [],
+    certificates: [],
     specs: {},
     status: "APPROVED",
   };
@@ -326,6 +370,37 @@ describe("updateProduct — 品牌编辑商品（归属守卫 + 状态机）", (
     expect(tx.product.updateMany).toHaveBeenCalledWith({
       where: { id: "product-1", brandId: "brand-1", status: "APPROVED" },
       data: { name: "静音震动器 Pro", status: "PENDING", version: { increment: 1 } },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: "PRODUCT_UPDATE_REVIEW" }),
+    });
+  });
+
+  it("仅改检测证书（certificates）→ 回 PENDING 重审（证书属基本信息，改证书需重审）", async () => {
+    tx.product.findUnique.mockResolvedValue(baseOld);
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await updateProduct(
+      "brand-1",
+      "product-1",
+      {
+        certificates: [
+          { url: "https://img.example.com/cert/new.pdf", name: "新质检报告.pdf", mime: "application/pdf" },
+        ],
+      },
+      "user-1",
+    );
+
+    expect(result).toEqual({ id: "product-1", status: "PENDING" });
+    expect(tx.product.updateMany).toHaveBeenCalledWith({
+      where: { id: "product-1", brandId: "brand-1", status: "APPROVED" },
+      data: expect.objectContaining({
+        certificates: [
+          { url: "https://img.example.com/cert/new.pdf", name: "新质检报告.pdf", mime: "application/pdf" },
+        ],
+        status: "PENDING",
+        version: { increment: 1 },
+      }),
     });
     expect(tx.auditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ action: "PRODUCT_UPDATE_REVIEW" }),

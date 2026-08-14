@@ -64,6 +64,12 @@ interface AdminProduct {
 }
 
 /** 管理端商品详情（GET /api/admin/products/[id]）：完整信息 + 该品类质检清单 */
+interface ProductCertificate {
+  url: string;
+  name: string;
+  mime: string;
+}
+
 interface AdminProductDetail {
   id: string;
   name: string;
@@ -75,6 +81,7 @@ interface AdminProductDetail {
   status: string;
   sales: number;
   images: string[];
+  certificates: ProductCertificate[];
   specs: Record<string, string> | null;
   createdAt: string;
   updatedAt: string;
@@ -367,6 +374,13 @@ function ProductDetailModal({
 }) {
   const strList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
   const specEntries = detail.specs ? Object.entries(detail.specs) : [];
+  const certList: ProductCertificate[] = Array.isArray(detail.certificates)
+    ? detail.certificates
+    : [];
+  const requiredDocs = detail.qcTemplate ? strList(detail.qcTemplate.requiredDocs) : [];
+  /** 必交材料是否已交：证书文件名与必交项文本互相包含即视为命中（模糊对照） */
+  const certMet = (doc: string) =>
+    certList.some((c) => c.name.includes(doc) || doc.includes(c.name));
 
   return (
     <div
@@ -431,6 +445,72 @@ function ProductDetailModal({
                   <p key={k} className="text-sm text-gray-600">
                     <span className="text-gray-400">{k}：</span>
                     {v}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 已提交检测证书：PDF 新标签打开 / 图片缩略图 + 必交材料对照 */}
+        <div className="mt-3 rounded-lg border border-gray-100 p-3">
+          <p className="text-sm font-medium text-gray-500">
+            已提交检测证书（{certList.length} 份）
+          </p>
+          {certList.length === 0 ? (
+            <p className="mt-1 text-sm text-gray-400">该商品未提交证书</p>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {certList.map((cert) => (
+                <div key={cert.url} className="flex items-center gap-2">
+                  {cert.mime === "application/pdf" ? (
+                    <a
+                      href={cert.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex min-w-0 flex-1 items-center gap-2 text-sm text-primary hover:underline"
+                    >
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-red-50 text-[10px] font-bold text-red-500">
+                        PDF
+                      </span>
+                      <span className="truncate">{cert.name}</span>
+                    </a>
+                  ) : (
+                    <a
+                      href={cert.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex min-w-0 flex-1 items-center gap-2 text-sm text-gray-700 hover:underline"
+                    >
+                      <Image
+                        src={cert.url}
+                        alt={cert.name}
+                        width={32}
+                        height={32}
+                        className="h-8 w-8 shrink-0 rounded border border-gray-100 object-cover"
+                      />
+                      <span className="truncate">{cert.name}</span>
+                    </a>
+                  )}
+                  <span className="shrink-0 rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
+                    {cert.mime === "application/pdf" ? "PDF" : "图片"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {requiredDocs.length > 0 && (
+            <div className="mt-2 border-t border-gray-100 pt-2">
+              <p className="text-xs font-medium text-gray-500">必交材料对照</p>
+              <div className="mt-1 space-y-1">
+                {requiredDocs.map((doc) => (
+                  <p key={doc} className="flex items-center gap-2 text-xs text-gray-600">
+                    <span
+                      className={certMet(doc) ? "text-green-600" : "text-red-500"}
+                    >
+                      {certMet(doc) ? "已交" : "缺"}
+                    </span>
+                    <span className="truncate">{doc}</span>
                   </p>
                 ))}
               </div>

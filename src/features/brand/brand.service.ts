@@ -28,6 +28,12 @@ async function writeAuditLog(
 
 // ── 提交新商品（需质检） ──
 
+export interface ProductCertificate {
+  url: string; // OSS 公开 URL（schema 层已校验）
+  name: string; // 证书名称（如"第三方检测报告.pdf"）
+  mime: string; // 白名单 MIME（image/* 或 application/pdf）
+}
+
 export interface SubmitProductInput {
   name: string;
   description?: string;
@@ -37,6 +43,7 @@ export interface SubmitProductInput {
   stock: number;
   specs?: Record<string, string>;
   images?: string[]; // 上传到 OSS 的公开 URL（schema 层已用 ossImageUrlSchema 校验）
+  certificates?: ProductCertificate[]; // 随商品提交的检测证书（图片/PDF）
 }
 
 export async function submitProduct(
@@ -63,6 +70,7 @@ export async function submitProduct(
       stock: input.stock,
       specs: input.specs as unknown as object | undefined,
       images: (input.images ?? []) as unknown as object,
+      certificates: (input.certificates ?? []) as unknown as object,
       status: "PENDING", // 新商品默认待质检
     },
     select: { id: true },
@@ -80,6 +88,7 @@ export interface BrandProductUpdateInput {
   price?: number; // 元
   stock?: number;
   images?: string[];
+  certificates?: ProductCertificate[];
   specs?: Record<string, string>;
 }
 
@@ -107,6 +116,7 @@ function basicInfoChanged(
     subCategory: string | null;
     description: string | null;
     images: unknown;
+    certificates: unknown;
     specs: unknown;
   },
   input: BrandProductUpdateInput,
@@ -118,6 +128,8 @@ function basicInfoChanged(
   // 旧值为 null 时清空不误判为重审
   if (input.description !== undefined && (input.description || null) !== old.description) return true;
   if (input.images !== undefined && JSON.stringify(input.images) !== JSON.stringify(old.images)) return true;
+  // 检测证书属基本信息（质检依据）：改证书需重审
+  if (input.certificates !== undefined && JSON.stringify(input.certificates) !== JSON.stringify(old.certificates)) return true;
   if (input.specs !== undefined && JSON.stringify(input.specs) !== JSON.stringify(old.specs)) return true;
   return false;
 }
@@ -194,6 +206,7 @@ export async function updateProduct(
         subCategory: true,
         description: true,
         images: true,
+        certificates: true,
         specs: true,
         status: true,
       },
@@ -221,6 +234,7 @@ export async function updateProduct(
       ...(input.price !== undefined ? { price: yuanToFen(input.price) } : {}),
       ...(input.stock !== undefined ? { stock: input.stock } : {}),
       ...(input.images !== undefined ? { images: input.images as unknown as object } : {}),
+      ...(input.certificates !== undefined ? { certificates: input.certificates as unknown as object } : {}),
       ...(input.specs !== undefined ? { specs: input.specs as unknown as object } : {}),
       ...(nextStatus !== old.status ? { status: nextStatus } : {}),
       version: { increment: 1 },

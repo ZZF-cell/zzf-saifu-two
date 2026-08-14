@@ -1,8 +1,9 @@
 // upload.api 单元测试 — POST /api/upload（multipart/form-data，手动解析）
 // mock 系统边界：authenticateUser + uploadImage
 // 契约：
-// - 需登录（401）；文件缺失 / MIME 白名单外 / 空文件 / >4MB → 422
-// - purpose 仅允许 product/brand → 其它 422
+// - 需登录（401）；文件缺失 / MIME 白名单外 / 空文件 → 422
+// - purpose 仅允许 product/brand/cert → 其它 422
+// - product/brand 只收图片（≤4MB）；cert 收图片（≤4MB）+ PDF（≤10MB）
 // - service 未配置 → 503 STORAGE_NOT_CONFIGURED；成功 → 201 含 url/key
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -78,6 +79,57 @@ describe("POST /api/upload", () => {
     const res = await uploadFile(makeRequest(imageForm("image/jpeg", 3, "banner")));
 
     expect(res.status).toBe(422);
+  });
+
+  it("PDF 证书（purpose=cert）→ 201，service 收到 cert 目录 + pdf MIME", async () => {
+    uploadMock.mockResolvedValue({
+      url: "https://img.example.com/cert/user-1/20260815/cert001.pdf",
+      key: "cert/user-1/20260815/cert001.pdf",
+    });
+
+    const res = await uploadFile(makeRequest(imageForm("application/pdf", 5 * 1024 * 1024, "cert")));
+
+    expect(res.status).toBe(201);
+    expect(uploadMock).toHaveBeenCalledWith(
+      expect.objectContaining({ folder: "cert", mime: "application/pdf", userId: "user-1" }),
+    );
+  });
+
+  it("PDF 但 purpose=product → 422（商品主图只收图片）", async () => {
+    const res = await uploadFile(makeRequest(imageForm("application/pdf", 1000, "product")));
+
+    expect(res.status).toBe(422);
+    expect(uploadMock).not.toHaveBeenCalled();
+  });
+
+  it("PDF 超过 10MB（purpose=cert）→ 422", async () => {
+    const res = await uploadFile(
+      makeRequest(imageForm("application/pdf", 10 * 1024 * 1024 + 1, "cert")),
+    );
+
+    expect(res.status).toBe(422);
+    expect(uploadMock).not.toHaveBeenCalled();
+  });
+
+  it("图片但超过 4MB（purpose=cert）→ 422（图片上限不因 cert 放宽）", async () => {
+    const res = await uploadFile(makeRequest(imageForm("image/jpeg", MAX + 1, "cert")));
+
+    expect(res.status).toBe(422);
+    expect(uploadMock).not.toHaveBeenCalled();
+  });
+
+  it("cert 用途 + 图片 → 201（证书也支持图片格式）", async () => {
+    uploadMock.mockResolvedValue({
+      url: "https://img.example.com/cert/user-1/20260815/a.png",
+      key: "cert/user-1/20260815/a.png",
+    });
+
+    const res = await uploadFile(makeRequest(imageForm("image/png", 3, "cert")));
+
+    expect(res.status).toBe(201);
+    expect(uploadMock).toHaveBeenCalledWith(
+      expect.objectContaining({ folder: "cert", mime: "image/png" }),
+    );
   });
 
   it("service 抛未配置 → 503 STORAGE_NOT_CONFIGURED", async () => {
