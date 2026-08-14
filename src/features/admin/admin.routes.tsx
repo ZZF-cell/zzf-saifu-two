@@ -32,6 +32,12 @@ interface DashboardStats {
   orderCount: number;
   pendingRefundCount: number;
   paidRevenue: number;
+  toShipCount: number; // 待发货
+  todayNewUsers: number; // 今日新增用户
+  todayNewOrders: number; // 今日新增订单
+  last7DaysRevenue: number[]; // 近 7 天每日销售额（分），下标 0 = 最早
+  orderStatusDist: { status: string; count: number }[];
+  categoryDist: { category: string; count: number }[];
 }
 
 interface AdminBrand {
@@ -118,7 +124,17 @@ interface AdminInviteCode {
 
 // ── 标签页组件 ──
 
-function DashboardTab() {
+/** 看板导航预设：跳转到目标 Tab 时携带的预置筛选 */
+type DashboardNav = {
+  tab: TabKey;
+  preset?: { orderStatus?: string; productStatus?: string };
+};
+
+function DashboardTab({
+  onNavigate,
+}: {
+  onNavigate: (nav: DashboardNav) => void;
+}) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
 
   useEffect(() => {
@@ -138,30 +154,130 @@ function DashboardTab() {
     );
   }
 
-  const cards: { label: string; value: string; highlight?: boolean }[] = [
-    { label: "用户数", value: String(stats.userCount) },
-    { label: "品牌数", value: String(stats.brandCount) },
-    { label: "待审品牌", value: String(stats.pendingBrandCount), highlight: true },
-    { label: "商品数", value: String(stats.productCount) },
-    { label: "待审商品", value: String(stats.pendingProductCount), highlight: true },
-    { label: "订单数", value: String(stats.orderCount) },
-    { label: "待退款", value: String(stats.pendingRefundCount), highlight: true },
-    { label: "已支付销售额", value: `¥${fenToYuan(stats.paidRevenue)}` },
+  // 统计卡：label/value + 点击跳转目标（tab + 预置筛选）
+  const cards: {
+    label: string;
+    value: string;
+    highlight?: boolean;
+    nav: DashboardNav;
+  }[] = [
+    { label: "用户数", value: String(stats.userCount), nav: { tab: "users" } },
+    { label: "品牌数", value: String(stats.brandCount), nav: { tab: "brands" } },
+    { label: "待审品牌", value: String(stats.pendingBrandCount), highlight: true, nav: { tab: "brands" } },
+    { label: "商品数", value: String(stats.productCount), nav: { tab: "products", preset: { productStatus: "" } } },
+    { label: "待审商品", value: String(stats.pendingProductCount), highlight: true, nav: { tab: "products", preset: { productStatus: "PENDING" } } },
+    { label: "订单数", value: String(stats.orderCount), nav: { tab: "orders", preset: { orderStatus: "" } } },
+    { label: "待退款", value: String(stats.pendingRefundCount), highlight: true, nav: { tab: "orders", preset: { orderStatus: "REFUND_REQUESTED" } } },
+    { label: "待发货", value: String(stats.toShipCount), highlight: true, nav: { tab: "orders", preset: { orderStatus: "PAID" } } },
+    { label: "今日新增订单", value: String(stats.todayNewOrders), nav: { tab: "orders" } },
+    { label: "今日新增用户", value: String(stats.todayNewUsers), nav: { tab: "users" } },
+    { label: "已支付销售额", value: `¥${fenToYuan(stats.paidRevenue)}`, nav: { tab: "orders" } },
   ];
 
+  // 近 7 天销售柱状图：按最大值归一化高度
+  const maxRevenue = Math.max(...stats.last7DaysRevenue, 1);
+  const dayLabels = ["6天前", "5天前", "4天前", "3天前", "2天前", "昨天", "今天"];
+
+  // 订单状态分布条：STATUS_LABEL 缺省回退原始值
+  const statusTotal = Math.max(
+    stats.orderStatusDist.reduce((s, d) => s + d.count, 0),
+    1,
+  );
+
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      {cards.map((c) => (
-        <div
-          key={c.label}
-          className={`rounded-2xl p-5 ${c.highlight ? "bg-primary/5" : "bg-gray-50"}`}
-        >
-          <p className={`text-3xl font-bold tracking-tight ${c.highlight ? "text-primary" : "text-gray-900"}`}>
-            {c.value}
-          </p>
-          <p className="mt-1.5 text-sm text-gray-500">{c.label}</p>
+    <div className="space-y-4">
+      {/* 统计卡网格 */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {cards.map((c) => (
+          <button
+            key={c.label}
+            onClick={() => onNavigate(c.nav)}
+            className={`rounded-2xl p-5 text-left transition hover:shadow-md active:scale-[0.98] ${c.highlight ? "bg-primary/5" : "bg-gray-50"}`}
+          >
+            <p className={`text-3xl font-bold tracking-tight ${c.highlight ? "text-primary" : "text-gray-900"}`}>
+              {c.value}
+            </p>
+            <p className="mt-1.5 flex items-center gap-1 text-sm text-gray-500">
+              {c.label}
+              <span className="text-xs text-gray-300">→</span>
+            </p>
+          </button>
+        ))}
+      </div>
+
+      {/* 近 7 天销售（纯 CSS 柱状条） */}
+      <div className="rounded-2xl border border-gray-100 p-5">
+        <div className="flex items-center justify-between">
+          <p className="text-base font-semibold text-gray-900">近 7 天销售</p>
+          <p className="text-sm text-gray-400">共 ¥{fenToYuan(stats.last7DaysRevenue.reduce((s, v) => s + v, 0))}</p>
         </div>
-      ))}
+        <div className="mt-4 flex h-32 items-end gap-2">
+          {stats.last7DaysRevenue.map((v, i) => (
+            <div key={i} className="flex flex-1 flex-col items-center gap-1">
+              <div className="flex h-28 w-full items-end rounded-t-md bg-primary/5">
+                <div
+                  className="w-full rounded-t-md bg-linear-to-t from-primary to-accent"
+                  style={{ height: `${Math.max((v / maxRevenue) * 100, v > 0 ? 4 : 1)}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-400">{dayLabels[i]}</p>
+              <p className="text-xs font-medium text-gray-600">¥{fenToYuan(v)}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* 订单状态分布 */}
+        <div className="rounded-2xl border border-gray-100 p-5">
+          <p className="text-base font-semibold text-gray-900">订单状态分布</p>
+          {stats.orderStatusDist.length === 0 ? (
+            <p className="mt-4 text-sm text-gray-400">暂无订单数据</p>
+          ) : (
+            <div className="mt-4 space-y-2.5">
+              {stats.orderStatusDist.map((d) => (
+                <div key={d.status}>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-600">{STATUS_LABEL[d.status] || d.status}</span>
+                    <span className="text-gray-400">{d.count} 笔</span>
+                  </div>
+                  <div className="mt-1 h-2 rounded-full bg-gray-100">
+                    <div
+                      className="h-2 rounded-full bg-linear-to-r from-primary to-accent"
+                      style={{ width: `${(d.count / statusTotal) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 品类商品数分布 */}
+        <div className="rounded-2xl border border-gray-100 p-5">
+          <p className="text-base font-semibold text-gray-900">品类商品数分布</p>
+          {stats.categoryDist.length === 0 ? (
+            <p className="mt-4 text-sm text-gray-400">暂无商品数据</p>
+          ) : (
+            <div className="mt-4 space-y-2.5">
+              {stats.categoryDist.map((d) => (
+                <div key={d.category}>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-600">{d.category}</span>
+                    <span className="text-gray-400">{d.count} 个</span>
+                  </div>
+                  <div className="mt-1 h-2 rounded-full bg-gray-100">
+                    <div
+                      className="h-2 rounded-full bg-linear-to-r from-primary to-accent"
+                      style={{ width: `${(d.count / Math.max(stats.categoryDist[0]?.count, 1)) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -461,9 +577,14 @@ function AdminProductEditForm({
   );
 }
 
-function ProductReviewTab() {
+function ProductReviewTab({
+  statusFilter,
+  onStatusFilterChange,
+}: {
+  statusFilter: string;
+  onStatusFilterChange: (s: string) => void;
+}) {
   const [products, setProducts] = useState<AdminProduct[]>([]);
-  const [statusFilter, setStatusFilter] = useState("PENDING");
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -559,7 +680,7 @@ function ProductReviewTab() {
         {["PENDING", "APPROVED", "DELISTED", "REJECTED", "WITHDRAWN", ""].map((s) => (
           <button
             key={s}
-            onClick={() => setStatusFilter(s)}
+            onClick={() => onStatusFilterChange(s)}
             className={`shrink-0 rounded-full px-4 py-2 text-sm transition ${
               statusFilter === s
                 ? "bg-primary text-white"
@@ -675,9 +796,14 @@ function ProductReviewTab() {
   );
 }
 
-function OrdersTab() {
+function OrdersTab({
+  statusFilter,
+  onStatusFilterChange,
+}: {
+  statusFilter: string;
+  onStatusFilterChange: (s: string) => void;
+}) {
   const [orders, setOrders] = useState<AdminOrder[]>([]);
-  const [statusFilter, setStatusFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -714,7 +840,7 @@ function OrdersTab() {
         {["", "PENDING", "PAID", "SHIPPED", "DELIVERED", "REFUND_REQUESTED", "REFUNDED", "COMPLETED", "CANCELLED"].map((s) => (
           <button
             key={s}
-            onClick={() => setStatusFilter(s)}
+            onClick={() => onStatusFilterChange(s)}
             className={`shrink-0 rounded-full px-4 py-2 text-sm transition ${
               statusFilter === s
                 ? "bg-primary text-white"
@@ -1014,6 +1140,16 @@ const TABS: { key: TabKey; label: string }[] = [
 
 export function AdminDashboardPage() {
   const [tab, setTab] = useState<TabKey>("dashboard");
+  // 筛选状态上提：看板卡片跳转时携带预置筛选（订单状态/商品状态）
+  const [orderStatusFilter, setOrderStatusFilter] = useState("");
+  const [productStatusFilter, setProductStatusFilter] = useState("PENDING");
+
+  /** 看板卡片跳转：切 Tab + 预置筛选 */
+  const handleNavigate = (nav: DashboardNav) => {
+    if (nav.preset?.orderStatus !== undefined) setOrderStatusFilter(nav.preset.orderStatus);
+    if (nav.preset?.productStatus !== undefined) setProductStatusFilter(nav.preset.productStatus);
+    setTab(nav.tab);
+  };
 
   return (
     <main className="mx-auto min-h-screen max-w-6xl bg-white pb-24">
@@ -1038,10 +1174,20 @@ export function AdminDashboardPage() {
       </div>
 
       <div className="mx-auto w-full max-w-5xl p-4 pt-3">
-        {tab === "dashboard" && <DashboardTab />}
+        {tab === "dashboard" && <DashboardTab onNavigate={handleNavigate} />}
         {tab === "brands" && <BrandReviewTab />}
-        {tab === "products" && <ProductReviewTab />}
-        {tab === "orders" && <OrdersTab />}
+        {tab === "products" && (
+          <ProductReviewTab
+            statusFilter={productStatusFilter}
+            onStatusFilterChange={setProductStatusFilter}
+          />
+        )}
+        {tab === "orders" && (
+          <OrdersTab
+            statusFilter={orderStatusFilter}
+            onStatusFilterChange={setOrderStatusFilter}
+          />
+        )}
         {tab === "users" && <UsersTab />}
         {tab === "templates" && <TemplatesTab />}
         {tab === "invites" && <InviteCodesTab />}

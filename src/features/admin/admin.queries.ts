@@ -31,15 +31,30 @@ export interface DashboardStats {
   orderCount: number;
   pendingRefundCount: number;
   paidRevenue: number; // 已支付订单总金额（分）
+  // ── 看板富化（Module D） ──
+  toShipCount: number; // 待发货 = PAID + SHIPPED
+  todayNewUsers: number; // 今日新增用户
+  todayNewOrders: number; // 今日新增订单
+  last7DaysRevenue: number[]; // 近 7 天每日销售额（分），下标 0 = 最早一天
+  orderStatusDist: { status: string; count: number }[]; // 订单状态分布
+  categoryDist: { category: string; count: number }[]; // 品类商品数分布
 }
 
+/** 已支付订单族（销售统计口径） */
+const PAID_FAMILY = [
+  ORDER_STATUS.PAID,
+  ORDER_STATUS.SHIPPED,
+  ORDER_STATUS.DELIVERED,
+  ORDER_STATUS.COMPLETED,
+];
+
 export async function getDashboardStats(): Promise<DashboardStats> {
-  const paidFamily = [
-    ORDER_STATUS.PAID,
-    ORDER_STATUS.SHIPPED,
-    ORDER_STATUS.DELIVERED,
-    ORDER_STATUS.COMPLETED,
-  ];
+  // 今日零点（本地时区）
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  // 近 7 天起点（含今天，共 7 天）
+  const weekStart = new Date(todayStart);
+  weekStart.setDate(weekStart.getDate() - 6);
 
   const [
     userCount,
@@ -49,7 +64,12 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     pendingProductCount,
     orderCount,
     pendingRefundCount,
+    toShipCount,
     revenueAgg,
+    todayNewUsers,
+    todayNewOrders,
+    statusGroups,
+    categoryGroups,
   ] = await Promise.all([
     prisma.user.count(),
     prisma.brand.count(),
@@ -58,11 +78,32 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     prisma.product.count({ where: { status: "PENDING" } }),
     prisma.order.count(),
     prisma.order.count({ where: { status: ORDER_STATUS.REFUND_REQUESTED } }),
+    prisma.order.count({
+      where: { status: { in: [ORDER_STATUS.PAID, ORDER_STATUS.SHIPPED] } },
+    }),
     prisma.order.aggregate({
-      where: { status: { in: paidFamily } },
+      where: { status: { in: PAID_FAMILY } },
       _sum: { total: true },
     }),
+    prisma.user.count({ where: { createdAt: { gte: todayStart } } }),
+    prisma.order.count({ where: { createdAt: { gte: todayStart } } }),
+    prisma.order.groupBy({ by: ["status"], _count: { _all: true } }),
+    prisma.product.groupBy({ by: ["category"], _count: { _all: true } }),
   ]);
+
+  // 近 7 天销售额：一次性拉取区间内已支付订单，在 JS 按天分桶（避免 7 次聚合查询）
+  const weekOrders = await prisma.order.findMany({
+    where: { status: { in: PAID_FAMILY }, paidAt: { gte: weekStart } },
+    select: { paidAt: true, total: true },
+  });
+  const last7DaysRevenue = new Array<number>(7).fill(0);
+  for (const o of weekOrders) {
+    if (!o.paidAt) continue;
+    const day = new Date(o.paidAt);
+    day.setHours(0, 0, 0, 0);
+    const idx = Math.round((day.getTime() - weekStart.getTime()) / 86400000);
+    if (idx >= 0 && idx < 7) last7DaysRevenue[idx] += o.total;
+  }
 
   return {
     userCount,
@@ -73,6 +114,16 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     orderCount,
     pendingRefundCount,
     paidRevenue: revenueAgg._sum.total ?? 0,
+    toShipCount,
+    todayNewUsers,
+    todayNewOrders,
+    last7DaysRevenue,
+    orderStatusDist: statusGroups
+      .map((g) => ({ status: g.status, count: g._count._all }))
+      .sort((a, b) => b.count - a.count),
+    categoryDist: categoryGroups
+      .map((g) => ({ category: g.category, count: g._count._all }))
+      .sort((a, b) => b.count - a.count),
   };
 }
 
