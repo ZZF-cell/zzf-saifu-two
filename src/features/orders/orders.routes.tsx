@@ -772,6 +772,20 @@ export function OrderDetailPage({ id }: { id: string }) {
               申请退款
             </button>
           )}
+          {order.status === "DELIVERED" && (
+            <div className="space-y-2">
+              <button
+                onClick={() => handleAction("confirm-receipt")}
+                disabled={acting}
+                className="w-full rounded-lg bg-primary py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+              >
+                确认收货
+              </button>
+              <p className="text-center text-xs text-gray-400">
+                确认收货后订单完成，可一键销毁订单记录
+              </p>
+            </div>
+          )}
           {(order.status === "COMPLETED" || order.status === "CANCELLED" || order.status === "REFUNDED") && (
             <button
               onClick={() => handleAction("destroy")}

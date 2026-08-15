@@ -149,6 +149,14 @@ export function isPayable(status: OrderStatus): boolean {
 }
 
 /**
+ * 判断订单是否可确认收货（用户侧 DELIVERED → COMPLETED）
+ * 仅 DELIVERED 可确认收货；确认后订单进入可销毁终态（isDestroyable(COMPLETED)）
+ */
+export function isConfirmable(status: OrderStatus): boolean {
+  return status === ORDER_STATUS.DELIVERED;
+}
+
+/**
  * 判断订单是否可销毁（用户隐私擦除）
  * 后台保留数据，仅用户端不可见
  */

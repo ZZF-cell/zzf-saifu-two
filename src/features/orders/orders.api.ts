@@ -151,6 +151,21 @@ export async function cancelOrder(
   }
 }
 
+/** POST /api/orders/[id]/confirm-receipt — 确认收货（DELIVERED → COMPLETED） */
+export async function confirmReceipt(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  try {
+    const userId = await authenticate(req);
+    const { id } = await ctx.params;
+    await ordersService.confirmReceipt(userId, id);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
 /** POST /api/orders/[id]/refund — 申请退款（仅 PAID） */
 export async function requestRefund(
   req: Request,

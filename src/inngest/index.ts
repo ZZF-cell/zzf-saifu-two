@@ -3,9 +3,10 @@
 
 import { orderTimeoutCancel } from "./functions/order-timeout-cancel";
 import { orderExpirySweep } from "./functions/order-expiry-sweep";
+import { orderDeliveryCompleteSweep } from "./functions/order-delivery-complete-sweep";
 
 export { inngest } from "./client";
-export { orderTimeoutCancel, orderExpirySweep };
+export { orderTimeoutCancel, orderExpirySweep, orderDeliveryCompleteSweep };
 
 /** 全部 Inngest 函数（serve 端点 + Dev Server 自动发现） */
-export const inngestFunctions = [orderTimeoutCancel, orderExpirySweep];
+export const inngestFunctions = [orderTimeoutCancel, orderExpirySweep, orderDeliveryCompleteSweep];

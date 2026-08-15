@@ -8,6 +8,7 @@ import {
   ORDER_STATUS,
   isCancellable,
   isRefundable,
+  isConfirmable,
   isDestroyable,
 } from "./orders.state-machine";
 import type { OrderStatus } from "./orders.state-machine";
@@ -19,6 +20,13 @@ import type { Prisma } from "@prisma/client";
 
 /** 支付超时时间（30 分钟）— 下单 expiresAt 与 Inngest 超时取消共用，防止展示倒计时与实际取消时机不一致 */
 export const ORDER_PAYMENT_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * 送达后自动确认收货窗口（7 天）— 用户侧 confirmReceipt 与 Inngest
+ * order-delivery-complete-sweep cron 共用：deliveredAt 起 7 天无手动确认，
+ * 系统自动标记 COMPLETED（订单进入可销毁终态）
+ */
+export const AUTO_CONFIRM_RECEIPT_MS = 7 * 24 * 60 * 60 * 1000;
 
 // ── 类型 ──
 
@@ -396,6 +404,102 @@ export async function requestRefund(
       before: ORDER_STATUS.PAID,
       after: ORDER_STATUS.REFUND_REQUESTED,
     });
+  });
+}
+
+// ── 确认收货（用户） ──
+
+/**
+ * 用户确认收货 — DELIVERED → COMPLETED（进入可销毁终态）
+ *
+ * 三入口之一（用户确认收货 / 管理后台 completeOrder / 送达 7 天自动确认）：
+ * 全部用 updateMany 带 status=DELIVERED 状态守卫，并发时只命中一次，
+ * 绝不把非已送达订单覆写为 COMPLETED（防与其他流转并发冲突）。
+ *
+ * 归属校验：订单不存在→ORDER_NOT_FOUND；非本人→ORDER_NOT_OWNED；
+ * 非 DELIVERED→ORDER_STATUS_INVALID（提示先等待送达）。
+ */
+export async function confirmReceipt(userId: string, orderId: string): Promise<void> {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: { id: true, userId: true, status: true },
+  });
+
+  if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
+  if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_OWNED, "无权操作该订单");
+
+  const currentStatus = order.status as OrderStatus;
+  if (!isConfirmable(currentStatus)) {
+    throw new AppError(
+      ERROR_CODES.ORDER_STATUS_INVALID,
+      `订单状态「${currentStatus}」不可确认收货（仅已送达 DELIVERED 可确认）`,
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const updated = await tx.order.updateMany({
+      where: { id: orderId, status: ORDER_STATUS.DELIVERED },
+      data: {
+        status: ORDER_STATUS.COMPLETED,
+        completedAt: new Date(),
+      },
+    });
+
+    if (updated.count === 0) {
+      throw new AppError(ERROR_CODES.ORDER_STATUS_INVALID, "订单状态已变更，无法确认收货");
+    }
+
+    await writeAuditLog(tx, "Order", orderId, "CONFIRMED_RECEIPT", userId, {
+      before: ORDER_STATUS.DELIVERED,
+      after: ORDER_STATUS.COMPLETED,
+    });
+  });
+}
+
+// ── 自动确认收货（送达 7 天，Inngest cron 调用） ──
+
+/**
+ * 自动确认收货 — 送达 7 天（AUTO_CONFIRM_RECEIPT_MS）无手动确认，系统自动 DELIVERED → COMPLETED
+ *
+ * 与用户确认收货 confirmReceipt / 管理后台 completeOrder 的区别：
+ * - 无用户归属校验（系统发起）
+ * - 订单非 DELIVERED 时静默返回 no-op，不抛错、不触发重试
+ *
+ * 状态守卫：updateMany 带 status=DELIVERED — 与用户确认/后台标记并发时若状态已变，
+ * 命中 0 行 → 返回未完成，绝不把已变更订单覆写成 COMPLETED。
+ */
+export async function autoCompleteDeliveredOrder(
+  orderId: string,
+): Promise<{ completed: boolean; status: string }> {
+  return prisma.$transaction(async (tx) => {
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      select: { status: true },
+    });
+
+    if (!order || order.status !== ORDER_STATUS.DELIVERED) {
+      return { completed: false, status: order?.status ?? "NOT_FOUND" };
+    }
+
+    const updated = await tx.order.updateMany({
+      where: { id: orderId, status: ORDER_STATUS.DELIVERED },
+      data: {
+        status: ORDER_STATUS.COMPLETED,
+        completedAt: new Date(),
+      },
+    });
+
+    if (updated.count === 0) {
+      return { completed: false, status: "ALREADY_CHANGED" };
+    }
+
+    // 系统动作审计（operatorId=null，与支付回调 markOrderPaid 的 PAID 审计一致）
+    await writeAuditLog(tx, "Order", orderId, "AUTO_COMPLETED", null, {
+      before: ORDER_STATUS.DELIVERED,
+      after: ORDER_STATUS.COMPLETED,
+    });
+
+    return { completed: true, status: ORDER_STATUS.COMPLETED };
   });
 }
 

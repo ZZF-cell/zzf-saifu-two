@@ -114,7 +114,7 @@ npx prisma db seed                 # 重新填充种子数据
 | **用户认证** | 短信验证码登录/注册、密码登录/注册、JWT 双 Token 鉴权、角色分级 |
 | **用户商城** | 商品浏览/搜索/两级类目筛选/价格排序、商品详情 |
 | **购物车** | 添加/修改/删除（服务端同步） |
-| **订单系统** | 创建订单（乐观锁防超卖）、支付查询、取消订单、申请退款、一键销毁 |
+| **订单系统** | 创建订单（乐观锁防超卖）、支付查询、取消订单、申请退款、确认收货、送达 7 天自动确认、一键销毁 |
 | **隐私保护** | 年龄确认门禁、匿名包装、订单销毁、AES-256-GCM 加密、手机号哈希 |
 | **移动端** | 底部导航栏、PWA 可安装到桌面、安全区域适配 |
 
@@ -125,6 +125,7 @@ npx prisma db seed                 # 重新填充种子数据
 | **管理后台** | ✅ 已完成 | 数据看板（统计卡可跳转 + 近 7 天销售/状态分布/品类分布图表；**商品数=在售口径仅 APPROVED**，下架/拒绝/撤回不计入，已下架独立卡片）、品牌审核（待审/已拒绝状态筛选，可重审通过或删除）、商品质检（详情含品类质检清单 + 已提交证书「已交/缺」对照）、订单管理（发货/送达/完成/退款，行展示买家/收货人脱敏/件数）、用户管理（改角色/禁用启用/解锁/重置密码/清除年龄验证）、质检模板增删改 | `features/admin/`；所有状态变更用 `updateMany` 状态守卫（防并发重复操作），与审计日志在同一 `$transaction`（审计失败整体回滚，不留「状态已变但无审计」的账）；重复审核返回 409 区分「不存在」404；用户管理禁止操作自己（403）；看板品类商品数分布图与「在售商品」卡同口径（仅 APPROVED），图卡不矛盾 |
 | **品牌方后台** | ✅ 已完成 | 品牌概览、提交新商品（随附检测证书）、商品列表、订单查看、品牌资料 | `features/brand/`；品牌订单/销售额只聚合本品牌商品行（`OrderItem.price` 行总额之和，**price 已含 ×qty 不可再乘**），混合品牌订单不整单全额重复计入；品牌无商品时直接返回零统计，绝不查询全平台数据（防跨租户泄漏）；提交/编辑商品按品类 `CategoryAuditTemplate.requiredDocs` 展示必交材料清单，可上传证书（图片/PDF）随商品提交 |
 | **订单超时自动取消** | ✅ 已完成 | 下单 30 分钟未支付自动取消并回补库存 | `inngest/functions/order-timeout-cancel.ts`：`order/created` 事件 → `step.sleep(30min)` → `cancelExpiredOrder`（**updateMany 状态守卫先于回补库存**，防并发双重回补）；下单时用 `next/server` 的 `after()` 保证 serverless 中事件投递完成 |
+| **确认收货 + 7 天自动确认** | ✅ 已完成 | 用户确认收货（DELIVERED→COMPLETED）后订单可一键销毁；送达 7 天未确认由系统自动完成 | `confirmReceipt`（归属校验 + `updateMany` 带 `status=DELIVERED` 守卫，与后台 `completeOrder`/自动确认并发只命中一次）+ `inngest/functions/order-delivery-complete-sweep.ts`（每天 3 点 cron 扫 `deliveredAt < now-7d` 的 DELIVERED 订单，`autoCompleteDeliveredOrder` 非 DELIVERED 静默 no-op）；三入口共用 `AUTO_CONFIRM_RECEIPT_MS`=7 天窗口 |
 | **品牌入驻** | ✅ 已完成 | 管理员生成邀请码 → 品牌方激活 → 提交资料 → 审核 | `features/invite/`：激活=单事务原子消耗邀请码（`updateMany` 状态守卫含过期判断）+ 创建 PENDING 品牌；管理员审核通过时同事务将负责人升级为 BRAND 角色（品牌已过但角色未升是笔错账）；邀请码列表 EXPIRED 由 `expiresAt` 即时推导不落库。**REJECTED 非死胡同**：品牌审核状态筛选含「已拒绝」，管理员可**重审通过**（改判错杀，`reviewBrand` 守卫放行 `PENDING`/`REJECTED` 的 APPROVED，但 REJECTED 不可再拒 409）或**删除品牌**（`DELETE /api/admin/brands/[id]`，仅 REJECTED 可删，其余状态 409 `BRAND_NOT_DELETABLE`）；删除后商家可用新邀请码重新入驻 |
 | **OSS 图片上传** | ✅ 已完成 | 商品/品牌图片 + 检测证书上传至阿里云 OSS（后端中转） | `features/upload/`：POST `/api/upload`（multipart + MIME 白名单，`purpose` 枚举 `product`/`brand`/`cert`；图片 ≤4MB、证书 PDF ≤10MB；未配置 OSS 返回 503）。`purpose=product`/`brand` 只收图片，`purpose=cert` 收图片 + PDF；`shared/adapters/oss.adapter.ts` 仿 payment 懒初始化 + 纯函数；`shared/ui/Image` 双源（OSS URL + base64）+ 统一占位图。Vercel 请求体上限 4.5MB → 图片限 ≤4MB；更大文件走 OSS 预签名直传（三期） |
 | **商品两级类目** | ✅ 已完成 | 大类+子类两级选择与筛选 | `shared/constants/product-categories.ts` 预设清单为唯一来源（改常量即可调整）；Product 增加 `subCategory` 字段（可空兼容旧数据）；品牌提交商品改为大类→子类级联下拉；首页两级筛选；详情/品牌后台/管理后台展示「大类/子类」 |
@@ -350,6 +351,8 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
    └──→ REFUNDED（管理员同意退款）
 ```
 
+> **确认收货（DELIVERED → COMPLETED）三入口**：① 用户侧「确认收货」（`POST /api/orders/[id]/confirm-receipt`，仅 DELIVERED 可确认）；② 管理后台「完成」按钮（兜底）；③ 送达 7 天自动确认（Inngest `order-delivery-complete-sweep` cron，每天凌晨 3 点扫描 `deliveredAt < now-7d` 的 DELIVERED 订单）。三入口共用 `updateMany` 带 `status=DELIVERED` 状态守卫，并发只命中一次。确认收货后订单进入 COMPLETED 终态，即可一键销毁（隐私保护闭环）。
+
 > **超时自动取消**：下单 30 分钟（`ORDER_PAYMENT_TIMEOUT_MS`）未支付，由 Inngest `order-timeout-cancel` 自动将 PENDING 订单置为 CANCELLED 并回补库存（`updateMany` 状态守卫先于回补，防与手动取消/支付回调并发冲突）。
 
 > **销毁（destroy）不改变 status**，而是写入 `destroyedAt` 列（非空 = 已销毁）：用户/品牌侧查询层按 `destroyedAt IS NULL` 过滤，销毁后订单在用户与品牌方列表中消失、详情返回 404（视为不存在）；平台管理后台保留全部数据（仍读 `privacy.destroyed` 显示「已销毁」标记）供审计与退款核验。故不在状态图中。
@@ -363,6 +366,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | 后台状态变更 + 审计日志 | Prisma `$transaction` 同步 | 审计与状态变更必须同生共死——审计失败则整体回滚，杜绝「状态已变但无审计留痕」 |
 | 发送短信 | `shared/adapters/sms.adapter.ts` 同步 | 认证流程强依赖验证码送达，失败直接报错；未配置短信服务时回退终端日志（`[SMS]`） |
 | 订单超时取消 | Inngest `order/created` → `step.sleep(30min)` → 取消+回补库存 | 无需自建定时任务；下单时用 `next/server` 的 `after()` 保证 serverless 中事件投递完成 |
+| 送达自动确认收货 | Inngest `order-delivery-complete-sweep` cron（每天 3 点）扫 `deliveredAt < now-7d` 的 DELIVERED 订单 → `autoCompleteDeliveredOrder` | 用户手动确认收货之外的兜底；`updateMany` 带 `status=DELIVERED` 守卫防并发覆写 |
 | 通知品牌方（下单/新商品） | ⏳ 待开发 | 预留 Inngest `notify-brand` |
 
 ## API 路由
@@ -388,6 +392,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | POST | `/api/orders/[id]/check-paid` | 查询支付状态 |
 | POST | `/api/orders/[id]/cancel` | 取消订单（仅 PENDING） |
 | POST | `/api/orders/[id]/refund` | 申请退款（仅 PAID） |
+| POST | `/api/orders/[id]/confirm-receipt` | 确认收货（DELIVERED → COMPLETED，确认后可销毁） |
 | POST | `/api/orders/[id]/destroy` | 销毁订单记录（隐私保护；销毁后用户/品牌侧不可见，管理后台保留） |
 | POST | `/api/orders/[id]/paid` | 支付宝异步回调（幂等） |
 
@@ -640,7 +645,7 @@ npm start
 |------|------|--------|
 | 完整下单链路 | 首页 → 商品详情 → 加购 → 结算 → 下单 → 支付跳转 | 乐观锁库存扣减、支付单创建 |
 | 退款链路 | 下单 → 支付 → 申请退款 → 管理员确认退款 | 状态机流转、退款幂等 |
-| 订单销毁 | 下单 → 支付 → 完成 → 一键销毁 → 用户/品牌侧列表消失、详情 404 | AES 加密、`destroyedAt` 过滤、管理后台保留 |
+| 订单销毁 | 下单 → 支付 → 发货 → 送达 → 用户确认收货（或 7 天自动）→ 一键销毁 → 用户/品牌侧列表消失、详情 404 | AES 加密、`destroyedAt` 过滤、管理后台保留 |
 
 ### 明确不测试的内容
 
