@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { QRCodeSVG } from "qrcode.react";
 import { OrderCard, OrderStatusBadge, OrderTimeline, AddressForm } from "./orders.components";
 import type { OrderSummary, OrderDetail } from "./orders.queries";
 import { ORDER_STATUS_GROUPS } from "./orders.state-machine";
@@ -41,32 +42,66 @@ async function apiCall(method: string, url: string, body?: Record<string, unknow
   return data;
 }
 
-// ── 支付跳转兜底（CheckoutPage / OrderDetailPage 共用） ──
-// 支付宝沙箱偶发白屏：跳转前先上屏遮罩过渡（消除无反馈白屏感），
-// 遮罩保留「新窗口打开支付页 + 返回订单详情」两个逃生口，任何情况下用户都有出路。
+// ── 当面付扫码支付弹窗（CheckoutPage / OrderDetailPage 共用） ──
+// 支付宝 App 扫码支付无页面回跳，弹窗内轮询 check-paid（真查支付宝）推进订单状态；
+// PAID 即自动跳详情页。提供「我已完成支付」手动查询 + 「返回订单详情」逃生口。
 
 const LAST_PAY_KEY = "lastPayOrder";
 
-function PayRedirectOverlay({
+interface PayTarget {
+  orderId: string;
+  qrCode: string;
+  total?: number; // 分
+}
+
+function PayQrModal({
   target,
+  onComplete,
   onReturn,
 }: {
-  target: { orderId: string; payUrl: string };
+  target: PayTarget;
+  onComplete: () => void;
   onReturn: () => void;
 }) {
+  const [checking, setChecking] = useState(false);
+  const [manual, setManual] = useState(false);
+
+  const checkNow = useCallback(async () => {
+    if (checking) return;
+    setChecking(true);
+    try {
+      const data = await apiCall("POST", `/api/orders/${target.orderId}/check-paid`);
+      // 非待支付（已支付/已取消）即完成本轮支付流程
+      if (data?.status && data.status !== "PENDING") {
+        onComplete();
+        return;
+      }
+      setManual(true); // 查询完成但仍未支付 → 提示用户再次确认
+    } catch {
+      setManual(true);
+    } finally {
+      setChecking(false);
+    }
+  }, [target.orderId, checking, onComplete]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/95">
-      <div className="mx-auto w-full max-w-sm px-6 text-center">
-        <p className="text-base font-semibold text-gray-900">正在跳转至支付宝安全收银台…</p>
-        <p className="mt-2 text-sm text-gray-500">如未自动跳转，请点击下方链接在新窗口打开</p>
-        <a
-          href={target.payUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-4 block rounded-lg bg-primary py-3 text-sm font-medium text-white transition hover:opacity-90"
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/95 p-4">
+      <div className="mx-auto w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-lg">
+        <p className="text-base font-semibold text-gray-900">扫码支付</p>
+        <p className="mt-1 text-sm text-gray-500">
+          {target.total ? `需支付 ¥${fenToYuan(target.total)} · ` : ""}请使用支付宝 App 扫描下方二维码
+        </p>
+        <div className="mx-auto mt-4 w-fit rounded-xl border border-gray-200 p-3">
+          <QRCodeSVG value={target.qrCode} size={220} />
+        </div>
+        <p className="mt-3 text-xs text-gray-400">支付完成后本页将自动跳转，请勿关闭</p>
+        <button
+          onClick={checkNow}
+          disabled={checking}
+          className="mt-4 block w-full rounded-lg bg-primary py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-60"
         >
-          打开支付页面
-        </a>
+          {checking ? "查询中…" : manual ? "仍未支付，再查一次" : "我已完成支付"}
+        </button>
         <button
           onClick={onReturn}
           className="mt-2 w-full rounded-lg border border-gray-200 py-3 text-sm font-medium text-gray-600 transition hover:bg-gray-50"
@@ -78,45 +113,75 @@ function PayRedirectOverlay({
   );
 }
 
-function usePayRedirect() {
+function usePayQr() {
   const router = useRouter();
-  const payTimerRef = useRef<number | null>(null);
-  const [payRedirecting, setPayRedirecting] = useState<{
-    orderId: string;
-    payUrl: string;
-  } | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [payTarget, setPayTarget] = useState<PayTarget | null>(null);
 
-  const openPayUrl = useCallback((payUrl: string, orderId: string) => {
-    // 记录待支付订单，跳转失败返回后可在结算页/订单页提示续付
-    try {
-      sessionStorage.setItem(LAST_PAY_KEY, orderId);
-    } catch {
-      // 隐私模式等场景忽略
+  const stopPolling = useCallback(() => {
+    if (pollTimerRef.current !== null) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
     }
-    setPayRedirecting({ orderId, payUrl });
-    if (payTimerRef.current !== null) window.clearTimeout(payTimerRef.current);
-    // 先让遮罩上屏，再自动跳转（300ms 足够渲染，消除无过渡白屏感）
-    payTimerRef.current = window.setTimeout(() => {
-      window.location.href = payUrl;
-    }, 300);
   }, []);
 
-  const cancelPayRedirect = useCallback(() => {
-    if (payTimerRef.current !== null) window.clearTimeout(payTimerRef.current);
-    setPayRedirecting(null);
-  }, []);
+  // 组件卸载时兜底清轮询（切页/关闭弹窗不留后台定时器）
+  useEffect(() => () => stopPolling(), [stopPolling]);
 
-  const payRedirectOverlay = payRedirecting ? (
-    <PayRedirectOverlay
-      target={payRedirecting}
+  const handlePaid = useCallback(
+    (orderId: string) => {
+      stopPolling();
+      setPayTarget(null);
+      router.push(`/orders/${orderId}`);
+    },
+    [router, stopPolling],
+  );
+
+  const openPayQr = useCallback(
+    (qrCode: string, orderId: string, total?: number) => {
+      // 记录待支付订单，返回后可提示续付
+      try {
+        sessionStorage.setItem(LAST_PAY_KEY, orderId);
+      } catch {
+        // 隐私模式等场景忽略
+      }
+      stopPolling();
+      setPayTarget({ orderId, qrCode, total });
+      // 每 3s 查一次（最长 3 分钟自动停，用户可手动查询）：本地沙箱异步通知
+      // notifyUrl=localhost 收不到，订单状态只能靠主动查询推进
+      pollTimerRef.current = setInterval(() => {
+        apiCall("POST", `/api/orders/${orderId}/check-paid`)
+          .then((data) => {
+            if (data?.status && data.status !== "PENDING") handlePaid(orderId);
+          })
+          .catch(() => {
+            // 网络抖动忽略，下轮重试
+          });
+      }, 3000);
+      setTimeout(() => {
+        if (pollTimerRef.current) stopPolling();
+      }, 3 * 60 * 1000);
+    },
+    [handlePaid, stopPolling],
+  );
+
+  const cancelPayQr = useCallback(() => {
+    stopPolling();
+    setPayTarget(null);
+  }, [stopPolling]);
+
+  const payQrOverlay = payTarget ? (
+    <PayQrModal
+      target={payTarget}
+      onComplete={() => handlePaid(payTarget.orderId)}
       onReturn={() => {
-        cancelPayRedirect();
-        router.push(`/orders/${payRedirecting.orderId}`);
+        cancelPayQr();
+        router.push(`/orders/${payTarget.orderId}`);
       }}
     />
   ) : null;
 
-  return { openPayUrl, cancelPayRedirect, payRedirectOverlay };
+  return { openPayQr, cancelPayQr, payQrOverlay };
 }
 
 /** 读取并清除「待支付订单」标记（下单后跳转失败返回时提示续付） */
@@ -159,7 +224,7 @@ interface CartItem {
 
 export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
   const router = useRouter();
-  const { openPayUrl, payRedirectOverlay } = usePayRedirect();
+  const { openPayQr, payQrOverlay } = usePayQr();
   const { lastPayOrderId, dismissLastPay } = useLastPayOrder();
   const [cart, setCart] = useState<{ items: CartItem[]; totalAmount: number } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -169,8 +234,9 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
   const [priceChanged, setPriceChanged] = useState(false);
   const [finalTotal, setFinalTotal] = useState(0);
   const [pendingOrder, setPendingOrder] = useState<{
-    payUrl: string | null;
+    qrCode: string | null;
     orderId: string;
+    total: number;
   } | null>(null);
   const [address, setAddress] = useState({
     name: "",
@@ -242,12 +308,12 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
       // 与购物车展示金额不一致（可能被调价）→ 提示用户确认后继续，绝不静默改价
       if (typeof order.total === "number" && order.total !== cart!.totalAmount) {
         setFinalTotal(order.total);
-        setPendingOrder({ payUrl: order.payUrl, orderId: order.orderId });
+        setPendingOrder({ qrCode: order.qrCode, orderId: order.orderId, total: order.total });
         setPriceChanged(true);
         return;
       }
 
-      redirectToPay(order);
+      showQrCode(order);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "下单失败";
       setError(msg);
@@ -260,10 +326,10 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
     }
   };
 
-  /** 跳转支付：有支付 URL 走遮罩过渡 + 支付宝；无 URL 显式提示（订单已创建，不静默跳详情） */
-  const redirectToPay = (order: { payUrl: string | null; orderId: string }) => {
-    if (order.payUrl) {
-      openPayUrl(order.payUrl, order.orderId);
+  /** 展示扫码支付：有二维码弹窗扫码；无二维码显式提示（订单已创建，不静默跳详情） */
+  const showQrCode = (order: { qrCode: string | null; orderId: string; total: number }) => {
+    if (order.qrCode) {
+      openPayQr(order.qrCode, order.orderId, order.total);
     } else {
       setError("支付服务暂不可用，订单已创建，可稍后到订单详情页继续支付");
     }
@@ -379,7 +445,7 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
               <b className="text-base">¥{fenToYuan(finalTotal)}</b> 为准
             </p>
             <button
-              onClick={() => redirectToPay(pendingOrder)}
+              onClick={() => showQrCode(pendingOrder)}
               className="mt-2 w-full rounded-lg bg-primary py-3 text-sm font-medium text-white transition hover:opacity-90"
             >
               继续支付 ¥{fenToYuan(finalTotal)}
@@ -396,7 +462,7 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
         )}
       </div>
 
-      {payRedirectOverlay}
+      {payQrOverlay}
     </main>
   );
 }
@@ -492,7 +558,7 @@ export function OrderListPage() {
 
 export function OrderDetailPage({ id }: { id: string }) {
   const router = useRouter();
-  const { openPayUrl, payRedirectOverlay } = usePayRedirect();
+  const { openPayQr, payQrOverlay } = usePayQr();
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
@@ -537,7 +603,7 @@ export function OrderDetailPage({ id }: { id: string }) {
     }
   };
 
-  // 去支付 — 获取支付跳转 URL 后跳转支付宝
+  // 去支付 — 获取当面付二维码后弹窗扫码
   const handlePay = async () => {
     if (acting) return;
     setActing(true);
@@ -545,8 +611,8 @@ export function OrderDetailPage({ id }: { id: string }) {
     try {
       const res = await apiFetch(`/api/pay/${id}`);
       const data = await res.json().catch(() => null);
-      if (res.ok && data?.payUrl) {
-        openPayUrl(data.payUrl, id);
+      if (res.ok && data?.qrCode) {
+        openPayQr(data.qrCode, id);
         return;
       }
       setError(data?.message || "支付功能暂不可用");
@@ -733,7 +799,7 @@ export function OrderDetailPage({ id }: { id: string }) {
         </div>
       </div>
 
-      {payRedirectOverlay}
+      {payQrOverlay}
     </main>
   );
 }
