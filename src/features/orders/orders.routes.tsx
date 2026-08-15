@@ -1,12 +1,31 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { OrderCard, OrderStatusBadge, OrderTimeline, AddressForm } from "./orders.components";
 import type { OrderSummary, OrderDetail } from "./orders.queries";
+import { ORDER_STATUS_GROUPS } from "./orders.state-machine";
+import type { OrderStatus } from "./orders.state-machine";
 import { fenToYuan } from "@/shared/utils/money";
 import { apiFetch } from "@/shared/api/client";
 import { SiteHeader } from "@/shared/ui/SiteHeader";
+
+// ── 订单列表状态 Tab（与用户中心统计卡 / ORDER_STATUS_GROUPS 同口径） ──
+
+const ORDER_TABS = [
+  { key: "", label: "全部" },
+  { key: "pending", label: "待付款" },
+  { key: "paid", label: "已支付" },
+  { key: "cancelled", label: "已取消/退款" },
+] as const;
+
+/** URL tab key → 真实订单状态组（undefined = 全部）；页面 URL 用 tab key，API URL 用状态逗号串 */
+const TAB_TO_GROUP: Record<string, readonly OrderStatus[] | undefined> = {
+  "": undefined,
+  pending: ORDER_STATUS_GROUPS.pending,
+  paid: ORDER_STATUS_GROUPS.paid,
+  cancelled: ORDER_STATUS_GROUPS.cancelled,
+};
 
 // ── helpers ──
 
@@ -238,33 +257,33 @@ export function CheckoutPage() {
 
 export function OrderListPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // URL ?status= 驱动 Tab（非法 key 归一为「全部」；URL 用 tab key，API 用真实状态逗号串）
+  const rawKey = searchParams.get("status") ?? "";
+  const activeKey = rawKey in TAB_TO_GROUP ? rawKey : "";
+
   const fetchOrders = useCallback(async () => {
+    setLoading(true);
     try {
-      const data = await apiCall("GET", "/api/orders");
+      const group = TAB_TO_GROUP[activeKey];
+      const qs = group && group.length > 0 ? `?status=${group.join(",")}` : "";
+      const data = await apiCall("GET", `/api/orders${qs}`);
       setOrders(data.orders || []);
     } catch {
       // 静默失败
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeKey]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
-  if (loading) {
-    return (
-      <main className="mx-auto min-h-screen max-w-6xl p-4">
-        <div className="mx-auto mt-8 w-full max-w-3xl space-y-3">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-20 animate-pulse rounded-xl bg-gray-100" />
-          ))}
-        </div>
-      </main>
-    );
-  }
+  const switchTab = (key: string) => {
+    router.push(key ? `/orders?status=${key}` : "/orders");
+  };
 
   return (
     <main className="mx-auto min-h-screen max-w-6xl bg-white">
@@ -273,10 +292,35 @@ export function OrderListPage() {
         <h1 className="text-center text-xl font-bold text-gray-900">我的订单</h1>
       </div>
 
+      {/* 状态 Tab：与用户中心统计卡 / ORDER_STATUS_GROUPS 同口径，URL 双向同步 */}
+      <div className="mx-auto w-full max-w-3xl px-4 pt-3">
+        <div className="flex gap-1 rounded-xl bg-gray-100 p-1">
+          {ORDER_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => switchTab(tab.key)}
+              className={`flex-1 rounded-lg py-2 text-sm font-medium transition ${
+                activeKey === tab.key
+                  ? "bg-white text-primary shadow-sm"
+                  : "text-gray-500 hover:text-gray-900"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="mx-auto w-full max-w-3xl p-4">
-        {orders.length === 0 ? (
+        {loading ? (
+          <div className="space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-20 animate-pulse rounded-xl bg-gray-100" />
+            ))}
+          </div>
+        ) : orders.length === 0 ? (
           <div className="mx-auto w-full max-w-3xl py-20 text-center text-gray-400">
-            <p className="text-lg">暂无订单</p>
+            <p className="text-lg">{activeKey ? "该状态下暂无订单" : "暂无订单"}</p>
             <button
               onClick={() => router.push("/")}
               className="mt-3 rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white"

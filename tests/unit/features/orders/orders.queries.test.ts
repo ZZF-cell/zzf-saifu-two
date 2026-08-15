@@ -141,3 +141,33 @@ describe("getOrderList — 销毁掩码", () => {
     expect(result.orders[0].itemCount).toBe(1);
   });
 });
+
+// ── getOrderList：?status= 多状态筛选透传（M2 订单列表状态 Tab） ──
+
+describe("getOrderList — status 筛选", () => {
+  it("传 statuses → where.status = { in: statuses }", async () => {
+    findManyMock.mockResolvedValue([]);
+    vi.mocked(prisma.order.count).mockResolvedValue(0);
+
+    await getOrderList("user-1", 1, 20, ["PENDING", "CANCELLED"]);
+
+    expect(findManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "user-1", status: { in: ["PENDING", "CANCELLED"] } },
+      }),
+    );
+  });
+
+  it("不传 statuses → 仅按 userId 筛选，不附加 status 条件", async () => {
+    findManyMock.mockResolvedValue([]);
+    vi.mocked(prisma.order.count).mockResolvedValue(0);
+
+    await getOrderList("user-1", 1, 20);
+
+    const call = vi.mocked(prisma.order.findMany).mock.calls[0][0] as {
+      where: Record<string, unknown>;
+    };
+    expect(call.where.userId).toBe("user-1");
+    expect(call.where.status).toBeUndefined();
+  });
+});

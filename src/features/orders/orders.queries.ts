@@ -112,15 +112,17 @@ export async function getOrderList(
   userId: string,
   page = 1,
   pageSize = 20,
+  statuses?: string[],
 ): Promise<OrderListResult> {
-  return queryOrderSummaries(
-    {
-      userId,
-      // 不排除已销毁订单，用户可看到「已销毁」标记
-    },
-    page,
-    pageSize,
-  );
+  const where: Prisma.OrderWhereInput = {
+    userId,
+    // 不排除已销毁订单，用户可看到「已销毁」标记
+  };
+  // ?status= 多状态筛选（API 层已按白名单过滤为合法状态值）
+  if (statuses && statuses.length > 0) {
+    where.status = { in: statuses };
+  }
+  return queryOrderSummaries(where, page, pageSize);
 }
 
 // ── 品牌方订单列表（按品牌商品过滤，README 二期：品牌后台查看自己的订单） ──

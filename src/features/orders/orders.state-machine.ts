@@ -15,6 +15,28 @@ export const ORDER_STATUS = {
 export type OrderStatus = (typeof ORDER_STATUS)[keyof typeof ORDER_STATUS];
 
 /**
+ * C 端状态分组 — 单一事实来源
+ *
+ * 订单列表 Tab / 用户中心统计卡 / API ?status= 筛选 共用此分组，
+ * 保证「卡片数字与列表条数」口径一致（与 admin 看板同一原则）。
+ * 注意与 user.queries.getProfile 的 stats 分组同步（后者也引用本常量）。
+ */
+export const ORDER_STATUS_GROUPS = {
+  pending: [ORDER_STATUS.PENDING] as const,
+  paid: [
+    ORDER_STATUS.PAID,
+    ORDER_STATUS.SHIPPED,
+    ORDER_STATUS.DELIVERED,
+    ORDER_STATUS.COMPLETED,
+  ] as const,
+  cancelled: [
+    ORDER_STATUS.CANCELLED,
+    ORDER_STATUS.REFUND_REQUESTED,
+    ORDER_STATUS.REFUNDED,
+  ] as const,
+} as const;
+
+/**
  * 合法状态转换表
  *
  * 契约来源 README API 表：取消订单仅 PENDING、申请退款仅 PAID。

@@ -6,6 +6,7 @@ import { authenticate } from "@/shared/api/auth";
 import { verifyNotifySignature } from "@/features/payment";
 import { yuanToFen } from "@/shared/utils/money";
 import { notifyOrderCreated } from "./order-events";
+import { ORDER_STATUS } from "./orders.state-machine";
 import * as ordersService from "./orders.service";
 import * as ordersQueries from "./orders.queries";
 
@@ -57,14 +58,28 @@ const createOrderSchema = z.object({
 
 // ── Route Handlers ──
 
-/** GET /api/orders — 我的订单列表 */
+/** GET /api/orders — 我的订单列表（?status= 逗号分隔多状态筛选） */
 export async function getOrders(req: Request) {
   try {
     const userId = await authenticate(req);
     // #15 分页上限钳制：改用 parsePagination（pageSize 封顶 100），
     // 杜绝 pageSize=100000 拖垮 DB（此前是手动 parseInt 无上限）
-    const { page, pageSize } = parsePagination(new URL(req.url));
-    const list = await ordersQueries.getOrderList(userId, page, pageSize);
+    const url = new URL(req.url);
+    const { page, pageSize } = parsePagination(url);
+
+    // ?status= 多值筛选：逗号分隔，白名单过滤为合法订单状态；
+    // 非法值一律剔除（in: [] 显式空结果），绝不泄漏全量数据
+    const statusParam = url.searchParams.get("status");
+    const statuses = statusParam
+      ? statusParam
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s): s is string =>
+            (Object.values(ORDER_STATUS) as string[]).includes(s),
+          )
+      : undefined;
+
+    const list = await ordersQueries.getOrderList(userId, page, pageSize, statuses);
     return NextResponse.json(list);
   } catch (error) {
     return apiError(error);
