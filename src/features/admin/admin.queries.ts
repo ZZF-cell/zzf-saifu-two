@@ -335,7 +335,14 @@ export async function getAdminOrders(params: {
   status?: string;
 }): Promise<AdminOrderListResult> {
   const { page, pageSize, status } = params;
-  const where: Prisma.OrderWhereInput = status ? { status } : {};
+  // TO_SHIP 是看板「待发货」组合筛选（PAID + SHIPPED），非真实订单状态；
+  // 与看板待发货卡口径（PAID+SHIPPED 汇总）一致，杜绝卡片跳转后列表对不上数字
+  const where: Prisma.OrderWhereInput =
+    status === "TO_SHIP"
+      ? { status: { in: [ORDER_STATUS.PAID, ORDER_STATUS.SHIPPED] } }
+      : status
+        ? { status }
+        : {};
 
   const [orders, total] = await Promise.all([
     prisma.order.findMany({

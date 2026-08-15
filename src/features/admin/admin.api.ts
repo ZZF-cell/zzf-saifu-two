@@ -342,12 +342,16 @@ export const generateInviteCodes = withValidation(
 
 // ── 用户管理操作 ──
 
-const userActionSchema = z.object({
-  action: z.enum(["setRole", "setStatus", "unlock", "resetPassword", "clearAgeVerification"]),
-  role: z.enum(["USER", "BRAND", "ADMIN"]).optional(),
-  status: z.enum(["ACTIVE", "DISABLED"]).optional(),
-  tempPassword: z.string().min(6).max(20).optional(),
-});
+// action 与参数强耦合（discriminatedUnion）：setRole 缺 role / setStatus 缺 status /
+// resetPassword 缺 tempPassword 均直接 422，杜绝「缺参进 service → 500 / 假审计」。
+// 且 switch 内 TS 能按 action 收窄出必填参数，无需 `!` 断言。
+const userActionSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("setRole"), role: z.enum(["USER", "BRAND", "ADMIN"]) }),
+  z.object({ action: z.literal("setStatus"), status: z.enum(["ACTIVE", "DISABLED"]) }),
+  z.object({ action: z.literal("unlock") }),
+  z.object({ action: z.literal("resetPassword"), tempPassword: z.string().min(6).max(20) }),
+  z.object({ action: z.literal("clearAgeVerification") }),
+]);
 
 /**
  * PATCH /api/admin/users/[id] — 用户管理操作
@@ -368,20 +372,19 @@ export async function patchUser(
         { status: 422 },
       );
     }
-    const { action, ...rest } = parsed.data;
 
-    switch (action) {
+    switch (parsed.data.action) {
       case "setRole":
-        await adminService.setUserRole(id, rest.role!, admin.userId);
+        await adminService.setUserRole(id, parsed.data.role, admin.userId);
         break;
       case "setStatus":
-        await adminService.setUserStatus(id, rest.status!, admin.userId);
+        await adminService.setUserStatus(id, parsed.data.status, admin.userId);
         break;
       case "unlock":
         await adminService.unlockUser(id, admin.userId);
         break;
       case "resetPassword": {
-        const result = await adminService.resetPassword(id, rest.tempPassword!, admin.userId);
+        const result = await adminService.resetPassword(id, parsed.data.tempPassword, admin.userId);
         return NextResponse.json({ success: true, tempPassword: result.tempPassword });
       }
       case "clearAgeVerification":

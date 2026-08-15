@@ -7,6 +7,7 @@ import { ORDER_STATUS, restoreStock } from "@/features/orders";
 import { yuanToFen } from "@/shared/utils/money";
 import { hashPassword } from "@/shared/utils/crypto";
 import { writeAuditLog } from "@/shared/utils/audit";
+import { randomInt } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 
 export type ReviewDecision = "APPROVED" | "REJECTED";
@@ -44,9 +45,11 @@ export async function reviewBrand(
     }
 
     // 审核通过（含 REJECTED 重审）→ 负责人升级 BRAND 角色（同事务：品牌已过但角色未升是笔错账）
+    // 角色守卫：仅当前非 BRAND/ADMIN 才升级（只把纯 USER 提升为 BRAND），
+    // 避免重审把已授更高权限（如 ADMIN）的负责人降级回 BRAND
     if (decision === "APPROVED") {
-      await tx.user.update({
-        where: { id: brand.ownerId },
+      await tx.user.updateMany({
+        where: { id: brand.ownerId, role: { notIn: ["BRAND", "ADMIN"] } },
         data: { role: "BRAND" },
       });
     }
@@ -377,12 +380,12 @@ export async function deleteAuditTemplate(categoryId: string, operatorId: string
 // 邀请码字符集：剔除易混淆的 0/O/1/I，余 32 字符（2^5）
 const INVITE_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
-/** 生成 INV-XXXX-XXXX 格式邀请码（组内字符可重复） */
+/** 生成 INV-XXXX-XXXX 格式邀请码（组内字符可重复；crypto.randomInt 密码学随机，杜绝 Math.random 可预测注入） */
 function generateInviteCodeValue(): string {
   const group = () => {
     let s = "";
     for (let i = 0; i < 4; i++) {
-      s += INVITE_CODE_ALPHABET[Math.floor(Math.random() * INVITE_CODE_ALPHABET.length)];
+      s += INVITE_CODE_ALPHABET[randomInt(INVITE_CODE_ALPHABET.length)];
     }
     return s;
   };

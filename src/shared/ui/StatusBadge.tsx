@@ -14,6 +14,7 @@ export const STATUS_LABEL: Record<string, string> = {
   // 订单
   PAID: "已支付",
   SHIPPED: "已发货",
+  TO_SHIP: "待发货", // 组合筛选（PAID+SHIPPED），非真实订单状态，仅看板/筛选标签用
   DELIVERED: "已送达",
   COMPLETED: "已完成",
   CANCELLED: "已取消",

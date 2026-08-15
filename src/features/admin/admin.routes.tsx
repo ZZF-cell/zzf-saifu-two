@@ -134,10 +134,10 @@ interface AdminInviteCode {
 
 // ── 标签页组件 ──
 
-/** 看板导航预设：跳转到目标 Tab 时携带的预置筛选 */
+/** 看板导航预设：跳转到目标 Tab 时携带的预置筛选（与各 Tab 的计数口径对齐） */
 type DashboardNav = {
   tab: TabKey;
-  preset?: { orderStatus?: string; productStatus?: string };
+  preset?: { orderStatus?: string; productStatus?: string; brandStatus?: string };
 };
 
 function DashboardTab({
@@ -172,14 +172,14 @@ function DashboardTab({
     nav: DashboardNav;
   }[] = [
     { label: "用户数", value: String(stats.userCount), nav: { tab: "users" } },
-    { label: "品牌数", value: String(stats.brandCount), nav: { tab: "brands" } },
-    { label: "待审品牌", value: String(stats.pendingBrandCount), highlight: true, nav: { tab: "brands" } },
+    { label: "品牌数", value: String(stats.brandCount), nav: { tab: "brands", preset: { brandStatus: "" } } },
+    { label: "待审品牌", value: String(stats.pendingBrandCount), highlight: true, nav: { tab: "brands", preset: { brandStatus: "PENDING" } } },
     { label: "在售商品", value: String(stats.approvedProductCount), nav: { tab: "products", preset: { productStatus: "APPROVED" } } },
     { label: "待审商品", value: String(stats.pendingProductCount), highlight: true, nav: { tab: "products", preset: { productStatus: "PENDING" } } },
     { label: "已下架", value: String(stats.delistedProductCount), nav: { tab: "products", preset: { productStatus: "DELISTED" } } },
     { label: "订单数", value: String(stats.orderCount), nav: { tab: "orders", preset: { orderStatus: "" } } },
     { label: "待退款", value: String(stats.pendingRefundCount), highlight: true, nav: { tab: "orders", preset: { orderStatus: "REFUND_REQUESTED" } } },
-    { label: "待发货", value: String(stats.toShipCount), highlight: true, nav: { tab: "orders", preset: { orderStatus: "PAID" } } },
+    { label: "待发货", value: String(stats.toShipCount), highlight: true, nav: { tab: "orders", preset: { orderStatus: "TO_SHIP" } } },
     { label: "今日新增订单", value: String(stats.todayNewOrders), nav: { tab: "orders" } },
     { label: "今日新增用户", value: String(stats.todayNewUsers), nav: { tab: "users" } },
     { label: "已支付销售额", value: `¥${fenToYuan(stats.paidRevenue)}`, nav: { tab: "orders" } },
@@ -293,14 +293,20 @@ function DashboardTab({
   );
 }
 
-function BrandReviewTab() {
+function BrandReviewTab({
+  statusFilter,
+  onStatusFilterChange,
+}: {
+  statusFilter: string;
+  onStatusFilterChange: (s: string) => void;
+}) {
   const [brands, setBrands] = useState<AdminBrand[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const [statusFilter, setStatusFilter] = useState("PENDING");
 
   const fetchBrands = useCallback(async () => {
+    setLoading(true);
     try {
       const data = await apiCall(
         "GET",
@@ -341,11 +347,6 @@ function BrandReviewTab() {
     }
   };
 
-  const switchFilter = (s: string) => {
-    setLoading(true);
-    setStatusFilter(s);
-  };
-
   if (loading) {
     return <div className="h-32 animate-pulse rounded-xl bg-gray-100" />;
   }
@@ -356,7 +357,7 @@ function BrandReviewTab() {
         {["", "PENDING", "REJECTED"].map((s) => (
           <button
             key={s}
-            onClick={() => switchFilter(s)}
+            onClick={() => onStatusFilterChange(s)}
             className={`shrink-0 rounded-full px-4 py-2 text-sm transition ${
               statusFilter === s
                 ? "bg-primary text-white"
@@ -985,7 +986,7 @@ function OrdersTab({
   return (
     <div className="space-y-3">
       <div className="flex gap-2 overflow-x-auto pb-1">
-        {["", "PENDING", "PAID", "SHIPPED", "DELIVERED", "REFUND_REQUESTED", "REFUNDED", "COMPLETED", "CANCELLED"].map((s) => (
+        {["", "TO_SHIP", "PENDING", "PAID", "SHIPPED", "DELIVERED", "REFUND_REQUESTED", "REFUNDED", "COMPLETED", "CANCELLED"].map((s) => (
           <button
             key={s}
             onClick={() => onStatusFilterChange(s)}
@@ -1835,14 +1836,16 @@ const TABS: { key: TabKey; label: string }[] = [
 
 export function AdminDashboardPage() {
   const [tab, setTab] = useState<TabKey>("dashboard");
-  // 筛选状态上提：看板卡片跳转时携带预置筛选（订单状态/商品状态）
+  // 筛选状态上提：看板卡片跳转时携带预置筛选（订单状态/商品状态/品牌状态）
   const [orderStatusFilter, setOrderStatusFilter] = useState("");
   const [productStatusFilter, setProductStatusFilter] = useState("PENDING");
+  const [brandStatusFilter, setBrandStatusFilter] = useState("PENDING");
 
-  /** 看板卡片跳转：切 Tab + 预置筛选 */
+  /** 看板卡片跳转：切 Tab + 预置筛选（与各 Tab 计数口径一致，见 DashboardTab cards 注释） */
   const handleNavigate = (nav: DashboardNav) => {
     if (nav.preset?.orderStatus !== undefined) setOrderStatusFilter(nav.preset.orderStatus);
     if (nav.preset?.productStatus !== undefined) setProductStatusFilter(nav.preset.productStatus);
+    if (nav.preset?.brandStatus !== undefined) setBrandStatusFilter(nav.preset.brandStatus);
     setTab(nav.tab);
   };
 
@@ -1870,7 +1873,12 @@ export function AdminDashboardPage() {
 
       <div className="mx-auto w-full max-w-5xl p-4 pt-3">
         {tab === "dashboard" && <DashboardTab onNavigate={handleNavigate} />}
-        {tab === "brands" && <BrandReviewTab />}
+        {tab === "brands" && (
+          <BrandReviewTab
+            statusFilter={brandStatusFilter}
+            onStatusFilterChange={setBrandStatusFilter}
+          />
+        )}
         {tab === "products" && (
           <ProductReviewTab
             statusFilter={productStatusFilter}

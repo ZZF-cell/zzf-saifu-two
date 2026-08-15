@@ -113,8 +113,8 @@ describe("reviewBrand — 品牌入驻审核", () => {
       where: { id: "brand-1", status: { in: ["PENDING", "REJECTED"] } },
       data: { status: "APPROVED" },
     });
-    expect(tx.user.update).toHaveBeenCalledWith({
-      where: { id: "user-1" },
+    expect(tx.user.updateMany).toHaveBeenCalledWith({
+      where: { id: "user-1", role: { notIn: ["BRAND", "ADMIN"] } },
       data: { role: "BRAND" },
     });
     expect(tx.auditLog.create).toHaveBeenCalledWith({
@@ -128,7 +128,7 @@ describe("reviewBrand — 品牌入驻审核", () => {
 
     await reviewBrand("brand-2", "REJECTED", "admin-1");
 
-    expect(tx.user.update).not.toHaveBeenCalled();
+    expect(tx.user.updateMany).not.toHaveBeenCalled();
     expect(tx.auditLog.create).toHaveBeenCalledWith({
       data: { targetType: "Brand", targetId: "brand-2", action: "REVIEW_REJECTED", operatorId: "admin-1" },
     });
@@ -153,7 +153,7 @@ describe("reviewBrand — 品牌入驻审核", () => {
       code: ERROR_CODES.BRAND_ALREADY_REVIEWED.code,
       statusCode: 409,
     });
-    expect(tx.user.update).not.toHaveBeenCalled();
+    expect(tx.user.updateMany).not.toHaveBeenCalled();
     expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
 
@@ -168,9 +168,27 @@ describe("reviewBrand — 品牌入驻审核", () => {
   it("角色升级失败 → 整体抛错回滚，不留「品牌通过但角色未升」的账", async () => {
     tx.brand.findUnique.mockResolvedValue({ ownerId: "user-1" });
     tx.brand.updateMany.mockResolvedValue({ count: 1 });
-    tx.user.update.mockRejectedValue(new Error("DB down"));
+    tx.user.updateMany.mockRejectedValue(new Error("DB down"));
 
     await expect(reviewBrand("brand-1", "APPROVED", "admin-1")).rejects.toThrow("DB down");
+  });
+
+  it("负责人已是 ADMIN（更高角色）→ 角色守卫不降级，仍通过 + 审计日志", async () => {
+    tx.brand.findUnique.mockResolvedValue({ ownerId: "user-admin" });
+    tx.brand.updateMany.mockResolvedValue({ count: 1 });
+    // 守卫命中 0 行：updateMany 带 notIn:["BRAND","ADMIN"]，ADMIN 不匹配 → 0 行 = no-op 而非抛错
+    tx.user.updateMany.mockResolvedValue({ count: 0 });
+
+    await reviewBrand("brand-1", "APPROVED", "admin-1");
+
+    expect(tx.user.updateMany).toHaveBeenCalledWith({
+      where: { id: "user-admin", role: { notIn: ["BRAND", "ADMIN"] } },
+      data: { role: "BRAND" },
+    });
+    // 0 行命中不阻断审核流程（幂等升级），审计正常落库
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: { targetType: "Brand", targetId: "brand-1", action: "REVIEW_APPROVED", operatorId: "admin-1" },
+    });
   });
 
   it("REJECTED 品牌重审通过（改判错杀）→ 置 APPROVED + 负责人升级 BRAND 角色 + 审计日志", async () => {
@@ -183,8 +201,8 @@ describe("reviewBrand — 品牌入驻审核", () => {
       where: { id: "brand-3", status: { in: ["PENDING", "REJECTED"] } },
       data: { status: "APPROVED" },
     });
-    expect(tx.user.update).toHaveBeenCalledWith({
-      where: { id: "user-1" },
+    expect(tx.user.updateMany).toHaveBeenCalledWith({
+      where: { id: "user-1", role: { notIn: ["BRAND", "ADMIN"] } },
       data: { role: "BRAND" },
     });
     expect(tx.auditLog.create).toHaveBeenCalledWith({
