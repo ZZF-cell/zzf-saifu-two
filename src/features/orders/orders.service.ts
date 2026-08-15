@@ -49,7 +49,8 @@ export interface CreateOrderResult {
   total: number;
   currency: string;
   status: string;
-  payUrl: string | null;
+  /** 当面付二维码内容（支付宝 App 扫码支付）；未配置时 null（订单已创建，可稍后到详情页续付） */
+  qrCode: string | null;
   expiresAt: string;
 }
 
@@ -217,11 +218,11 @@ export async function createOrder(
   });
 
   // Step 5: 调用支付模块创建支付单（事务外 — 支付失败不回滚订单）
-  // 未配置支付宝环境变量时 createPayment 抛 PAYMENT_FAILED → 捕获后降级为 null payUrl（不阻塞下单）
-  let payUrl: string | null = null;
+  // 未配置支付宝环境变量时 createPayment 抛 PAYMENT_FAILED → 捕获后降级为 null qrCode（不阻塞下单）
+  let qrCode: string | null = null;
   try {
     const payment = await paymentService.createPayment(userId, result.id);
-    payUrl = payment.payUrl;
+    qrCode = payment.qrCode;
   } catch (error) {
     console.error("[orders] 支付单创建失败:", result.id, error);
   }
@@ -231,7 +232,7 @@ export async function createOrder(
     total: result.total,
     currency: "CNY",
     status: ORDER_STATUS.PENDING,
-    payUrl,
+    qrCode,
     expiresAt: new Date(Date.now() + ORDER_PAYMENT_TIMEOUT_MS).toISOString(),
   };
 }

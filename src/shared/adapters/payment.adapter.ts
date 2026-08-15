@@ -43,7 +43,8 @@ export interface CreatePaymentParams {
 
 export interface CreatePaymentResult {
   success: boolean;
-  payUrl?: string;
+  /** 当面付二维码内容（alipay.trade.precreate 返回 qr_code），前端渲染二维码供支付宝 App 扫码 */
+  qrCode?: string;
   tradeNo?: string;
   error?: string;
 }
@@ -74,7 +75,7 @@ export interface PaymentAdapter {
 }
 
 // ── 支付宝 SDK 懒初始化 ──
-// 环境变量未配置时不构造 SDK（模块加载阶段不抛错，下单流程可降级为 null payUrl）
+// 环境变量未配置时不构造 SDK（模块加载阶段不抛错，下单流程可降级为 null qrCode）
 
 let alipaySdk: AlipaySdk | null = null;
 let unavailableReason: string | null = null;
@@ -114,6 +115,10 @@ function getAlipaySdk(): AlipaySdk | null {
       process.env.ALIPAY_GATEWAY ||
       "https://openapi-sandbox.dl.alipaydev.com/gateway.do",
     signType: "RSA2",
+    // ⚠️ SDK 默认 camelcase:true 会把 exec 响应字段转驼峰（qr_code→qrCode），
+    // 而支付宝文档按 snake_case（out_trade_no/qr_code）描述，适配器按 snake_case 解析。
+    // 显式关闭驼峰转换，避免响应字段读取落空（precreate 返回 qr_code 读成 undefined）
+    camelcase: false,
   });
   return alipaySdk;
 }
@@ -146,27 +151,41 @@ export function createAlipayAdapter(): PaymentAdapter {
           };
         }
 
-        // 页面支付：method:'GET' 返回带 RSA2 签名的网关跳转 URL
-        // ⚠️ 不传 method 时 pageExec 默认返回 POST 自动提交的 HTML 表单，不是 URL
+        // 当面付扫码：exec 返回 JSON（qr_code 二维码内容），非 pageExec 的跳转 URL。
+        // 为什么不用页面支付：支付宝沙箱 PC 收银台（alipay.trade.page.pay 跳转）在现代浏览器
+        // 常因第三方 Cookie 拦截 / 沙箱老收银台兼容问题白屏，当面付二维码在沙箱环境稳定。
+        // 无 returnUrl（扫码无页面回跳）—— 支付完成靠异步通知（生产）+ 主动查询（本地/兜底）。
         // timestamp 必须显式传北京时间（getBeijingTimestamp），否则服务器本地时区
         // （Vercel=UTC）生成的时间戳比支付宝晚 8h，网关验签必失败
-        const payUrl = sdk.pageExec("alipay.trade.page.pay", {
-          method: "GET",
+        const result = (await sdk.exec("alipay.trade.precreate", {
           timestamp: getBeijingTimestamp(),
-          // notifyUrl/returnUrl 必须放顶层（公共参数），不放 bizContent
+          // notifyUrl 放顶层（公共参数），不放 bizContent
           notifyUrl: `${baseUrl}/api/orders/${params.orderId}/paid`,
-          returnUrl: `${baseUrl}/orders/${params.orderId}`,
           bizContent: {
             outTradeNo: params.orderId,
-            productCode: "FAST_INSTANT_TRADE_PAY",
             totalAmount: totalYuan,
             subject: params.subject,
             timeoutExpress: params.timeoutExpress ?? "30m",
           },
-        });
+        })) as {
+          code?: string;
+          msg?: string;
+          out_trade_no?: string;
+          qr_code?: string;
+        };
 
-        return { success: true, payUrl };
+        // 业务成功码 10000 才返回二维码；其余（缺钱/限流/风控等）透传网关错误供上层提示
+        if (result.code !== "10000") {
+          return {
+            success: false,
+            error: `${result.code ?? "UNKNOWN"} ${result.msg ?? ""}`.trim(),
+          };
+        }
+        return { success: true, qrCode: result.qr_code };
       } catch (error: unknown) {
+        // alipay-sdk 对非业务错误会把 message 统一覆盖为 "[AlipaySdk]exec error"，
+        // 真实原因在 error.data / error.serverResult / 网络层字段里，需完整打印定位
+        console.error("[payment.adapter] createPayment 异常:", error);
         const msg = error instanceof Error ? error.message : String(error);
         return { success: false, error: msg };
       }

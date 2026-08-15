@@ -8,17 +8,18 @@ import type { QueryPaymentResult } from "@/shared/adapters/payment.adapter";
 import { ORDER_STATUS, cancelExpiredOrder, ORDER_PAYMENT_TIMEOUT_MS } from "@/features/orders";
 
 export interface CreatePaymentResult {
-  payUrl: string | null;
+  /** 当面付二维码内容（支付宝 App 扫码支付），未配置时 null */
+  qrCode: string | null;
 }
 
 /**
- * 为指定订单创建支付宝支付（生成签名后的支付跳转 URL）
+ * 为指定订单创建支付宝支付（生成当面付二维码内容，支付宝 App 扫码支付）
  *
  * 校验：
  * - 订单存在、属于当前用户
  * - 状态必须为 PENDING（已支付/已取消/已退款订单不可重复支付）
  *
- * 支付宝未配置时抛 PAYMENT_FAILED —— 下单流程会捕获该错误并降级为 null payUrl（不阻塞下单）
+ * 支付宝未配置时抛 PAYMENT_FAILED —— 下单流程会捕获该错误并降级为 null qrCode（不阻塞下单）
  */
 export async function createPayment(
   userId: string,
@@ -68,7 +69,7 @@ export async function createPayment(
     throw new AppError(ERROR_CODES.PAYMENT_FAILED, result.error || "支付创建失败");
   }
 
-  return { payUrl: result.payUrl ?? null };
+  return { qrCode: result.qrCode ?? null };
 }
 
 /**
