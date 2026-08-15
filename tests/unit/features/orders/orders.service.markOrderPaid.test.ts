@@ -26,7 +26,7 @@ type TxOrder = {
   findUnique: ReturnType<typeof vi.fn>;
   updateMany: ReturnType<typeof vi.fn>;
 };
-type Tx = { order: TxOrder };
+type Tx = { order: TxOrder; auditLog: { create: ReturnType<typeof vi.fn> } };
 
 let tx: Tx;
 // prisma.$transaction 有多个重载；用 vitest Mock 显式声明实现签名：
@@ -36,7 +36,10 @@ const transactionMock = prisma.$transaction as unknown as Mock<TransactionImpl>;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  tx = { order: { findUnique: vi.fn(), updateMany: vi.fn() } };
+  tx = {
+    order: { findUnique: vi.fn(), updateMany: vi.fn() },
+    auditLog: { create: vi.fn() },
+  };
   transactionMock.mockImplementation(
     (fn: (tx: Tx) => Promise<unknown>) => fn(tx),
   );

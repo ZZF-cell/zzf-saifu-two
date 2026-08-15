@@ -12,6 +12,7 @@ import {
 } from "./orders.state-machine";
 import type { OrderStatus } from "./orders.state-machine";
 import { encrypt } from "@/shared/utils/crypto";
+import { writeAuditLog } from "@/shared/utils/audit";
 import { paymentService } from "@/features/payment";
 import { captureMessage } from "@sentry/nextjs";
 import type { Prisma } from "@prisma/client";
@@ -300,6 +301,12 @@ export async function cancelOrder(
         "订单状态已变更（可能已支付），无法取消",
       );
     }
+
+    // 审计留痕：用户取消与状态变更同事务（与服务侧 CANCEL/REFUND 全链路可追溯）
+    await writeAuditLog(tx, "Order", orderId, "USER_CANCELLED", userId, {
+      before: ORDER_STATUS.PENDING,
+      after: ORDER_STATUS.CANCELLED,
+    });
   });
 }
 
@@ -375,13 +382,20 @@ export async function requestRefund(
   }
 
   // 状态守卫：与发货等并发时若状态已变更则拒绝，避免从非 PAID 状态进入 REFUND_REQUESTED
-  const updated = await prisma.order.updateMany({
-    where: { id: orderId, status: ORDER_STATUS.PAID },
-    data: { status: ORDER_STATUS.REFUND_REQUESTED },
+  // 审计留痕与状态变更同事务（退款是资金敏感路径，全链路留痕）
+  await prisma.$transaction(async (tx) => {
+    const updated = await tx.order.updateMany({
+      where: { id: orderId, status: ORDER_STATUS.PAID },
+      data: { status: ORDER_STATUS.REFUND_REQUESTED },
+    });
+    if (updated.count === 0) {
+      throw new AppError(ERROR_CODES.ORDER_STATUS_INVALID, "订单状态已变更，无法申请退款");
+    }
+    await writeAuditLog(tx, "Order", orderId, "REFUND_REQUESTED", userId, {
+      before: ORDER_STATUS.PAID,
+      after: ORDER_STATUS.REFUND_REQUESTED,
+    });
   });
-  if (updated.count === 0) {
-    throw new AppError(ERROR_CODES.ORDER_STATUS_INVALID, "订单状态已变更，无法申请退款");
-  }
 }
 
 // ── 支付回调（幂等） ──
@@ -433,6 +447,14 @@ export async function markOrderPaid(
     });
 
     if (result.count > 0) {
+      // 支付到账审计（operatorId=null：系统回调，非人工操作）；与状态更新同事务，支付全链路可追溯
+      await writeAuditLog(tx, "Order", orderId, "PAID", null, {
+        before: ORDER_STATUS.PENDING,
+        after: ORDER_STATUS.PAID,
+        outTradeNo,
+        alipayTradeNo: alipayTradeNo ?? null,
+        paidAmountFen,
+      });
       return { success: true, conflict: false };
     }
 
@@ -488,11 +510,20 @@ export async function checkPaymentStatus(
 ): Promise<{ status: string }> {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
-    select: { userId: true, status: true },
+    select: { userId: true, status: true, createdAt: true },
   });
 
   if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
   if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_OWNED, "无权操作该订单");
+
+  // 超时兜底：Inngest 事件丢失/未配置时，这里在用户每次查看支付状态时惰性取消过期订单
+  // （过期时间 = 下单 createdAt + ORDER_PAYMENT_TIMEOUT_MS，不落库列；cancelExpiredOrder
+  //   自带状态守卫，非 PENDING 静默 no-op，幂等安全）
+  const expiresAt = new Date(order.createdAt.getTime() + ORDER_PAYMENT_TIMEOUT_MS);
+  if (order.status === ORDER_STATUS.PENDING && expiresAt.getTime() <= Date.now()) {
+    const result = await cancelExpiredOrder(orderId);
+    return { status: result.status };
+  }
 
   return { status: order.status };
 }

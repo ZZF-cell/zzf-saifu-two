@@ -53,9 +53,13 @@ export function OrderCard({ id, total, status, firstItemName, createdAt, isDestr
         </div>
         <div className="ml-3 flex flex-col items-end gap-1.5">
           <OrderStatusBadge status={status} />
-          <span className="text-sm font-bold text-primary">
-            ¥{fenToYuan(total)}
-          </span>
+          {isDestroyed ? (
+            <span className="text-sm font-medium text-gray-400">已销毁</span>
+          ) : (
+            <span className="text-sm font-bold text-primary">
+              ¥{fenToYuan(total)}
+            </span>
+          )}
         </div>
       </div>
     </Link>

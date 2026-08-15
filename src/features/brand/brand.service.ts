@@ -2,29 +2,9 @@
 import { prisma } from "@/shared/db/client";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import { yuanToFen } from "@/shared/utils/money";
+import { writeAuditLog } from "@/shared/utils/audit";
 import type { Prisma } from "@prisma/client";
 
-// ── 审计日志（品牌侧操作留痕，与 admin.service 同形） ──
-// 状态变更与审计在同一 $transaction：审计失败整体回滚，不留「状态已变但无审计」的账
-
-async function writeAuditLog(
-  tx: Prisma.TransactionClient,
-  targetType: string,
-  targetId: string,
-  action: string,
-  operatorId: string,
-  snapshot?: unknown,
-): Promise<void> {
-  await tx.auditLog.create({
-    data: {
-      targetType,
-      targetId,
-      action,
-      operatorId,
-      ...(snapshot !== undefined ? { snapshot: snapshot as object } : {}),
-    },
-  });
-}
 
 // ── 提交新商品（需质检） ──
 

@@ -1,10 +1,10 @@
 // 支付模块 — 业务逻辑（支付宝对接 + 幂等校验）
-// 模块边界：orders → payment（单向）；payment → orders 仅经 Public API 取状态常量
+// 模块边界：orders → payment（单向）；payment → orders 经 Public API 取状态常量与幂等的超时取消函数
 
 import { prisma } from "@/shared/db/client";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import { paymentAdapter } from "@/shared/adapters/payment.adapter";
-import { ORDER_STATUS } from "@/features/orders";
+import { ORDER_STATUS, cancelExpiredOrder, ORDER_PAYMENT_TIMEOUT_MS } from "@/features/orders";
 
 export interface CreatePaymentResult {
   payUrl: string | null;
@@ -25,7 +25,7 @@ export async function createPayment(
 ): Promise<CreatePaymentResult> {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
-    select: { id: true, userId: true, status: true, total: true },
+    select: { id: true, userId: true, status: true, total: true, createdAt: true },
   });
 
   if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
@@ -37,11 +37,30 @@ export async function createPayment(
     );
   }
 
+  // 超时兜底：Inngest 事件丢失/未配置时，支付入口惰性取消过期订单（幂等，状态守卫）
+  // 避免「订单早已过期、用户仍能拉起支付」——过期支付会落空窗需人工退款
+  // 过期时间 = 下单 createdAt + ORDER_PAYMENT_TIMEOUT_MS（不落库列，与下单/取消口径一致）
+  const expiresAt = new Date(order.createdAt.getTime() + ORDER_PAYMENT_TIMEOUT_MS);
+  if (expiresAt.getTime() <= Date.now()) {
+    await cancelExpiredOrder(orderId);
+    throw new AppError(ERROR_CODES.ORDER_STATUS_INVALID, "订单已超时未支付，已自动取消，请重新下单");
+  }
+
+  // 支付宝 timeoutExpress 从支付页拉起起算，而订单自动取消从创建起算：
+  // 剩余不足 1 分钟直接拒付（马上过期），否则把支付宝超时钳制到 ≤ 订单剩余时间，
+  // 保证「订单被自动取消」必然发生在「支付宝允许支付」之后，杜绝支付后到落空窗
+  const remaining = expiresAt.getTime() - Date.now();
+  if (remaining < 60_000) {
+    throw new AppError(ERROR_CODES.ORDER_STATUS_INVALID, "订单即将超时，请重新下单");
+  }
+  const timeoutExpress = `${Math.min(30, Math.ceil(remaining / 60_000))}m`;
+
   const result = await paymentAdapter.createPayment({
     orderId: order.id,
     total: order.total,
     // 隐私优先：成人用品平台支付描述不展示商品名
     subject: "赛夫严选",
+    timeoutExpress,
   });
 
   if (!result.success) {

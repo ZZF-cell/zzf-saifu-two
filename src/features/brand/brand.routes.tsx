@@ -731,9 +731,14 @@ function OrdersTab() {
               <StatusBadge status={o.status} />
             </div>
             <p className="mt-1 text-xs text-gray-400">
-              ¥{fenToYuan(o.brandSubtotal)}
-              {o.isDestroyed && <span className="ml-1 text-red-400">已销毁</span>} · 下单于{" "}
-              {new Date(o.createdAt).toLocaleDateString("zh-CN")}
+              {o.isDestroyed ? (
+                <span className="text-gray-400">已销毁</span>
+              ) : (
+                <>
+                  ¥{fenToYuan(o.brandSubtotal)} · 下单于{" "}
+                  {new Date(o.createdAt).toLocaleDateString("zh-CN")}
+                </>
+              )}
             </p>
           </div>
         ))

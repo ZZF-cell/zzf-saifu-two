@@ -86,16 +86,20 @@ async function queryOrderSummaries(
   ]);
 
   return {
-    orders: orders.map((o) => ({
-      id: o.id,
-      total: o.total,
-      status: o.status,
-      itemCount: o._count.items, // 真实商品行数（_count 聚合，不再硬编码 0）
-      firstItemName: o.items[0]?.productName || "商品",
-      createdAt: o.createdAt,
-      paidAt: o.paidAt,
-      isDestroyed: isOrderDestroyed(o.privacy as Record<string, unknown> | null),
-    })),
+    orders: orders.map((o) => {
+      // 已销毁订单：金额/商品名/行数全部掩码（隐私擦除在查询层生效，DB 保留供审计/退款核验）
+      const destroyed = isOrderDestroyed(o.privacy as Record<string, unknown> | null);
+      return {
+        id: o.id,
+        total: destroyed ? 0 : o.total,
+        status: o.status,
+        itemCount: destroyed ? 0 : o._count.items,
+        firstItemName: destroyed ? "已销毁" : o.items[0]?.productName || "商品",
+        createdAt: o.createdAt,
+        paidAt: o.paidAt,
+        isDestroyed: destroyed,
+      };
+    }),
     total,
     page,
     pageSize,
@@ -184,6 +188,8 @@ export async function getOrderListByBrand(
   return {
     orders: orders.map((o) => {
       const brandItems = o.items;
+      // 已销毁订单：品牌方同样看不到金额与商品名（隐私擦除对用户与品牌一视同仁）
+      const destroyed = isOrderDestroyed(o.privacy as Record<string, unknown> | null);
       // OrderItem.price 为「实付分摊后的行总额」（已含 ×qty，见 calculateOrderItems），
       // 小计直接求和即可，不可再乘 qty（否则膨胀 qty 倍）
       const brandSubtotal = brandItems.reduce(
@@ -195,9 +201,9 @@ export async function getOrderListByBrand(
         status: o.status,
         createdAt: o.createdAt,
         paidAt: o.paidAt,
-        isDestroyed: isOrderDestroyed(o.privacy as Record<string, unknown> | null),
-        brandSubtotal,
-        firstItemName: brandItems[0]?.productName || "商品",
+        isDestroyed: destroyed,
+        brandSubtotal: destroyed ? 0 : brandSubtotal,
+        firstItemName: destroyed ? "已销毁" : brandItems[0]?.productName || "商品",
       };
     }),
     total,
@@ -235,12 +241,13 @@ export async function getOrderDetail(
 
   return {
     id: order.id,
-    total: order.total,
+    // 已销毁订单：金额/流水号/商品明细全部掩码（DB 保留，仅管理端可查）
+    total: destroyed ? 0 : order.total,
     status: order.status,
     // 已销毁订单不展示收货地址；正常订单先尝试解密
     shippingAddress: destroyed ? "[DESTROYED]" : decryptAddress(order.shippingAddress),
     privacy: order.privacy,
-    outTradeNo: order.outTradeNo,
+    outTradeNo: destroyed ? null : order.outTradeNo,
     paidAt: order.paidAt,
     shippedAt: order.shippedAt,
     deliveredAt: order.deliveredAt,
@@ -249,7 +256,7 @@ export async function getOrderDetail(
     refundedAt: order.refundedAt,
     createdAt: order.createdAt,
     isDestroyed: destroyed,
-    items: order.items,
+    items: destroyed ? [] : order.items,
   };
 }
 

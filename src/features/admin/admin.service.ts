@@ -6,31 +6,11 @@ import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import { ORDER_STATUS, restoreStock } from "@/features/orders";
 import { yuanToFen } from "@/shared/utils/money";
 import { hashPassword } from "@/shared/utils/crypto";
+import { writeAuditLog } from "@/shared/utils/audit";
 import type { Prisma } from "@prisma/client";
 
 export type ReviewDecision = "APPROVED" | "REJECTED";
 
-// ── 审计日志（后台所有操作留痕） ──
-// snapshot 可选：编辑类操作存 {before, after}，便于追溯变更前后
-
-async function writeAuditLog(
-  tx: Prisma.TransactionClient,
-  targetType: string,
-  targetId: string,
-  action: string,
-  operatorId: string,
-  snapshot?: unknown,
-): Promise<void> {
-  await tx.auditLog.create({
-    data: {
-      targetType,
-      targetId,
-      action,
-      operatorId,
-      ...(snapshot !== undefined ? { snapshot: snapshot as object } : {}),
-    },
-  });
-}
 
 // ── 品牌审核 ──
 

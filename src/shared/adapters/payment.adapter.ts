@@ -37,6 +37,8 @@ export interface CreatePaymentParams {
   orderId: string;
   total: number; // 分
   subject: string;
+  /** 支付宝侧超时（如 "30m"）。缺省 "30m"；调用方按订单剩余支付时间传，避免「订单先被自动取消、支付后到」的资损空窗 */
+  timeoutExpress?: string;
 }
 
 export interface CreatePaymentResult {
@@ -139,7 +141,7 @@ export function createAlipayAdapter(): PaymentAdapter {
             productCode: "FAST_INSTANT_TRADE_PAY",
             totalAmount: totalYuan,
             subject: params.subject,
-            timeoutExpress: "30m",
+            timeoutExpress: params.timeoutExpress ?? "30m",
           },
         });
 

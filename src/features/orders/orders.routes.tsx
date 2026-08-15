@@ -403,10 +403,14 @@ export function OrderDetailPage({ id }: { id: string }) {
         <div className="rounded-xl bg-gray-50 p-4">
           <div className="flex justify-between text-sm">
             <span className="text-gray-500">订单金额</span>
-            <span className="font-bold text-primary">¥{fenToYuan(order.total)}</span>
+            {order.isDestroyed ? (
+              <span className="font-bold text-gray-400">已销毁</span>
+            ) : (
+              <span className="font-bold text-primary">¥{fenToYuan(order.total)}</span>
+            )}
           </div>
           <p className="mt-1 text-xs text-gray-400">订单号: {order.id}</p>
-          {order.outTradeNo && (
+          {order.outTradeNo && !order.isDestroyed && (
             <p className="mt-0.5 text-xs text-gray-400">流水号: {order.outTradeNo}</p>
           )}
         </div>
@@ -416,11 +420,15 @@ export function OrderDetailPage({ id }: { id: string }) {
           <OrderShippingAddress shippingAddress={order.shippingAddress} />
         )}
 
-        {/* 商品列表 */}
+        {/* 商品列表（已销毁订单不展示任何商品名/单价/数量） */}
         <section>
           <h3 className="mb-2 text-sm font-semibold text-gray-700">商品</h3>
           <div className="space-y-2">
-            {order.items.map((item) => (
+            {order.isDestroyed ? (
+              <div className="rounded-lg border border-gray-50 p-4 text-sm text-gray-400">
+                订单已销毁，商品信息已清除
+              </div>
+            ) : order.items.map((item) => (
               <div key={item.id} className="flex justify-between rounded-lg border border-gray-50 p-3">
                 <div>
                   <p className="text-sm text-gray-900">{item.productName}</p>
