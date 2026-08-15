@@ -250,6 +250,11 @@ export async function registerWithPassword(
   const phoneHash = hashPhone(phone);
   const existing = await prisma.user.findUnique({ where: { phoneHash } });
 
+  // 被禁用用户禁止通过「补设密码/注册」获取新会话（与 loginWithCode/loginWithPassword 门禁一致）
+  if (existing?.status === "DISABLED") {
+    throw new AppError(ERROR_CODES.USER_DISABLED, "账号已被禁用，请联系管理员");
+  }
+
   // 已存在且有密码 → 拒绝
   if (existing?.passwordHash) {
     throw new AppError(
@@ -278,7 +283,10 @@ export async function registerWithPassword(
   } catch {
     const user = await prisma.user.findUnique({ where: { phoneHash } });
     if (!user) throw new AppError(ERROR_CODES.INTERNAL_ERROR, "注册失败");
-    // 并发场景下另一个请求已创建，补设密码
+    // 并发场景下另一个请求已创建，补设密码（并发用户若已被禁用同样拒绝）
+    if (user.status === "DISABLED") {
+      throw new AppError(ERROR_CODES.USER_DISABLED, "账号已被禁用，请联系管理员");
+    }
     if (!user.passwordHash) {
       await prisma.user.update({
         where: { id: user.id },
@@ -407,6 +415,13 @@ export async function refreshAccessToken(
         where: { id: decoded.userId },
       });
       if (!u) throw new AppError(ERROR_CODES.UNAUTHORIZED, "用户不存在");
+
+      // 被禁用用户禁止续期：同事务吊销其全部会话（其他设备的 refresh token 一并失效），
+      // 并拒绝签发 —— 禁用必须对已有会话立即生效，而非等 access token 15min 自然过期
+      if (u.status === "DISABLED") {
+        await tx.refreshToken.deleteMany({ where: { userId: u.id } });
+        throw new AppError(ERROR_CODES.USER_DISABLED, "账号已被禁用，请联系管理员");
+      }
 
       const newRawToken = encodeRefreshToken(u.id);
       const newHash = sha256(newRawToken);
