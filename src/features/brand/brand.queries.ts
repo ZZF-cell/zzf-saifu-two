@@ -75,18 +75,18 @@ export async function getBrandOverview(brandId: string): Promise<BrandOverview> 
 
   const [orderCount, paidItems] = await Promise.all([
     prisma.order.count({ where: orderWhere }),
-    // 只聚合本品牌商品行的实付金额（price×qty），
+    // 只聚合本品牌商品行的实付金额（price 行总额之和，price 已含 ×qty），
     // 避免混合品牌订单的整单金额被每个涉及品牌各全额计入（跨品牌金额泄漏）
     prisma.orderItem.findMany({
       where: {
         productId: { in: productIds },
         order: { status: { in: paidFamily } },
       },
-      select: { price: true, qty: true },
+      select: { price: true },
     }),
   ]);
 
-  const paidRevenue = paidItems.reduce((sum, i) => sum + i.price * i.qty, 0);
+  const paidRevenue = paidItems.reduce((sum, i) => sum + i.price, 0);
 
   return {
     brand,

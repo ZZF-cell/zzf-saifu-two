@@ -117,7 +117,7 @@ describe("getBrandOverview — 品牌概览", () => {
     ] as never);
     vi.mocked(prisma.order.count).mockResolvedValue(3);
     vi.mocked(prisma.orderItem.findMany).mockResolvedValue([
-      { price: 10000, qty: 2 }, // 本品牌行：10000分×2
+      { price: 10000, qty: 2 }, // 本品牌行：price 为行总额（10000分 = 单价50分×2）
       { price: 500, qty: 1 },
     ] as never);
 
@@ -126,14 +126,14 @@ describe("getBrandOverview — 品牌概览", () => {
     expect(overview.productCount).toBe(2);
     expect(overview.approvedProductCount).toBe(1);
     expect(overview.orderCount).toBe(3);
-    expect(overview.paidRevenue).toBe(20500); // 10000×2 + 500×1
+    expect(overview.paidRevenue).toBe(10500); // 行总额直接求和：10000 + 500（price 已含 ×qty，不再乘 qty）
     // 品牌概览必须查 OrderItem 行聚合而非 Order._sum.total（后者含其他品牌金额）
     expect(prisma.orderItem.findMany).toHaveBeenCalledWith({
       where: {
         productId: { in: ["p1", "p2"] },
         order: { status: { in: ["PAID", "SHIPPED", "DELIVERED", "COMPLETED"] } },
       },
-      select: { price: true, qty: true },
+      select: { price: true },
     });
   });
 });
