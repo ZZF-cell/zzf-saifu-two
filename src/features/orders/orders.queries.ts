@@ -118,8 +118,10 @@ export async function getOrderList(
     userId,
     // 不排除已销毁订单，用户可看到「已销毁」标记
   };
-  // ?status= 多状态筛选（API 层已按白名单过滤为合法状态值）
-  if (statuses && statuses.length > 0) {
+  // ?status= 多状态筛选：statuses 传了（含空数组）即强制 in 条件；
+  // 空数组 → in: [] → 显式空结果（API 层过滤后全非法值时不泄漏全量数据）；
+  // 仅 undefined（URL 无 status 参数）才不加筛选。
+  if (statuses !== undefined) {
     where.status = { in: statuses };
   }
   return queryOrderSummaries(where, page, pageSize);

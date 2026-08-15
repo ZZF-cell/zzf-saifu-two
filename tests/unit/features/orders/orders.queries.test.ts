@@ -170,4 +170,17 @@ describe("getOrderList — status 筛选", () => {
     expect(call.where.userId).toBe("user-1");
     expect(call.where.status).toBeUndefined();
   });
+
+  it("传空数组（URL 全是非法状态值被白名单过滤）→ where.status = { in: [] } 显式空结果，不泄漏全量", async () => {
+    findManyMock.mockResolvedValue([]);
+    vi.mocked(prisma.order.count).mockResolvedValue(0);
+
+    await getOrderList("user-1", 1, 20, []);
+
+    expect(findManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "user-1", status: { in: [] } },
+      }),
+    );
+  });
 });

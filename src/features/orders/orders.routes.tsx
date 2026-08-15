@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { OrderCard, OrderStatusBadge, OrderTimeline, AddressForm } from "./orders.components";
 import type { OrderSummary, OrderDetail } from "./orders.queries";
 import { ORDER_STATUS_GROUPS } from "./orders.state-machine";
 import type { OrderStatus } from "./orders.state-machine";
-import { fenToYuan } from "@/shared/utils/money";
+import { fenToYuan, sumFen } from "@/shared/utils/money";
 import { apiFetch } from "@/shared/api/client";
 import { SiteHeader } from "@/shared/ui/SiteHeader";
 
@@ -41,6 +41,109 @@ async function apiCall(method: string, url: string, body?: Record<string, unknow
   return data;
 }
 
+// ── 支付跳转兜底（CheckoutPage / OrderDetailPage 共用） ──
+// 支付宝沙箱偶发白屏：跳转前先上屏遮罩过渡（消除无反馈白屏感），
+// 遮罩保留「新窗口打开支付页 + 返回订单详情」两个逃生口，任何情况下用户都有出路。
+
+const LAST_PAY_KEY = "lastPayOrder";
+
+function PayRedirectOverlay({
+  target,
+  onReturn,
+}: {
+  target: { orderId: string; payUrl: string };
+  onReturn: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/95">
+      <div className="mx-auto w-full max-w-sm px-6 text-center">
+        <p className="text-base font-semibold text-gray-900">正在跳转至支付宝安全收银台…</p>
+        <p className="mt-2 text-sm text-gray-500">如未自动跳转，请点击下方链接在新窗口打开</p>
+        <a
+          href={target.payUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-4 block rounded-lg bg-primary py-3 text-sm font-medium text-white transition hover:opacity-90"
+        >
+          打开支付页面
+        </a>
+        <button
+          onClick={onReturn}
+          className="mt-2 w-full rounded-lg border border-gray-200 py-3 text-sm font-medium text-gray-600 transition hover:bg-gray-50"
+        >
+          返回订单详情
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function usePayRedirect() {
+  const router = useRouter();
+  const payTimerRef = useRef<number | null>(null);
+  const [payRedirecting, setPayRedirecting] = useState<{
+    orderId: string;
+    payUrl: string;
+  } | null>(null);
+
+  const openPayUrl = useCallback((payUrl: string, orderId: string) => {
+    // 记录待支付订单，跳转失败返回后可在结算页/订单页提示续付
+    try {
+      sessionStorage.setItem(LAST_PAY_KEY, orderId);
+    } catch {
+      // 隐私模式等场景忽略
+    }
+    setPayRedirecting({ orderId, payUrl });
+    if (payTimerRef.current !== null) window.clearTimeout(payTimerRef.current);
+    // 先让遮罩上屏，再自动跳转（300ms 足够渲染，消除无过渡白屏感）
+    payTimerRef.current = window.setTimeout(() => {
+      window.location.href = payUrl;
+    }, 300);
+  }, []);
+
+  const cancelPayRedirect = useCallback(() => {
+    if (payTimerRef.current !== null) window.clearTimeout(payTimerRef.current);
+    setPayRedirecting(null);
+  }, []);
+
+  const payRedirectOverlay = payRedirecting ? (
+    <PayRedirectOverlay
+      target={payRedirecting}
+      onReturn={() => {
+        cancelPayRedirect();
+        router.push(`/orders/${payRedirecting.orderId}`);
+      }}
+    />
+  ) : null;
+
+  return { openPayUrl, cancelPayRedirect, payRedirectOverlay };
+}
+
+/** 读取并清除「待支付订单」标记（下单后跳转失败返回时提示续付） */
+function useLastPayOrder() {
+  const [lastPayOrderId, setLastPayOrderId] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const id = sessionStorage.getItem(LAST_PAY_KEY);
+      if (id) setLastPayOrderId(id);
+    } catch {
+      // 忽略
+    }
+  }, []);
+
+  const dismissLastPay = useCallback(() => {
+    try {
+      sessionStorage.removeItem(LAST_PAY_KEY);
+    } catch {
+      // 忽略
+    }
+    setLastPayOrderId(null);
+  }, []);
+
+  return { lastPayOrderId, dismissLastPay };
+}
+
 // ── 结算页 ──
 
 interface CartItem {
@@ -54,8 +157,10 @@ interface CartItem {
   subtotal: number;
 }
 
-export function CheckoutPage() {
+export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
   const router = useRouter();
+  const { openPayUrl, payRedirectOverlay } = usePayRedirect();
+  const { lastPayOrderId, dismissLastPay } = useLastPayOrder();
   const [cart, setCart] = useState<{ items: CartItem[]; totalAmount: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -77,16 +182,34 @@ export function CheckoutPage() {
     zipCode: "",
   });
 
+  // 部分结算：URL ?items= 携带本次待结算的 productId 列表（购物车勾选去结算跳转而来）。
+  // CUID 不含逗号，逗号拆分安全；空集 = 直接访问 /checkout（无 ?items=）→ 回退全量。
+  const selectedProductIds = useMemo(() => {
+    const raw = initialItems.split(",").map((s) => s.trim()).filter(Boolean);
+    return new Set(raw);
+  }, [initialItems]);
+
   useEffect(() => {
     // apiFetch 处理 401 自动刷新；Refresh 失效时自行跳登录页
     apiFetch("/api/cart")
       .then((res) => res.json())
       .then((data) => {
-        if (data?.items) setCart(data);
+        if (data?.items) {
+          // 部分结算：只展示本次勾选的商品（以服务端最新购物车为准过滤，
+          // 已下架/已结算的选中项自然排除；无 ?items= 时回退全量向后兼容）
+          const items: CartItem[] =
+            selectedProductIds.size > 0
+              ? (data.items as CartItem[]).filter((i) =>
+                  selectedProductIds.has(i.productId),
+                )
+              : data.items;
+          // 金额只统计本次结算项（订单提交/价格变更比较都以该重算值为基准）
+          setCart({ items, totalAmount: sumFen(items.map((i) => i.subtotal)) });
+        }
       })
       .catch(() => setError("加载购物车失败"))
       .finally(() => setLoading(false));
-  }, []);
+  }, [selectedProductIds]);
 
   const handleSubmit = async () => {
     // 基本校验
@@ -137,12 +260,12 @@ export function CheckoutPage() {
     }
   };
 
-  /** 跳转支付（有支付 URL 走支付宝，否则进订单详情） */
+  /** 跳转支付：有支付 URL 走遮罩过渡 + 支付宝；无 URL 显式提示（订单已创建，不静默跳详情） */
   const redirectToPay = (order: { payUrl: string | null; orderId: string }) => {
     if (order.payUrl) {
-      window.location.href = order.payUrl;
+      openPayUrl(order.payUrl, order.orderId);
     } else {
-      router.push(`/orders/${order.orderId}`);
+      setError("支付服务暂不可用，订单已创建，可稍后到订单详情页继续支付");
     }
   };
 
@@ -162,7 +285,9 @@ export function CheckoutPage() {
     return (
       <main className="mx-auto min-h-screen max-w-6xl p-4">
         <div className="mx-auto mt-20 w-full max-w-2xl text-center text-gray-400">
-          <p className="text-lg">购物车为空</p>
+          <p className="text-lg">
+            {selectedProductIds.size > 0 ? "所选商品已不存在或已结算" : "购物车为空"}
+          </p>
           <button
             onClick={() => router.push("/")}
             className="mt-3 rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white"
@@ -176,6 +301,27 @@ export function CheckoutPage() {
 
   return (
     <main className="mx-auto min-h-screen max-w-6xl bg-white pb-24">
+      {/* 待支付提醒：上次跳转支付宝失败返回时提示续付（点击清除标记） */}
+      {lastPayOrderId && (
+        <div className="mx-auto flex w-full max-w-2xl items-center justify-between rounded-lg bg-yellow-50 px-3 py-2 text-sm text-yellow-700">
+          <span>有一笔待支付订单</span>
+          <span className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                dismissLastPay();
+                router.push(`/orders/${lastPayOrderId}`);
+              }}
+              className="font-medium underline"
+            >
+              去支付
+            </button>
+            <button onClick={dismissLastPay} className="text-yellow-500" aria-label="关闭提醒">
+              ×
+            </button>
+          </span>
+        </div>
+      )}
+
       <div className="sticky top-0 z-10 mx-auto w-full max-w-6xl border-b bg-white/90 px-4 py-3 backdrop-blur">
         <h1 className="text-center text-base font-bold">确认订单</h1>
       </div>
@@ -249,6 +395,8 @@ export function CheckoutPage() {
           </button>
         )}
       </div>
+
+      {payRedirectOverlay}
     </main>
   );
 }
@@ -344,6 +492,7 @@ export function OrderListPage() {
 
 export function OrderDetailPage({ id }: { id: string }) {
   const router = useRouter();
+  const { openPayUrl, payRedirectOverlay } = usePayRedirect();
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
@@ -386,7 +535,7 @@ export function OrderDetailPage({ id }: { id: string }) {
       const res = await apiFetch(`/api/pay/${id}`);
       const data = await res.json().catch(() => null);
       if (res.ok && data?.payUrl) {
-        window.location.href = data.payUrl;
+        openPayUrl(data.payUrl, id);
         return;
       }
       setError(data?.message || "支付功能暂不可用");
@@ -572,6 +721,8 @@ export function OrderDetailPage({ id }: { id: string }) {
           )}
         </div>
       </div>
+
+      {payRedirectOverlay}
     </main>
   );
 }
