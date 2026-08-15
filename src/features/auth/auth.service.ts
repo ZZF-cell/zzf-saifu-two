@@ -327,15 +327,19 @@ export async function loginWithPassword(
 
   const passwordOk = await verifyPassword(password, user.passwordHash);
   if (!passwordOk) {
-    // 失败计数 + 达到上限锁定（count 由数据库原子递增，多实例并发安全）
-    const failed = (user.failedLoginAttempts ?? 0) + 1;
-    const lockUntil =
-      failed >= MAX_LOGIN_ATTEMPTS
-        ? new Date(Date.now() + LOGIN_LOCK_MS)
-        : null;
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { failedLoginAttempts: failed, lockUntil },
+    // 失败计数原子递增（increment 由 DB 执行，多实例并发不丢计数）；
+    // 递增后达到阈值才锁定，计数与锁定在同一事务内 —— 杜绝「读旧值 +1 再写回」竞态
+    await prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: user.id },
+        data: { failedLoginAttempts: { increment: 1 } },
+      });
+      if (updated.failedLoginAttempts >= MAX_LOGIN_ATTEMPTS) {
+        await tx.user.update({
+          where: { id: user.id },
+          data: { lockUntil: new Date(Date.now() + LOGIN_LOCK_MS) },
+        });
+      }
     });
     throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "密码错误");
   }
@@ -356,11 +360,19 @@ export async function loginWithPassword(
   return issueTokens(user);
 }
 
-/** 为短信登录用户设置密码 */
+/** 为短信登录用户设置密码（被禁用用户禁止：access token 15min 内仍有效，禁用门禁必须下沉到写入口） */
 export async function setPassword(
   userId: string,
   password: string,
 ): Promise<void> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { status: true },
+  });
+  if (!user) throw new AppError(ERROR_CODES.UNAUTHORIZED, "用户不存在");
+  if (user.status === "DISABLED") {
+    throw new AppError(ERROR_CODES.USER_DISABLED, "账号已被禁用，请联系管理员");
+  }
   const passwordHash = await hashPassword(password);
   await prisma.user.update({
     where: { id: userId },

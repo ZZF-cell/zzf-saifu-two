@@ -15,7 +15,6 @@ vi.mock("@/features/auth/auth.queries", () => ({
   getUserByPhone: vi.fn(),
 }));
 
-import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import { meHandler } from "@/features/auth/auth.api";
 import * as authService from "@/features/auth/auth.service";
 import * as authQueries from "@/features/auth/auth.queries";

@@ -175,9 +175,19 @@ export const refreshHandler = async (req: Request) => {
     return response;
   } catch (err) {
     console.error("[auth/refresh] 刷新失败:", err);
+    // 账号被禁用是「拒绝续期」而非「会话过期」：透传 USER_DISABLED(403) 让前端提示「账号已被禁用」，
+    // 而不是误导性的「登录已过期」；其余错误统一按过期处理。两种路径都必须吊销 Cookie。
+    const disabled =
+      err instanceof AppError && err.code === ERROR_CODES.USER_DISABLED.code;
     const response = NextResponse.json(
-      { error: ERROR_CODES.TOKEN_EXPIRED.code },
-      { status: ERROR_CODES.TOKEN_EXPIRED.status },
+      disabled
+        ? { error: err.code, message: err.message }
+        : { error: ERROR_CODES.TOKEN_EXPIRED.code },
+      {
+        status: disabled
+          ? ERROR_CODES.USER_DISABLED.status
+          : ERROR_CODES.TOKEN_EXPIRED.status,
+      },
     );
     clearTokenCookies(response);
     return response;
