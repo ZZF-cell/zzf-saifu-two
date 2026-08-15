@@ -94,11 +94,12 @@ export function AccountPage() {
     );
   }
 
-  const stats: { label: string; value: number; highlight?: boolean }[] = [
-    { label: "全部订单", value: profile.stats.totalOrders },
-    { label: "待付款", value: profile.stats.pendingPayment },
-    { label: "已支付", value: profile.stats.paidOrders, highlight: true },
-    { label: "已取消/退款", value: profile.stats.cancelledOrders },
+  // 点击卡片直达对应状态的订单列表（Tab key 与 ORDER_STATUS_GROUPS 同口径）
+  const stats: { label: string; value: number; highlight?: boolean; href: string }[] = [
+    { label: "全部订单", value: profile.stats.totalOrders, href: "/orders" },
+    { label: "待付款", value: profile.stats.pendingPayment, href: "/orders?status=pending" },
+    { label: "已支付", value: profile.stats.paidOrders, highlight: true, href: "/orders?status=paid" },
+    { label: "已取消/退款", value: profile.stats.cancelledOrders, href: "/orders?status=cancelled" },
   ];
 
   return (
@@ -168,17 +169,20 @@ export function AccountPage() {
           <h3 className="mb-3 text-sm font-semibold text-gray-700">订单统计</h3>
           <div className="grid grid-cols-4 gap-2">
             {stats.map((s) => (
-              <div
+              <Link
                 key={s.label}
-                className={`rounded-xl p-3 text-center ${
+                href={s.href}
+                className={`group block rounded-xl p-3 text-center transition hover:shadow-sm ${
                   s.highlight ? "bg-primary/5" : "bg-gray-50"
                 }`}
               >
                 <p className={`text-xl font-bold ${s.highlight ? "text-primary" : "text-gray-900"}`}>
                   {s.value}
                 </p>
-                <p className="mt-0.5 text-[11px] text-gray-500">{s.label}</p>
-              </div>
+                <p className="mt-0.5 text-[11px] text-gray-500 transition group-hover:text-primary">
+                  {s.label} ›
+                </p>
+              </Link>
             ))}
           </div>
         </section>
@@ -187,10 +191,6 @@ export function AccountPage() {
         <section>
           <h3 className="mb-3 text-sm font-semibold text-gray-700">常用功能</h3>
           <div className="divide-y divide-gray-100 rounded-xl border border-gray-100">
-            <Link href="/orders" className="flex items-center justify-between px-4 py-3 text-sm text-gray-700 transition hover:bg-gray-50">
-              我的订单
-              <span className="text-gray-300">›</span>
-            </Link>
             <Link href="/cart" className="flex items-center justify-between px-4 py-3 text-sm text-gray-700 transition hover:bg-gray-50">
               我的购物车
               <span className="text-gray-300">›</span>

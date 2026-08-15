@@ -24,6 +24,12 @@ vi.mock("@/features/orders", () => ({
     REFUND_REQUESTED: "REFUND_REQUESTED",
     REFUNDED: "REFUNDED",
   },
+  // 统计卡/订单列表 Tab 同口径分组（M4 后 getProfile 依赖它替代硬编码）
+  ORDER_STATUS_GROUPS: {
+    pending: ["PENDING"],
+    paid: ["PAID", "SHIPPED", "DELIVERED", "COMPLETED"],
+    cancelled: ["CANCELLED", "REFUND_REQUESTED", "REFUNDED"],
+  },
 }));
 
 import { prisma } from "@/shared/db/client";

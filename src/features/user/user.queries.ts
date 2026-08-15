@@ -1,7 +1,7 @@
 // 用户查询 — 个人信息 + 订单统计（只读）
 import { prisma } from "@/shared/db/client";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
-import { ORDER_STATUS } from "@/features/orders";
+import { ORDER_STATUS, ORDER_STATUS_GROUPS } from "@/features/orders";
 
 // ── 类型 ──
 
@@ -40,23 +40,21 @@ export async function getProfile(userId: string): Promise<UserProfile> {
   const countByStatus = (status: string) =>
     grouped.find((g) => g.status === status)?._count._all ?? 0;
 
-  const paidFamily = [
-    ORDER_STATUS.PAID,
-    ORDER_STATUS.SHIPPED,
-    ORDER_STATUS.DELIVERED,
-    ORDER_STATUS.COMPLETED,
-  ];
-
   return {
     ...user,
     stats: {
       totalOrders: grouped.reduce((sum, g) => sum + g._count._all, 0),
       pendingPayment: countByStatus(ORDER_STATUS.PENDING),
-      paidOrders: paidFamily.reduce((sum, s) => sum + countByStatus(s), 0),
-      cancelledOrders:
-        countByStatus(ORDER_STATUS.CANCELLED) +
-        countByStatus(ORDER_STATUS.REFUND_REQUESTED) +
-        countByStatus(ORDER_STATUS.REFUNDED),
+      // 与订单列表 Tab / ORDER_STATUS_GROUPS 同口径（单一事实来源），
+      // 保证「个人中心卡片数字 = 对应状态订单列表条数」
+      paidOrders: ORDER_STATUS_GROUPS.paid.reduce(
+        (sum, s) => sum + countByStatus(s),
+        0,
+      ),
+      cancelledOrders: ORDER_STATUS_GROUPS.cancelled.reduce(
+        (sum, s) => sum + countByStatus(s),
+        0,
+      ),
     },
   };
 }
