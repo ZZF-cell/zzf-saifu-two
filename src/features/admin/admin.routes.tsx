@@ -353,7 +353,7 @@ function BrandReviewTab() {
   return (
     <div className="space-y-3">
       <div className="flex gap-2 overflow-x-auto pb-1">
-        {["PENDING", "REJECTED", ""].map((s) => (
+        {["", "PENDING", "REJECTED"].map((s) => (
           <button
             key={s}
             onClick={() => switchFilter(s)}
@@ -825,7 +825,7 @@ function ProductReviewTab({
   return (
     <div className="space-y-3">
       <div className="flex gap-2 overflow-x-auto pb-1">
-        {["PENDING", "APPROVED", "DELISTED", "REJECTED", "WITHDRAWN", ""].map((s) => (
+        {["", "PENDING", "APPROVED", "DELISTED", "REJECTED", "WITHDRAWN"].map((s) => (
           <button
             key={s}
             onClick={() => onStatusFilterChange(s)}
