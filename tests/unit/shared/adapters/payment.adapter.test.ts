@@ -1,7 +1,10 @@
-// paymentAdapter.queryPayment 单元测试 — 支付宝交易状态查询（alipay.trade.query）
+// paymentAdapter.queryPayment / createPayment 单元测试
+// - queryPayment：支付宝交易状态查询（alipay.trade.query）
+// - createPayment：当面付扫码（alipay.trade.precreate，返回 qr_code 二维码内容）
 // mock alipay-sdk 类，验证：
-//   - exec 参数（method + 北京时间 timestamp + bizContent.outTradeNo）
-//   - 字段映射（trade_status / total_amount 元→分 / trade_no）
+//   - exec 参数（method + 北京时间 timestamp + notifyUrl + bizContent）
+//   - 字段映射（qr_code / trade_status / total_amount 元→分 / trade_no）
+//   - 业务失败码（code≠10000）→ success:false
 //   - exec 抛错 → success:false 优雅降级
 //   - 支付宝未配置 → success:false 降级
 //
@@ -39,6 +42,8 @@ beforeEach(() => {
   process.env.ALIPAY_APP_ID = "2021000000000000";
   process.env.ALIPAY_PRIVATE_KEY = PKCS1_KEY;
   process.env.ALIPAY_PUBLIC_KEY = PUBLIC_KEY;
+  // createPayment 的 notifyUrl 依赖 baseUrl；缺省时 adapter 返回「缺少 NEXT_PUBLIC_BASE_URL」
+  process.env.NEXT_PUBLIC_BASE_URL = "https://saifu.e9888.cn";
 });
 
 /** 重载 adapter 模块（resetModules 让 getAlipaySdk 的单例 / 降级缓存全部重建） */
@@ -112,6 +117,90 @@ describe("paymentAdapter.queryPayment — alipay.trade.query 交易状态查询"
 
     const adapter = await loadAdapter();
     const result = await adapter.queryPayment({ outTradeNo: "order-1" });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("支付宝未配置");
+  });
+});
+
+// ── createPayment：当面付扫码（alipay.trade.precreate） ──
+
+describe("paymentAdapter.createPayment — alipay.trade.precreate 当面付", () => {
+  it("调 exec precreate：notifyUrl 含 orderId + 北京时间 timestamp + bizContent（金额元串/主题/超时）", async () => {
+    const adapter = await loadAdapter();
+    const execSpy = vi.spyOn(AlipaySdk.prototype, "exec").mockResolvedValue({
+      code: "10000",
+      msg: "Success",
+      out_trade_no: "order-1",
+      qr_code: "https://qr.alipay.com/bax0451xyz",
+    });
+
+    const result = await adapter.createPayment({
+      orderId: "order-1",
+      total: 8900,
+      subject: "赛夫严选",
+      timeoutExpress: "30m",
+    });
+
+    // 当面付用 exec（返回 JSON qr_code），非 pageExec（返回跳转 URL）
+    expect(execSpy).toHaveBeenCalledWith("alipay.trade.precreate", {
+      timestamp: expect.stringMatching(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/),
+      notifyUrl: "https://saifu.e9888.cn/api/orders/order-1/paid",
+      bizContent: {
+        outTradeNo: "order-1",
+        totalAmount: "89.00",
+        subject: "赛夫严选",
+        timeoutExpress: "30m",
+      },
+    });
+    // 成功码 10000 + qr_code → success:true + qrCode
+    expect(result).toEqual({ success: true, qrCode: "https://qr.alipay.com/bax0451xyz" });
+  });
+
+  it("业务失败（code≠10000）→ success:false + 网关错误信息，不返回 qrCode", async () => {
+    const adapter = await loadAdapter();
+    vi.spyOn(AlipaySdk.prototype, "exec").mockResolvedValue({
+      code: "40004",
+      msg: "Business Failed",
+      sub_code: "isv.invalid-signature",
+    });
+
+    const result = await adapter.createPayment({
+      orderId: "order-1",
+      total: 8900,
+      subject: "赛夫严选",
+    });
+
+    expect(result).toEqual({ success: false, error: "40004 Business Failed" });
+  });
+
+  it("缺少 NEXT_PUBLIC_BASE_URL → success:false，不调 exec（notifyUrl 无法拼装）", async () => {
+    delete process.env.NEXT_PUBLIC_BASE_URL;
+    const adapter = await loadAdapter();
+    const execSpy = vi.spyOn(AlipaySdk.prototype, "exec");
+
+    const result = await adapter.createPayment({
+      orderId: "order-1",
+      total: 8900,
+      subject: "赛夫严选",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("NEXT_PUBLIC_BASE_URL");
+    expect(execSpy).not.toHaveBeenCalled();
+  });
+
+  it("支付宝未配置 → success:false 降级（不抛错）", async () => {
+    delete process.env.ALIPAY_APP_ID;
+    delete process.env.ALIPAY_PRIVATE_KEY;
+    delete process.env.ALIPAY_PUBLIC_KEY;
+
+    const adapter = await loadAdapter();
+    const result = await adapter.createPayment({
+      orderId: "order-1",
+      total: 8900,
+      subject: "赛夫严选",
+    });
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("支付宝未配置");

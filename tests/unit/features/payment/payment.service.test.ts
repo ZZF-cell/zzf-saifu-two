@@ -136,9 +136,9 @@ describe("createPayment — 订单校验与支付创建", () => {
     expect(adapterCreateMock).not.toHaveBeenCalled();
   });
 
-  it("成功路径 → 以订单快照金额/通用主题 + 剩余时间钳制的 timeoutExpress 调用 adapter", async () => {
+  it("成功路径 → 以订单快照金额/通用主题 + 剩余时间钳制的 timeoutExpress 调用 adapter，返回 qrCode", async () => {
     findUniqueMock.mockResolvedValue(pendingOrder());
-    adapterCreateMock.mockResolvedValue({ success: true, payUrl: "https://openapi-sandbox.alipay.com/gateway.do?...", tradeNo: "t-1" });
+    adapterCreateMock.mockResolvedValue({ success: true, qrCode: "https://qr.alipay.com/bax0451xyz", tradeNo: "t-1" });
 
     const result = await createPayment("user-1", "order-1");
 
@@ -149,7 +149,7 @@ describe("createPayment — 订单校验与支付创建", () => {
       subject: "赛夫严选",
       timeoutExpress: "30m", // 剩余充足时钳制到上限 30m（≤ 订单剩余时间，杜绝支付后到落空窗）
     });
-    expect(result).toEqual({ payUrl: "https://openapi-sandbox.alipay.com/gateway.do?..." });
+    expect(result).toEqual({ qrCode: "https://qr.alipay.com/bax0451xyz" });
   });
 
   it("支付宝未配置（adapter 失败）→ 抛 PAYMENT_FAILED，透传错误信息", async () => {
@@ -165,12 +165,12 @@ describe("createPayment — 订单校验与支付创建", () => {
     });
   });
 
-  it("adapter 成功但无 payUrl → 返回 { payUrl: null }（不抛错，下游降级）", async () => {
+  it("adapter 成功但无 qrCode → 返回 { qrCode: null }（不抛错，下游降级）", async () => {
     findUniqueMock.mockResolvedValue(pendingOrder());
     adapterCreateMock.mockResolvedValue({ success: true });
 
     const result = await createPayment("user-1", "order-1");
-    expect(result).toEqual({ payUrl: null });
+    expect(result).toEqual({ qrCode: null });
   });
 });
 
