@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
 
 vi.mock("@/shared/db/client", () => ({
   prisma: {
-    brand: { updateMany: vi.fn(), findUnique: vi.fn() },
+    brand: { updateMany: vi.fn(), findUnique: vi.fn(), delete: vi.fn() },
     product: { updateMany: vi.fn(), findUnique: vi.fn() },
     order: { updateMany: vi.fn(), findUnique: vi.fn() },
     user: { update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
@@ -46,6 +46,7 @@ import { restoreStock } from "@/features/orders";
 import { ERROR_CODES } from "@/shared/errors/errors";
 import {
   reviewBrand,
+  deleteBrand,
   reviewProduct,
   delistProduct,
   relistProduct,
@@ -66,7 +67,7 @@ import {
 // ── 交互事务 mock：$transaction(fn) 以 tx 对象调用 fn ──
 
 type Tx = {
-  brand: { updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
+  brand: { updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn> };
   product: { updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
   order: { updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
   user: { update: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
@@ -83,7 +84,7 @@ const transactionMock = prisma.$transaction as unknown as Mock<TransactionImpl>;
 beforeEach(() => {
   vi.clearAllMocks();
   tx = {
-    brand: { updateMany: vi.fn(), findUnique: vi.fn() },
+    brand: { updateMany: vi.fn(), findUnique: vi.fn(), delete: vi.fn() },
     product: { updateMany: vi.fn(), findUnique: vi.fn() },
     order: { updateMany: vi.fn(), findUnique: vi.fn() },
     user: { update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
@@ -109,7 +110,7 @@ describe("reviewBrand — 品牌入驻审核", () => {
       select: { ownerId: true },
     });
     expect(tx.brand.updateMany).toHaveBeenCalledWith({
-      where: { id: "brand-1", status: "PENDING" },
+      where: { id: "brand-1", status: { in: ["PENDING", "REJECTED"] } },
       data: { status: "APPROVED" },
     });
     expect(tx.user.update).toHaveBeenCalledWith({
@@ -170,6 +171,91 @@ describe("reviewBrand — 品牌入驻审核", () => {
     tx.user.update.mockRejectedValue(new Error("DB down"));
 
     await expect(reviewBrand("brand-1", "APPROVED", "admin-1")).rejects.toThrow("DB down");
+  });
+
+  it("REJECTED 品牌重审通过（改判错杀）→ 置 APPROVED + 负责人升级 BRAND 角色 + 审计日志", async () => {
+    tx.brand.findUnique.mockResolvedValue({ ownerId: "user-1" });
+    tx.brand.updateMany.mockResolvedValue({ count: 1 });
+
+    await reviewBrand("brand-3", "APPROVED", "admin-1");
+
+    expect(tx.brand.updateMany).toHaveBeenCalledWith({
+      where: { id: "brand-3", status: { in: ["PENDING", "REJECTED"] } },
+      data: { status: "APPROVED" },
+    });
+    expect(tx.user.update).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: { role: "BRAND" },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: { targetType: "Brand", targetId: "brand-3", action: "REVIEW_APPROVED", operatorId: "admin-1" },
+    });
+  });
+
+  it("REJECTED 品牌再次拒绝 → 409 BRAND_ALREADY_REVIEWED（守卫只放行 PENDING 拒绝）", async () => {
+    tx.brand.findUnique.mockResolvedValue({ ownerId: "user-1" });
+    // 模拟守卫：REJECTED 走 REJECTED 决策的 where={status:"PENDING"} → 0 行
+    tx.brand.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(reviewBrand("brand-3", "REJECTED", "admin-1")).rejects.toMatchObject({
+      code: ERROR_CODES.BRAND_ALREADY_REVIEWED.code,
+      statusCode: 409,
+    });
+    expect(tx.brand.updateMany).toHaveBeenCalledWith({
+      where: { id: "brand-3", status: "PENDING" },
+      data: { status: "REJECTED" },
+    });
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+});
+
+// ── 删除审核拒绝的品牌 ──
+
+describe("deleteBrand — 删除 REJECTED 品牌（删除后商家可重新入驻）", () => {
+  it("REJECTED 品牌 → 删除 + 审计日志（同事务）", async () => {
+    tx.brand.findUnique.mockResolvedValue({ status: "REJECTED" });
+    tx.brand.delete.mockResolvedValue({});
+
+    await deleteBrand("brand-3", "admin-1");
+
+    expect(tx.brand.findUnique).toHaveBeenCalledWith({
+      where: { id: "brand-3" },
+      select: { status: true },
+    });
+    expect(tx.brand.delete).toHaveBeenCalledWith({ where: { id: "brand-3" } });
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: { targetType: "Brand", targetId: "brand-3", action: "DELETE_BRAND", operatorId: "admin-1" },
+    });
+  });
+
+  it("非 REJECTED（PENDING 在审）→ 409 BRAND_NOT_DELETABLE，不删除不写审计", async () => {
+    tx.brand.findUnique.mockResolvedValue({ status: "PENDING" });
+
+    await expect(deleteBrand("brand-1", "admin-1")).rejects.toMatchObject({
+      code: ERROR_CODES.BRAND_NOT_DELETABLE.code,
+      statusCode: 409,
+    });
+    expect(tx.brand.delete).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("品牌不存在 → 404 BRAND_NOT_FOUND", async () => {
+    tx.brand.findUnique.mockResolvedValue(null);
+
+    await expect(deleteBrand("brand-x", "admin-1")).rejects.toMatchObject({
+      code: ERROR_CODES.BRAND_NOT_FOUND.code,
+      statusCode: 404,
+    });
+    expect(tx.brand.delete).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("删除失败（DB 异常）→ 整体抛错回滚", async () => {
+    tx.brand.findUnique.mockResolvedValue({ status: "REJECTED" });
+    tx.brand.delete.mockRejectedValue(new Error("DB down"));
+
+    await expect(deleteBrand("brand-3", "admin-1")).rejects.toThrow("DB down");
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
 });
 

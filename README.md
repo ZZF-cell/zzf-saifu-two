@@ -122,10 +122,10 @@ npx prisma db seed                 # 重新填充种子数据
 
 | 模块 | 状态 | 功能 | 技术实现 |
 |------|------|------|---------|
-| **管理后台** | ✅ 已完成 | 数据看板（统计卡可跳转 + 近 7 天销售/状态分布/品类分布图表）、品牌审核、商品质检（详情含品类质检清单 + 已提交证书「已交/缺」对照）、订单管理（发货/送达/完成/退款，行展示买家/收货人脱敏/件数）、用户管理（改角色/禁用启用/解锁/重置密码/清除年龄验证）、质检模板增删改 | `features/admin/`；所有状态变更用 `updateMany` 状态守卫（防并发重复操作），与审计日志在同一 `$transaction`（审计失败整体回滚，不留「状态已变但无审计」的账）；重复审核返回 409 区分「不存在」404；用户管理禁止操作自己（403） |
+| **管理后台** | ✅ 已完成 | 数据看板（统计卡可跳转 + 近 7 天销售/状态分布/品类分布图表）、品牌审核（待审/已拒绝状态筛选，可重审通过或删除）、商品质检（详情含品类质检清单 + 已提交证书「已交/缺」对照）、订单管理（发货/送达/完成/退款，行展示买家/收货人脱敏/件数）、用户管理（改角色/禁用启用/解锁/重置密码/清除年龄验证）、质检模板增删改 | `features/admin/`；所有状态变更用 `updateMany` 状态守卫（防并发重复操作），与审计日志在同一 `$transaction`（审计失败整体回滚，不留「状态已变但无审计」的账）；重复审核返回 409 区分「不存在」404；用户管理禁止操作自己（403） |
 | **品牌方后台** | ✅ 已完成 | 品牌概览、提交新商品（随附检测证书）、商品列表、订单查看、品牌资料 | `features/brand/`；品牌订单/销售额只聚合本品牌商品行（`OrderItem.price` 行总额之和，**price 已含 ×qty 不可再乘**），混合品牌订单不整单全额重复计入；品牌无商品时直接返回零统计，绝不查询全平台数据（防跨租户泄漏）；提交/编辑商品按品类 `CategoryAuditTemplate.requiredDocs` 展示必交材料清单，可上传证书（图片/PDF）随商品提交 |
 | **订单超时自动取消** | ✅ 已完成 | 下单 30 分钟未支付自动取消并回补库存 | `inngest/functions/order-timeout-cancel.ts`：`order/created` 事件 → `step.sleep(30min)` → `cancelExpiredOrder`（**updateMany 状态守卫先于回补库存**，防并发双重回补）；下单时用 `next/server` 的 `after()` 保证 serverless 中事件投递完成 |
-| **品牌入驻** | ✅ 已完成 | 管理员生成邀请码 → 品牌方激活 → 提交资料 → 审核 | `features/invite/`：激活=单事务原子消耗邀请码（`updateMany` 状态守卫含过期判断）+ 创建 PENDING 品牌；管理员审核通过时同事务将负责人升级为 BRAND 角色（品牌已过但角色未升是笔错账）；邀请码列表 EXPIRED 由 `expiresAt` 即时推导不落库 |
+| **品牌入驻** | ✅ 已完成 | 管理员生成邀请码 → 品牌方激活 → 提交资料 → 审核 | `features/invite/`：激活=单事务原子消耗邀请码（`updateMany` 状态守卫含过期判断）+ 创建 PENDING 品牌；管理员审核通过时同事务将负责人升级为 BRAND 角色（品牌已过但角色未升是笔错账）；邀请码列表 EXPIRED 由 `expiresAt` 即时推导不落库。**REJECTED 非死胡同**：品牌审核状态筛选含「已拒绝」，管理员可**重审通过**（改判错杀，`reviewBrand` 守卫放行 `PENDING`/`REJECTED` 的 APPROVED，但 REJECTED 不可再拒 409）或**删除品牌**（`DELETE /api/admin/brands/[id]`，仅 REJECTED 可删，其余状态 409 `BRAND_NOT_DELETABLE`）；删除后商家可用新邀请码重新入驻 |
 | **OSS 图片上传** | ✅ 已完成 | 商品/品牌图片 + 检测证书上传至阿里云 OSS（后端中转） | `features/upload/`：POST `/api/upload`（multipart + MIME 白名单，`purpose` 枚举 `product`/`brand`/`cert`；图片 ≤4MB、证书 PDF ≤10MB；未配置 OSS 返回 503）。`purpose=product`/`brand` 只收图片，`purpose=cert` 收图片 + PDF；`shared/adapters/oss.adapter.ts` 仿 payment 懒初始化 + 纯函数；`shared/ui/Image` 双源（OSS URL + base64）+ 统一占位图。Vercel 请求体上限 4.5MB → 图片限 ≤4MB；更大文件走 OSS 预签名直传（三期） |
 | **商品两级类目** | ✅ 已完成 | 大类+子类两级选择与筛选 | `shared/constants/product-categories.ts` 预设清单为唯一来源（改常量即可调整）；Product 增加 `subCategory` 字段（可空兼容旧数据）；品牌提交商品改为大类→子类级联下拉；首页两级筛选；详情/品牌后台/管理后台展示「大类/子类」 |
 | **商品生命周期** | ✅ 已完成 | 撤回待审 / 下架 / 重新上架 / 编辑（双方同状态机）+ 管理员完整审核详情 | `features/brand` 与 `features/admin` 同一套状态机（status 为 String 无需迁移）：`PENDING`→`WITHDRAWN`（品牌撤回）；`APPROVED`⇄`DELISTED`（品牌/管理员可做，重新上架不重质检）；编辑商品「基本信息变更→回 `PENDING` 重审、仅改运营信息（价格/库存）→直改」。**检测证书（`certificates`）属基本信息，仅改证书也会触发重审**。所有变更用 `updateMany` 状态守卫（含品牌侧 `brandId` 归属守卫，越权 403）+ `version:{increment:1}` + AuditLog（snapshot 存 before/after）；守卫 0 行二次 `findUnique` 区分 404/403/409。公开商品详情仅放行 `APPROVED`（DB 层过滤，下架/待审深链 404）。管理端 `GET /api/admin/products/[id]` 返回完整信息 + 品类质检清单 + 已提交证书，审核决策信息闭环 |
@@ -619,8 +619,8 @@ npm start
      │  ~15 条   │     （Vitest + Docker 本地 PG）
      └───────────┘
   ┌─────────────────┐
-  │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证（登录/验证码/补设密码/禁用门禁/Refresh Rotation 吊销）/管理（用户操作/退款回补库存）/品牌（证书）/邀请码/上传（PDF）/OSS 适配器服务层
-  │    ~260 条        │     （Vitest，mock Prisma 与 $transaction）
+  │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证（登录/验证码/补设密码/禁用门禁/Refresh Rotation 吊销）/管理（用户操作/退款回补库存/品牌重审与删除）/品牌（证书）/邀请码/上传（PDF）/OSS 适配器服务层
+  │    ~266 条        │     （Vitest，mock Prisma 与 $transaction）
   └─────────────────┘
 ```
 

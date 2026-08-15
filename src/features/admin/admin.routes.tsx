@@ -296,15 +296,19 @@ function BrandReviewTab() {
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [statusFilter, setStatusFilter] = useState("PENDING");
 
   const fetchBrands = useCallback(async () => {
     try {
-      const data = await apiCall("GET", "/api/admin/brands?status=PENDING");
+      const data = await apiCall(
+        "GET",
+        `/api/admin/brands${statusFilter ? `?status=${statusFilter}` : ""}`,
+      );
       setBrands(data.items || []);
     } catch { /* 静默 */ } finally {
       setLoading(false);
     }
-  }, []);
+  }, [statusFilter]);
 
   useEffect(() => { fetchBrands(); }, [fetchBrands]);
 
@@ -321,40 +325,100 @@ function BrandReviewTab() {
     }
   };
 
+  const handleDelete = async (id: string) => {
+    if (!window.confirm("删除后该品牌方可用新邀请码重新入驻，确认删除？")) return;
+    setActing(id);
+    setError("");
+    try {
+      await apiCall("DELETE", `/api/admin/brands/${id}`);
+      setBrands((prev) => prev.filter((b) => b.id !== id));
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "操作失败");
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const switchFilter = (s: string) => {
+    setLoading(true);
+    setStatusFilter(s);
+  };
+
   if (loading) {
     return <div className="h-32 animate-pulse rounded-xl bg-gray-100" />;
   }
 
   return (
     <div className="space-y-3">
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {["PENDING", "REJECTED", ""].map((s) => (
+          <button
+            key={s}
+            onClick={() => switchFilter(s)}
+            className={`shrink-0 rounded-full px-4 py-2 text-sm transition ${
+              statusFilter === s
+                ? "bg-primary text-white"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            {STATUS_LABEL[s] || "全部"}
+          </button>
+        ))}
+      </div>
       {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
       {brands.length === 0 ? (
-        <div className="py-12 text-center text-gray-400">暂无待审核品牌</div>
+        <div className="py-12 text-center text-gray-400">
+          {statusFilter ? "该状态下暂无品牌" : "暂无品牌"}
+        </div>
       ) : (
         brands.map((b) => (
           <div key={b.id} className="flex items-center justify-between rounded-2xl border border-gray-100 p-5">
             <div className="min-w-0">
-              <p className="text-base font-semibold text-gray-900">{b.name}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-base font-semibold text-gray-900">{b.name}</p>
+                <StatusBadge status={b.status} />
+              </div>
               <p className="mt-0.5 text-sm text-gray-400">
                 入驻码 {b.inviteCode} · 商品 {b.productCount} 个
                 {b.ownerNickname ? ` · 负责人 ${b.ownerNickname}` : ""}
               </p>
             </div>
             <div className="flex shrink-0 gap-2">
-              <button
-                onClick={() => handleReview(b.id, "APPROVED")}
-                disabled={acting === b.id}
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
-              >
-                通过
-              </button>
-              <button
-                onClick={() => handleReview(b.id, "REJECTED")}
-                disabled={acting === b.id}
-                className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
-              >
-                拒绝
-              </button>
+              {b.status === "REJECTED" ? (
+                <>
+                  <button
+                    onClick={() => handleReview(b.id, "APPROVED")}
+                    disabled={acting === b.id}
+                    className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                  >
+                    重审通过
+                  </button>
+                  <button
+                    onClick={() => handleDelete(b.id)}
+                    disabled={acting === b.id}
+                    className="rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+                  >
+                    删除品牌
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => handleReview(b.id, "APPROVED")}
+                    disabled={acting === b.id}
+                    className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                  >
+                    通过
+                  </button>
+                  <button
+                    onClick={() => handleReview(b.id, "REJECTED")}
+                    disabled={acting === b.id}
+                    className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    拒绝
+                  </button>
+                </>
+              )}
             </div>
           </div>
         ))

@@ -89,6 +89,19 @@ export function reviewBrand(req: Request, ctx: { params: Promise<{ id: string }>
   return handleReview(req, ctx, adminService.reviewBrand);
 }
 
+// ── 删除审核拒绝的品牌（仅 REJECTED；删除后商家可重新用新邀请码入驻） ──
+
+export async function deleteBrand(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    const admin = await requireRole(req, ["ADMIN"]);
+    const { id } = await ctx.params;
+    await adminService.deleteBrand(id, admin.userId);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
 // ── 商品质检 ──
 
 export async function getProducts(req: Request) {

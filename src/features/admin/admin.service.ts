@@ -49,16 +49,21 @@ export async function reviewBrand(
       throw new AppError(ERROR_CODES.BRAND_NOT_FOUND, "品牌不存在");
     }
 
-    // 仅 PENDING 品牌可审核（状态守卫，防重复审核）
+    // 状态守卫（防重复审核）：PENDING 可审（通过/拒绝）；REJECTED 仅可重审通过（改判错杀），不可再次拒绝
     const updated = await tx.brand.updateMany({
-      where: { id: brandId, status: "PENDING" },
+      where: {
+        id: brandId,
+        ...(decision === "APPROVED"
+          ? { status: { in: ["PENDING", "REJECTED"] } }
+          : { status: "PENDING" }),
+      },
       data: { status: decision },
     });
     if (updated.count === 0) {
       throw new AppError(ERROR_CODES.BRAND_ALREADY_REVIEWED, "品牌已被审核");
     }
 
-    // 审核通过 → 负责人升级 BRAND 角色（同事务：品牌已过但角色未升是笔错账）
+    // 审核通过（含 REJECTED 重审）→ 负责人升级 BRAND 角色（同事务：品牌已过但角色未升是笔错账）
     if (decision === "APPROVED") {
       await tx.user.update({
         where: { id: brand.ownerId },
@@ -67,6 +72,25 @@ export async function reviewBrand(
     }
 
     await writeAuditLog(tx, "Brand", brandId, `REVIEW_${decision}`, operatorId);
+  });
+}
+
+/** 删除审核拒绝的品牌（仅 REJECTED）：
+ *  品牌方在审核通过前无 BRAND 角色、无商品，删除安全；删除后 ownerId 释放，
+ *  商家可重新用新邀请码走入驻流程（材料需大改重做的出路） */
+export async function deleteBrand(brandId: string, operatorId: string): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const brand = await tx.brand.findUnique({
+      where: { id: brandId },
+      select: { status: true },
+    });
+    if (!brand) throw new AppError(ERROR_CODES.BRAND_NOT_FOUND, "品牌不存在");
+    // 仅 REJECTED 可删除：PENDING 在审、APPROVED 在营（有商品/订单），删除会误伤
+    if (brand.status !== "REJECTED") {
+      throw new AppError(ERROR_CODES.BRAND_NOT_DELETABLE, "仅审核拒绝的品牌可删除");
+    }
+    await tx.brand.delete({ where: { id: brandId } });
+    await writeAuditLog(tx, "Brand", brandId, "DELETE_BRAND", operatorId);
   });
 }
 
