@@ -11,6 +11,7 @@ vi.mock("@/shared/db/client", () => ({
   prisma: {
     brand: { findUnique: vi.fn(), update: vi.fn() },
     product: { create: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
+    categoryAuditTemplate: { findUnique: vi.fn() },
     auditLog: { create: vi.fn() },
     $transaction: vi.fn(),
   },
@@ -219,6 +220,64 @@ describe("submitProduct — 品牌提交商品", () => {
     ).rejects.toMatchObject({ code: ERROR_CODES.FORBIDDEN.code });
     expect(prisma.product.create).not.toHaveBeenCalled();
   });
+
+  it("该品类模板声明 requiredDocs 但未传证书 → 422 VALIDATION_ERROR，不创建（服务端强制 #10）", async () => {
+    vi.mocked(prisma.brand.findUnique).mockResolvedValue({ status: "APPROVED" } as never);
+    // 品类模板声明必交材料（绕过前端直调 API 也拦得住）
+    vi.mocked(prisma.categoryAuditTemplate.findUnique).mockResolvedValue({
+      requiredDocs: ["生产许可证", "检测报告"],
+    } as never);
+
+    await expect(
+      submitProduct("brand-1", {
+        name: "无证商品",
+        category: "成人计生用品",
+        subCategory: "安全套",
+        price: 10,
+        stock: 1,
+      }),
+    ).rejects.toMatchObject({
+      code: ERROR_CODES.VALIDATION_ERROR.code,
+    });
+    expect(prisma.product.create).not.toHaveBeenCalled();
+  });
+
+  it("requiredDocs 非空 + 已传证书 → 校验通过正常创建", async () => {
+    vi.mocked(prisma.brand.findUnique).mockResolvedValue({ status: "APPROVED" } as never);
+    vi.mocked(prisma.categoryAuditTemplate.findUnique).mockResolvedValue({
+      requiredDocs: ["检测报告"],
+    } as never);
+    vi.mocked(prisma.product.create).mockResolvedValue({ id: "product-1" } as never);
+
+    const result = await submitProduct("brand-1", {
+      name: "带证商品",
+      category: "成人计生用品",
+      subCategory: "安全套",
+      price: 10,
+      stock: 1,
+      certificates: [{ url: "https://img.example.com/cert/a.pdf", name: "检测报告.pdf", mime: "application/pdf" }],
+    });
+
+    expect(result).toEqual({ id: "product-1" });
+    expect(prisma.product.create).toHaveBeenCalled();
+  });
+
+  it("requiredDocs 为 null（无模板）→ 不强制证书，正常创建", async () => {
+    vi.mocked(prisma.brand.findUnique).mockResolvedValue({ status: "APPROVED" } as never);
+    vi.mocked(prisma.categoryAuditTemplate.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.product.create).mockResolvedValue({ id: "product-1" } as never);
+
+    const result = await submitProduct("brand-1", {
+      name: "无模板商品",
+      category: "自由品类",
+      subCategory: "子类",
+      price: 10,
+      stock: 1,
+    });
+
+    expect(result).toEqual({ id: "product-1" });
+    expect(prisma.product.create).toHaveBeenCalled();
+  });
 });
 
 // ── 更新品牌资料 ──
@@ -346,7 +405,7 @@ describe("relistProduct — 品牌重新上架（DELISTED → APPROVED，不重�
   });
 });
 
-describe("updateProduct — 品牌编辑商品（归属守卫 + 状态机）", () => {
+describe("updateProduct — 品牌编辑商品（归属守卫 + version 乐观锁 + 状态机）", () => {
   const baseOld = {
     id: "product-1",
     brandId: "brand-1",
@@ -358,6 +417,7 @@ describe("updateProduct — 品牌编辑商品（归属守卫 + 状态机）", (
     certificates: [],
     specs: {},
     status: "APPROVED",
+    version: 0,
   };
 
   it("改基本信息（name）→ 回 PENDING 重审 + 审计 PRODUCT_UPDATE_REVIEW", async () => {
@@ -367,8 +427,9 @@ describe("updateProduct — 品牌编辑商品（归属守卫 + 状态机）", (
     const result = await updateProduct("brand-1", "product-1", { name: "静音震动器 Pro" }, "user-1");
 
     expect(result).toEqual({ id: "product-1", status: "PENDING" });
+    // #8 乐观锁守卫：where 必须带读到的 version，防并发丢失更新
     expect(tx.product.updateMany).toHaveBeenCalledWith({
-      where: { id: "product-1", brandId: "brand-1", status: "APPROVED" },
+      where: { id: "product-1", brandId: "brand-1", status: "APPROVED", version: 0 },
       data: { name: "静音震动器 Pro", status: "PENDING", version: { increment: 1 } },
     });
     expect(tx.auditLog.create).toHaveBeenCalledWith({
@@ -393,7 +454,7 @@ describe("updateProduct — 品牌编辑商品（归属守卫 + 状态机）", (
 
     expect(result).toEqual({ id: "product-1", status: "PENDING" });
     expect(tx.product.updateMany).toHaveBeenCalledWith({
-      where: { id: "product-1", brandId: "brand-1", status: "APPROVED" },
+      where: { id: "product-1", brandId: "brand-1", status: "APPROVED", version: 0 },
       data: expect.objectContaining({
         certificates: [
           { url: "https://img.example.com/cert/new.pdf", name: "新质检报告.pdf", mime: "application/pdf" },
@@ -415,7 +476,7 @@ describe("updateProduct — 品牌编辑商品（归属守卫 + 状态机）", (
 
     expect(result).toEqual({ id: "product-1", status: "APPROVED" });
     expect(tx.product.updateMany).toHaveBeenCalledWith({
-      where: { id: "product-1", brandId: "brand-1", status: "APPROVED" },
+      where: { id: "product-1", brandId: "brand-1", status: "APPROVED", version: 0 },
       data: { price: 19900, version: { increment: 1 } },
     });
     expect(tx.auditLog.create).toHaveBeenCalledWith({
@@ -463,6 +524,31 @@ describe("updateProduct — 品牌编辑商品（归属守卫 + 状态机）", (
 
     await expect(
       updateProduct("brand-1", "product-1", { name: "并发改动" }, "user-1"),
+    ).rejects.toMatchObject({
+      code: ERROR_CODES.PRODUCT_STATUS_INVALID.code,
+    });
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("PENDING 商品 → 409 PRODUCT_STATUS_INVALID 禁编（#9），必须先撤回", async () => {
+    tx.product.findUnique.mockResolvedValue({ ...baseOld, status: "PENDING" });
+
+    await expect(
+      updateProduct("brand-1", "product-1", { stock: 10 }, "user-1"),
+    ).rejects.toMatchObject({
+      code: ERROR_CODES.PRODUCT_STATUS_INVALID.code,
+    });
+    // 禁编在写入前拦截：不改库、不写审计
+    expect(tx.product.updateMany).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("并发写已 bump version（old.version 陈旧）→ where 命中 0 行 → 409，防丢失更新（#8）", async () => {
+    tx.product.findUnique.mockResolvedValue(baseOld); // 读到 version 0
+    tx.product.updateMany.mockResolvedValue({ count: 0 }); // 库中已是 version 1 → 守卫拦截
+
+    await expect(
+      updateProduct("brand-1", "product-1", { price: 299 }, "user-1"),
     ).rejects.toMatchObject({
       code: ERROR_CODES.PRODUCT_STATUS_INVALID.code,
     });

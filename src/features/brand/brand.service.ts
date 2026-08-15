@@ -26,6 +26,12 @@ export interface SubmitProductInput {
   certificates?: ProductCertificate[]; // 随商品提交的检测证书（图片/PDF）
 }
 
+/** 把模板 requiredDocs（Json，可能为 null/非数组）归一化为 string[] */
+function strList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((v): v is string => typeof v === "string");
+}
+
 export async function submitProduct(
   brandId: string,
   input: SubmitProductInput,
@@ -37,6 +43,20 @@ export async function submitProduct(
   if (!brand) throw new AppError(ERROR_CODES.BRAND_NOT_FOUND, "品牌不存在");
   if (brand.status !== "APPROVED") {
     throw new AppError(ERROR_CODES.FORBIDDEN, "品牌审核通过后才能提交商品");
+  }
+
+  // requiredDocs 服务端强制（#10）：该品类模板声明了必交材料则证书必须非空——
+  // 绕过前端直接调 API 也交不了无证书商品（提交凭证是质检前置，不能只靠 UI）
+  const template = await prisma.categoryAuditTemplate.findUnique({
+    where: { categoryId: input.category },
+    select: { requiredDocs: true },
+  });
+  const requiredDocs = template ? strList(template.requiredDocs) : [];
+  if (requiredDocs.length > 0 && (input.certificates ?? []).length === 0) {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      `该品类必须提交检测证书：${requiredDocs.join("、")}`,
+    );
   }
 
   const product = await prisma.product.create({
@@ -189,10 +209,20 @@ export async function updateProduct(
         certificates: true,
         specs: true,
         status: true,
+        version: true,
       },
     });
     if (!old) throw new AppError(ERROR_CODES.PRODUCT_NOT_FOUND, "商品不存在");
     if (old.brandId !== brandId) throw new AppError(ERROR_CODES.BRAND_NOT_OWNED, "无权操作该商品");
+
+    // PENDING 禁编：商品在审中，静默改会与管理员质检看到的内容错位（#9）——
+    // 必须先撤回（WITHDRAWN）再编辑重交，杜绝「编辑在审商品」绕过质检流程
+    if (old.status === "PENDING") {
+      throw new AppError(
+        ERROR_CODES.PRODUCT_STATUS_INVALID,
+        "商品质检中，暂不可编辑（请先撤回）",
+      );
+    }
 
     const basicChanged = basicInfoChanged(old, input);
     let nextStatus = old.status;
@@ -220,13 +250,15 @@ export async function updateProduct(
       version: { increment: 1 },
     };
 
-    // 守卫 status: old.status + brandId：读后并发变更/越权写入整体失败
+    // 乐观锁守卫 version: old.version + status: old.status + brandId：
+    // 任一并发写已 increment version → 命中 0 行整体失败（#8），
+    // 杜绝「两次并发编辑都过 status 守卫、后写覆盖先写」丢失更新
     const updated = await tx.product.updateMany({
-      where: { id: productId, brandId, status: old.status },
+      where: { id: productId, brandId, status: old.status, version: old.version },
       data,
     });
     if (updated.count === 0) {
-      throw new AppError(ERROR_CODES.PRODUCT_STATUS_INVALID, "商品状态已变更，请刷新后重试");
+      throw new AppError(ERROR_CODES.PRODUCT_STATUS_INVALID, "商品已被他人更新，请刷新后重试");
     }
 
     await writeAuditLog(tx, "Product", productId, action, operatorId, {
