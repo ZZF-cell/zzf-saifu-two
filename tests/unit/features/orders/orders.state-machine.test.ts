@@ -5,6 +5,7 @@ import {
   isCancellable,
   isRefundable,
   isPayable,
+  isConfirmable,
   isDestroyable,
   assertTransition,
   getAllowedTransitions,
@@ -135,6 +136,21 @@ describe("isPayable — 是否可被支付回调标记为PAID", () => {
     expect(isPayable("PAID")).toBe(false);
     expect(isPayable("CANCELLED")).toBe(false);
     expect(isPayable("COMPLETED")).toBe(false);
+  });
+});
+
+// ── isConfirmable ──
+
+describe("isConfirmable — 是否可确认收货", () => {
+  it("仅 DELIVERED 可确认收货", () => {
+    expect(isConfirmable("DELIVERED")).toBe(true);
+    expect(isConfirmable("PENDING")).toBe(false);
+    expect(isConfirmable("PAID")).toBe(false);
+    expect(isConfirmable("SHIPPED")).toBe(false);
+    expect(isConfirmable("COMPLETED")).toBe(false);
+    expect(isConfirmable("CANCELLED")).toBe(false);
+    expect(isConfirmable("REFUND_REQUESTED")).toBe(false);
+    expect(isConfirmable("REFUNDED")).toBe(false);
   });
 });
 
