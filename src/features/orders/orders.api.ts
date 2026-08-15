@@ -1,7 +1,7 @@
 // 订单 API Route Handlers（需登录）
 import { NextResponse, after } from "next/server";
 import { z } from "zod";
-import { withValidation, apiError } from "@/shared/utils/api";
+import { withValidation, apiError, parsePagination } from "@/shared/utils/api";
 import { authenticate } from "@/shared/api/auth";
 import { verifyNotifySignature } from "@/features/payment";
 import { yuanToFen } from "@/shared/utils/money";
@@ -61,9 +61,9 @@ const createOrderSchema = z.object({
 export async function getOrders(req: Request) {
   try {
     const userId = await authenticate(req);
-    const url = new URL(req.url);
-    const page = parseInt(url.searchParams.get("page") || "1") || 1;
-    const pageSize = parseInt(url.searchParams.get("pageSize") || "20") || 20;
+    // #15 分页上限钳制：改用 parsePagination（pageSize 封顶 100），
+    // 杜绝 pageSize=100000 拖垮 DB（此前是手动 parseInt 无上限）
+    const { page, pageSize } = parsePagination(new URL(req.url));
     const list = await ordersQueries.getOrderList(userId, page, pageSize);
     return NextResponse.json(list);
   } catch (error) {

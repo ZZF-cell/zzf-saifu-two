@@ -223,19 +223,33 @@ export function ProductDetailPage({ id }: { id: string }) {
   const [product, setProduct] = useState<ProductDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedImage, setSelectedImage] = useState(0);
+  // #11 加购失败提示：库存不足/已下架/网络异常都给出可见反馈，而非静默失败
+  const [addError, setAddError] = useState("");
+  // #12 请求序号守卫：快速切换商品时丢弃晚到的旧响应 + 清理时 abort，
+  // 杜绝旧商品数据覆盖新商品（详情页内容闪跳/错乱）
+  const reqSeq = useRef(0);
 
   useEffect(() => {
-    fetch(`/api/products/${id}`)
+    const seq = ++reqSeq.current;
+    const controller = new AbortController();
+    fetch(`/api/products/${id}`, { signal: controller.signal })
       .then((res) => res.json())
       .then((data) => {
+        if (seq !== reqSeq.current) return; // 旧响应丢弃
         if (data.error) {
           router.push("/");
           return;
         }
         setProduct(data);
       })
-      .catch(() => router.push("/"))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        // 主动 abort（id 变化清理触发）不算网络错误，不跳首页
+        if (err.name !== "AbortError" && seq === reqSeq.current) router.push("/");
+      })
+      .finally(() => {
+        if (seq === reqSeq.current) setLoading(false);
+      });
+    return () => controller.abort();
   }, [id, router]);
 
   if (loading) {
@@ -340,27 +354,42 @@ export function ProductDetailPage({ id }: { id: string }) {
 
       {/* 底部操作栏 */}
       <div className="fixed bottom-0 left-0 right-0 border-t bg-white px-4 py-3">
-        <div className="mx-auto flex max-w-2xl gap-3">
-          <button
-            onClick={() => {
-              // apiFetch：未登录/401 自动刷新 Token；Refresh 失效时自行跳登录页
-              apiFetch("/api/cart", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ productId: product.id, qty: 1 }),
-              })
-                .then((res) => res.json())
-                .then((data) => {
-                  if (data.success) router.push("/cart");
-                  else if (data.error === "UNAUTHORIZED") router.push("/login");
+        <div className="mx-auto max-w-2xl">
+          {/* 加购失败提示（#11）：库存不足/已下架/网络异常均可见 */}
+          {addError && (
+            <p className="mb-2 text-center text-sm text-red-500">{addError}</p>
+          )}
+          <div className="flex gap-3">
+            <button
+              onClick={() => {
+                setAddError("");
+                // apiFetch：未登录/401 自动刷新 Token；Refresh 失效时自行跳登录页
+                apiFetch("/api/cart", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ productId: product.id, qty: 1 }),
                 })
-                .catch(() => {});
-            }}
-            disabled={product.stock === 0}
-            className="flex-1 rounded-lg bg-primary py-3 text-center text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
-          >
-            {product.stock === 0 ? "已售罄" : "加入购物车"}
-          </button>
+                  .then((res) => res.json())
+                  .then((data) => {
+                    if (data.success) {
+                      router.push("/cart");
+                      return;
+                    }
+                    if (data.error === "UNAUTHORIZED") {
+                      router.push("/login");
+                      return;
+                    }
+                    // 其余失败（STOCK_CONFLICT 库存不足等）展示后端 message
+                    setAddError(data.message || "加入购物车失败，请稍后重试");
+                  })
+                  .catch(() => setAddError("网络异常，加入购物车失败"));
+              }}
+              disabled={product.stock === 0}
+              className="flex-1 rounded-lg bg-primary py-3 text-center text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+            >
+              {product.stock === 0 ? "已售罄" : "加入购物车"}
+            </button>
+          </div>
         </div>
       </div>
     </main>
