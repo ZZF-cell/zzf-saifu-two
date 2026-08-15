@@ -3,7 +3,7 @@
 // 状态变更与审计日志在同一 $transaction 内：审计失败则整体回滚，绝不出现「状态已变但无审计留痕」
 import { prisma } from "@/shared/db/client";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
-import { ORDER_STATUS } from "@/features/orders";
+import { ORDER_STATUS, restoreStock } from "@/features/orders";
 import { yuanToFen } from "@/shared/utils/money";
 import { hashPassword } from "@/shared/utils/crypto";
 import type { Prisma } from "@prisma/client";
@@ -313,6 +313,13 @@ export async function completeOrder(orderId: string, operatorId: string): Promis
  */
 export async function confirmRefund(orderId: string, operatorId: string): Promise<void> {
   await prisma.$transaction(async (tx) => {
+    // 同事务读订单行（退款需回补库存/回减销量）；不存在 → 404 区分「状态不符」
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      select: { items: { select: { productId: true, qty: true } } },
+    });
+    if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
+
     const updated = await tx.order.updateMany({
       where: { id: orderId, status: ORDER_STATUS.REFUND_REQUESTED },
       data: { status: ORDER_STATUS.REFUNDED, refundedAt: new Date() },
@@ -320,6 +327,10 @@ export async function confirmRefund(orderId: string, operatorId: string): Promis
     if (updated.count === 0) {
       throw new AppError(ERROR_CODES.ORDER_STATUS_INVALID, "仅退款申请中的订单可确认退款");
     }
+
+    // 退款成立 → 回补库存/回减销量（与取消订单同一逻辑；同事务内，守卫失败整体回滚，绝不回补未退款订单）
+    await restoreStock(tx, order.items);
+
     await writeAuditLog(tx, "Order", orderId, "REFUND_CONFIRMED", operatorId);
   });
 }
@@ -477,6 +488,10 @@ export async function setUserStatus(
     if (updated.count === 0) {
       throw new AppError(ERROR_CODES.INTERNAL_ERROR, "用户状态已变更，请刷新后重试");
     }
+    // 禁用立即吊销该用户全部 refresh token（已有会话一并失效，杜绝 refresh 续期）
+    if (status === "DISABLED") {
+      await tx.refreshToken.deleteMany({ where: { userId } });
+    }
     await writeAuditLog(tx, "User", userId, status === "DISABLED" ? "USER_DISABLED" : "USER_ENABLED", operatorId, {
       before: target.status,
       after: status,
@@ -518,6 +533,8 @@ export async function resetPassword(
       where: { id: userId },
       data: { passwordHash, failedLoginAttempts: 0, lockUntil: null },
     });
+    // 重置密码同时吊销全部会话：攻击者持有的旧 refresh token 无法再轮换出新 access token
+    await tx.refreshToken.deleteMany({ where: { userId } });
     await writeAuditLog(tx, "User", userId, "PASSWORD_RESET", operatorId);
   });
   return { tempPassword };

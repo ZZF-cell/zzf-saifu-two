@@ -14,18 +14,19 @@ vi.mock("@/shared/db/client", () => ({
   prisma: {
     brand: { updateMany: vi.fn(), findUnique: vi.fn() },
     product: { updateMany: vi.fn(), findUnique: vi.fn() },
-    order: { updateMany: vi.fn() },
+    order: { updateMany: vi.fn(), findUnique: vi.fn() },
     user: { update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
     inviteCode: { create: vi.fn() },
     auditLog: { create: vi.fn() },
     categoryAuditTemplate: { upsert: vi.fn(), deleteMany: vi.fn() },
+    refreshToken: { deleteMany: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
 
-// admin.service 从 @/features/orders 引入 ORDER_STATUS；
+// admin.service 从 @/features/orders 引入 ORDER_STATUS / restoreStock；
 // 直接走 feature index 会经过 orders.routes → next/navigation（node 环境不可用），
-// 故 mock 该模块仅提供常量，与实际 state-machine 值保持一致
+// 故 mock 该模块仅提供常量与恢复库存函数，与实际实现保持一致
 vi.mock("@/features/orders", () => ({
   ORDER_STATUS: {
     PENDING: "PENDING",
@@ -37,9 +38,11 @@ vi.mock("@/features/orders", () => ({
     REFUND_REQUESTED: "REFUND_REQUESTED",
     REFUNDED: "REFUNDED",
   },
+  restoreStock: vi.fn(),
 }));
 
 import { prisma } from "@/shared/db/client";
+import { restoreStock } from "@/features/orders";
 import { ERROR_CODES } from "@/shared/errors/errors";
 import {
   reviewBrand,
@@ -65,11 +68,12 @@ import {
 type Tx = {
   brand: { updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
   product: { updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
-  order: { updateMany: ReturnType<typeof vi.fn> };
+  order: { updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
   user: { update: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
   inviteCode: { create: ReturnType<typeof vi.fn> };
   auditLog: { create: ReturnType<typeof vi.fn> };
   categoryAuditTemplate: { upsert: ReturnType<typeof vi.fn>; deleteMany: ReturnType<typeof vi.fn> };
+  refreshToken: { deleteMany: ReturnType<typeof vi.fn> };
 };
 
 let tx: Tx;
@@ -81,11 +85,12 @@ beforeEach(() => {
   tx = {
     brand: { updateMany: vi.fn(), findUnique: vi.fn() },
     product: { updateMany: vi.fn(), findUnique: vi.fn() },
-    order: { updateMany: vi.fn() },
+    order: { updateMany: vi.fn(), findUnique: vi.fn() },
     user: { update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
     inviteCode: { create: vi.fn() },
     auditLog: { create: vi.fn() },
     categoryAuditTemplate: { upsert: vi.fn(), deleteMany: vi.fn() },
+    refreshToken: { deleteMany: vi.fn() },
   };
   transactionMock.mockImplementation((fn: (tx: Tx) => Promise<unknown>) => fn(tx));
 });
@@ -500,7 +505,13 @@ describe("completeOrder — 完成（DELIVERED → COMPLETED）", () => {
 // ── 确认退款 ──
 
 describe("confirmRefund — 确认退款（REFUND_REQUESTED → REFUNDED）", () => {
-  it("退款中订单 → 置 REFUNDED + refundedAt + 审计日志", async () => {
+  it("退款中订单 → 置 REFUNDED + 回补库存/回减销量 + refundedAt + 审计日志", async () => {
+    tx.order.findUnique.mockResolvedValue({
+      items: [
+        { productId: "p1", qty: 2 },
+        { productId: "p2", qty: 1 },
+      ],
+    });
     tx.order.updateMany.mockResolvedValue({ count: 1 });
 
     await confirmRefund("order-1", "admin-1");
@@ -509,17 +520,34 @@ describe("confirmRefund — 确认退款（REFUND_REQUESTED → REFUNDED）", ()
       where: { id: "order-1", status: "REFUND_REQUESTED" },
       data: { status: "REFUNDED", refundedAt: expect.any(Date) },
     });
+    // 退款成立 → 同事务回补库存（复用订单模块 restoreStock，防库存永久偏低）
+    expect(restoreStock).toHaveBeenCalledWith(tx, [
+      { productId: "p1", qty: 2 },
+      { productId: "p2", qty: 1 },
+    ]);
     expect(tx.auditLog.create).toHaveBeenCalledWith({
       data: { targetType: "Order", targetId: "order-1", action: "REFUND_CONFIRMED", operatorId: "admin-1" },
     });
   });
 
-  it("非退款中订单（守卫 0 行）→ 抛 ORDER_STATUS_INVALID", async () => {
+  it("订单不存在 → 404 ORDER_NOT_FOUND，不触发状态更新", async () => {
+    tx.order.findUnique.mockResolvedValue(null);
+
+    await expect(confirmRefund("order-x", "admin-1")).rejects.toMatchObject({
+      code: ERROR_CODES.ORDER_NOT_FOUND.code,
+    });
+    expect(tx.order.updateMany).not.toHaveBeenCalled();
+    expect(restoreStock).not.toHaveBeenCalled();
+  });
+
+  it("非退款中订单（守卫 0 行）→ 抛 ORDER_STATUS_INVALID，不回补库存不写审计", async () => {
+    tx.order.findUnique.mockResolvedValue({ items: [{ productId: "p1", qty: 1 }] });
     tx.order.updateMany.mockResolvedValue({ count: 0 });
 
     await expect(confirmRefund("order-x", "admin-1")).rejects.toMatchObject({
       code: ERROR_CODES.ORDER_STATUS_INVALID.code,
     });
+    expect(restoreStock).not.toHaveBeenCalled();
     expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
 });
@@ -625,7 +653,7 @@ describe("setUserRole — 改角色", () => {
 });
 
 describe("setUserStatus — 禁用/启用", () => {
-  it("禁用成功 + 审计 USER_DISABLED", async () => {
+  it("禁用成功 + 审计 USER_DISABLED + 吊销该用户全部 refresh token", async () => {
     tx.user.findUnique.mockResolvedValue({ role: "USER", status: "ACTIVE", lockUntil: null, ageVerified: false });
     tx.user.updateMany.mockResolvedValue({ count: 1 });
 
@@ -635,6 +663,8 @@ describe("setUserStatus — 禁用/启用", () => {
       where: { id: "user-1", status: "ACTIVE" },
       data: { status: "DISABLED" },
     });
+    // 禁用立即吊销全部会话（防 refresh 续期维持权限）
+    expect(tx.refreshToken.deleteMany).toHaveBeenCalledWith({ where: { userId: "user-1" } });
     expect(tx.auditLog.create).toHaveBeenCalledWith({
       data: {
         targetType: "User",
@@ -644,6 +674,15 @@ describe("setUserStatus — 禁用/启用", () => {
         snapshot: { before: "ACTIVE", after: "DISABLED" },
       },
     });
+  });
+
+  it("启用（ACTIVE）不吊销会话", async () => {
+    tx.user.findUnique.mockResolvedValue({ role: "USER", status: "DISABLED", lockUntil: null, ageVerified: false });
+    tx.user.updateMany.mockResolvedValue({ count: 1 });
+
+    await setUserStatus("user-1", "ACTIVE", "admin-1");
+
+    expect(tx.refreshToken.deleteMany).not.toHaveBeenCalled();
   });
 
   it("禁用自己 → 403", async () => {
@@ -697,7 +736,7 @@ describe("unlockUser — 解锁", () => {
 });
 
 describe("resetPassword — 重置密码", () => {
-  it("成功 → 覆盖 scrypt 哈希 + 解锁 + 返回临时密码 + 审计", async () => {
+  it("成功 → 覆盖 scrypt 哈希 + 解锁 + 吊销全部会话 + 返回临时密码 + 审计", async () => {
     tx.user.findUnique.mockResolvedValue({ role: "USER", status: "ACTIVE", lockUntil: null, ageVerified: false });
     tx.user.updateMany.mockResolvedValue({ count: 1 });
 
@@ -712,6 +751,8 @@ describe("resetPassword — 重置密码", () => {
         lockUntil: null,
       },
     });
+    // 重置密码同时吊销全部会话：攻击者旧 refresh token 无法再轮换
+    expect(tx.refreshToken.deleteMany).toHaveBeenCalledWith({ where: { userId: "user-1" } });
     expect(tx.auditLog.create).toHaveBeenCalledWith({
       data: { targetType: "User", targetId: "user-1", action: "PASSWORD_RESET", operatorId: "admin-1" },
     });
