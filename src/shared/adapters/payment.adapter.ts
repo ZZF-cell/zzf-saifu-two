@@ -10,7 +10,7 @@
 // 服务器时区不可控（Vercel 是 UTC），故必须显式传入北京时间，覆盖 SDK 默认。
 
 import AlipaySdk from "alipay-sdk";
-import { fenToYuan } from "@/shared/utils/money";
+import { fenToYuan, yuanToFen } from "@/shared/utils/money";
 
 /**
  * 生成北京时间（UTC+8）的 `YYYY-MM-DD HH:mm:ss` 字符串
@@ -48,9 +48,29 @@ export interface CreatePaymentResult {
   error?: string;
 }
 
+export interface QueryPaymentParams {
+  outTradeNo: string;
+}
+
+export interface QueryPaymentResult {
+  success: boolean;
+  /** 网关返回码，10000 表示业务成功 */
+  code?: string;
+  /** 支付宝交易状态：TRADE_SUCCESS / TRADE_FINISHED / WAIT_BUYER_PAY / TRADE_CLOSED ... */
+  tradeStatus?: string | null;
+  /** 商户订单号（应等于查询入参 outTradeNo） */
+  outTradeNo?: string | null;
+  /** 实际支付金额（元 → 分），用于与订单快照核验，防止回调金额被篡改 */
+  totalAmountFen?: number | null;
+  /** 支付宝交易流水号（trade_no），区别于商户 outTradeNo */
+  alipayTradeNo?: string | null;
+  error?: string;
+}
+
 export interface PaymentAdapter {
   createPayment(params: CreatePaymentParams): Promise<CreatePaymentResult>;
   verifyCallback(body: Record<string, string>): Promise<boolean>;
+  queryPayment(params: QueryPaymentParams): Promise<QueryPaymentResult>;
 }
 
 // ── 支付宝 SDK 懒初始化 ──
@@ -168,6 +188,40 @@ export function createAlipayAdapter(): PaymentAdapter {
         return sdk.checkNotifySign(body, true);
       } catch {
         return false;
+      }
+    },
+
+    async queryPayment(params) {
+      const sdk = getAlipaySdk();
+      if (!sdk) {
+        return { success: false, error: unavailableReason || "支付宝未配置" };
+      }
+      try {
+        // exec 与 pageExec 同理由：timestamp 必须显式传北京时间，
+        // 否则服务器本地时区（Vercel=UTC）生成的时间戳比支付宝晚 8h，网关验签必失败
+        const result = (await sdk.exec("alipay.trade.query", {
+          timestamp: getBeijingTimestamp(),
+          bizContent: { outTradeNo: params.outTradeNo },
+        })) as {
+          code?: string;
+          msg?: string;
+          trade_status?: string;
+          out_trade_no?: string;
+          total_amount?: string;
+          trade_no?: string;
+        };
+        return {
+          success: true,
+          code: result.code,
+          tradeStatus: result.trade_status ?? null,
+          outTradeNo: result.out_trade_no ?? null,
+          // total_amount（元）→ 分，与订单快照核验；缺失置 null（调用方按不可用处理）
+          totalAmountFen: result.total_amount ? yuanToFen(result.total_amount) : null,
+          alipayTradeNo: result.trade_no ?? null,
+        };
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return { success: false, error: msg };
       }
     },
   };

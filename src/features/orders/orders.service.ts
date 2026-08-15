@@ -510,7 +510,7 @@ export async function checkPaymentStatus(
 ): Promise<{ status: string }> {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
-    select: { userId: true, status: true, createdAt: true },
+    select: { userId: true, status: true, total: true, createdAt: true },
   });
 
   if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
@@ -525,6 +525,38 @@ export async function checkPaymentStatus(
     return { status: result.status };
   }
 
+  // 非 PENDING → 无支付可查，直接返回当前状态
+  if (order.status !== ORDER_STATUS.PENDING) {
+    return { status: order.status };
+  }
+
+  // PENDING → 真正向支付宝核对交易终态（本地沙箱异步通知 notifyUrl=localhost 收不到，
+  // 订单状态只能靠主动查询推进；只读本地 DB 会让「查询支付」永远返回待支付）
+  const query = await paymentService.queryAlipayTrade(orderId);
+  const terminalSuccess =
+    query.success &&
+    (query.tradeStatus === "TRADE_SUCCESS" || query.tradeStatus === "TRADE_FINISHED");
+
+  if (terminalSuccess) {
+    // 金额核验：支付宝返回实付金额（分）必须与订单快照一致，否则拒绝标记（防资损）
+    const paidFen = query.totalAmountFen;
+    if (paidFen === null || paidFen !== order.total) {
+      console.error(
+        `[orders] 支付查询金额不匹配: 订单=${orderId} 订单金额=${order.total} 查询金额=${paidFen}`,
+      );
+      return { status: order.status };
+    }
+    // 幂等标记 PAID（markOrderPaid 带金额校验 + updateMany 状态守卫，重复查询安全）
+    const result = await markOrderPaid(
+      orderId,
+      query.outTradeNo ?? orderId,
+      paidFen,
+      query.alipayTradeNo,
+    );
+    if (result.success) return { status: ORDER_STATUS.PAID };
+  }
+
+  // 查询失败 / 未支付（WAIT_BUYER_PAY 等）/ 金额不符 → 保持当前状态，优雅不抛错
   return { status: order.status };
 }
 

@@ -13,7 +13,7 @@ vi.mock("@/shared/db/client", () => ({
 
 // 阻断订单 service 对支付 adapter 的真实调用（import 链会经过 payment 模块，mock 掉 adapter）
 vi.mock("@/shared/adapters/payment.adapter", () => ({
-  paymentAdapter: { createPayment: vi.fn(), verifyCallback: vi.fn() },
+  paymentAdapter: { createPayment: vi.fn(), verifyCallback: vi.fn(), queryPayment: vi.fn() },
 }));
 
 import { prisma } from "@/shared/db/client";

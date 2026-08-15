@@ -17,6 +17,7 @@ vi.mock("@/shared/adapters/payment.adapter", () => ({
   paymentAdapter: {
     createPayment: vi.fn(),
     verifyCallback: vi.fn(),
+    queryPayment: vi.fn(),
   },
 }));
 
@@ -40,7 +41,7 @@ vi.mock("@/features/orders", () => ({
 import { prisma } from "@/shared/db/client";
 import { paymentAdapter } from "@/shared/adapters/payment.adapter";
 import { cancelExpiredOrder } from "@/features/orders";
-import { createPayment } from "@/features/payment/payment.service";
+import { createPayment, queryAlipayTrade } from "@/features/payment/payment.service";
 import { verifyNotifySignature } from "@/features/payment/payment.callback";
 
 // prisma.order.findUnique 的真实类型是完整 Order，mock 只覆盖 service 用到的字段
@@ -55,6 +56,7 @@ const findUniqueMock = vi.mocked(prisma.order.findUnique) as unknown as {
 };
 const adapterCreateMock = vi.mocked(paymentAdapter.createPayment);
 const adapterVerifyMock = vi.mocked(paymentAdapter.verifyCallback);
+const adapterQueryMock = vi.mocked(paymentAdapter.queryPayment);
 const cancelExpiredMock = vi.mocked(cancelExpiredOrder);
 
 /** 未过期订单快照（createdAt = 现在，expiresAt ≈ 30min 后 → remaining ∈ (29min,30min] → timeoutExpress "30m"） */
@@ -205,5 +207,38 @@ describe("verifyNotifySignature — 回调签名校验", () => {
 
     await expect(verifyNotifySignature(body)).resolves.toBeUndefined();
     expect(adapterVerifyMock).toHaveBeenCalledWith(body);
+  });
+});
+
+// ── queryAlipayTrade：主动查询支付宝交易状态（透传 adapter 结果）──
+
+describe("queryAlipayTrade — 支付宝交易状态查询", () => {
+  it("透传 outTradeNo 给 adapter，返回网关查询结果", async () => {
+    const gatewayResult = {
+      success: true,
+      code: "10000",
+      tradeStatus: "TRADE_SUCCESS",
+      outTradeNo: "order-1",
+      totalAmountFen: 29900,
+      alipayTradeNo: "202608122200000000001",
+    };
+    adapterQueryMock.mockResolvedValue(gatewayResult);
+
+    const result = await queryAlipayTrade("order-1");
+
+    expect(adapterQueryMock).toHaveBeenCalledWith({ outTradeNo: "order-1" });
+    expect(result).toEqual(gatewayResult);
+  });
+
+  it("支付宝未配置 / 网关异常（success:false）→ 原样透传，不抛错", async () => {
+    adapterQueryMock.mockResolvedValue({
+      success: false,
+      error: "支付宝未配置，缺少环境变量: ALIPAY_APP_ID",
+    });
+
+    const result = await queryAlipayTrade("order-1");
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("支付宝未配置");
   });
 });

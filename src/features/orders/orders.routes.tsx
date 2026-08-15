@@ -498,10 +498,21 @@ export function OrderDetailPage({ id }: { id: string }) {
   const [acting, setActing] = useState(false);
   const [error, setError] = useState("");
 
+  // 支付回跳自动查询标记：仅本页挂载后首个 PENDING 详情触发一次，避免重复查询
+  const autoCheckedPayRef = useRef(false);
+
   const fetchOrder = useCallback(async () => {
     try {
       const data = await apiCall("GET", `/api/orders/${id}`);
       setOrder(data);
+      // 支付回跳：PENDING 订单自动查询一次真实支付状态（本地沙箱异步通知 notifyUrl=localhost
+      // 收不到，回跳页立即主动核对，成功后自动变已支付；失败静默，用户仍可手动点「查询支付」）
+      if (data.status === "PENDING" && !autoCheckedPayRef.current) {
+        autoCheckedPayRef.current = true;
+        await apiCall("POST", `/api/orders/${id}/check-paid`).catch(() => null);
+        const updated = await apiCall("GET", `/api/orders/${id}`).catch(() => null);
+        if (updated) setOrder(updated);
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "加载失败";
       setError(msg);

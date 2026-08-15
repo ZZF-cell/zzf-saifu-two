@@ -4,6 +4,7 @@
 import { prisma } from "@/shared/db/client";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import { paymentAdapter } from "@/shared/adapters/payment.adapter";
+import type { QueryPaymentResult } from "@/shared/adapters/payment.adapter";
 import { ORDER_STATUS, cancelExpiredOrder, ORDER_PAYMENT_TIMEOUT_MS } from "@/features/orders";
 
 export interface CreatePaymentResult {
@@ -68,4 +69,18 @@ export async function createPayment(
   }
 
   return { payUrl: result.payUrl ?? null };
+}
+
+/**
+ * 主动查询支付宝交易状态（alipay.trade.query）
+ *
+ * 场景：本地沙箱异步通知（notifyUrl=localhost）收不到，用户点「查询支付」/支付回跳页
+ * 自动查询时使用 —— 真正向支付宝网关核对交易终态，而非只读本地 DB。
+ *
+ * 透传 adapter 结果；支付宝未配置 / 网关异常时 success=false（调用方优雅降级，不抛错）。
+ */
+export async function queryAlipayTrade(
+  outTradeNo: string,
+): Promise<QueryPaymentResult> {
+  return paymentAdapter.queryPayment({ outTradeNo });
 }
