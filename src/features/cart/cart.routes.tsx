@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { CartItemRow, EmptyCart } from "./cart.components";
 import type { CartItemData } from "./cart.components";
-import { fenToYuan } from "@/shared/utils/money";
+import { fenToYuan, sumFen } from "@/shared/utils/money";
 import { SiteHeader } from "@/shared/ui/SiteHeader";
 
 interface CartData {
@@ -21,6 +21,8 @@ export function CartPage() {
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  // 部分结算勾选集（按 productId）
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const fetchCart = useCallback(async () => {
     try {
@@ -30,8 +32,15 @@ export function CartPage() {
         return;
       }
       const data = await res.json();
-      if (res.ok) setCart(data);
-      else setErrorMsg(data.message || "加载购物车失败");
+      if (res.ok) {
+        setCart(data);
+        // prune：删除/改数量后清掉已消失项的勾选，避免结算时带不存在的商品
+        setSelectedIds((prev) => {
+          const valid = data.items.map((i: CartItemData) => i.productId);
+          const next = new Set([...prev].filter((id) => valid.includes(id)));
+          return next.size === prev.size ? prev : next;
+        });
+      } else setErrorMsg(data.message || "加载购物车失败");
     } catch {
       setErrorMsg("网络错误，请稍后重试");
     } finally {
@@ -101,6 +110,38 @@ export function CartPage() {
     patchCart("/api/cart", { productId, qty });
   };
 
+  // ── 部分结算勾选 ──
+
+  const toggleItem = (productId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
+  };
+
+  const items = cart?.items ?? [];
+  const allSelected = items.length > 0 && items.every((i) => selectedIds.has(i.productId));
+
+  const toggleAll = () => {
+    setSelectedIds(allSelected ? new Set() : new Set(items.map((i) => i.productId)));
+  };
+
+  const selectedItems = items.filter((i) => selectedIds.has(i.productId));
+  const selectedCount = selectedItems.reduce((s, i) => s + i.qty, 0);
+  // 结算条金额只统计选中项（sumFen 为空数组返回 0）
+  const selectedAmount = sumFen(selectedItems.map((i) => i.subtotal));
+
+  const goCheckout = () => {
+    if (selectedItems.length === 0) {
+      setErrorMsg("请先勾选要结算的商品");
+      return;
+    }
+    const ids = selectedItems.map((i) => i.productId).join(",");
+    router.push(`/checkout?items=${encodeURIComponent(ids)}`);
+  };
+
   if (loading) {
     return (
       <main className="mx-auto min-h-screen max-w-6xl bg-white pb-32">
@@ -157,6 +198,8 @@ export function CartPage() {
                 <CartItemRow
                   key={item.id}
                   item={item}
+                  checked={selectedIds.has(item.productId)}
+                  onToggleChecked={toggleItem}
                   onQtyChange={handleQtyChange}
                   onRemove={deleteItem}
                   disabled={updating}
@@ -169,20 +212,30 @@ export function CartPage() {
 
       {cart && cart.items.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 border-t bg-white px-4 py-3">
-          <div className="mx-auto flex max-w-2xl items-center justify-between">
-            <div>
-              <p className="text-xs text-gray-500">共 {cart.totalCount} 件</p>
+          <div className="mx-auto flex max-w-2xl items-center justify-between gap-3">
+            <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-sm text-gray-600">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={toggleAll}
+                aria-label="全选"
+                className="h-5 w-5 accent-primary"
+              />
+              全选
+            </label>
+            <div className="flex-1 text-right">
+              <p className="text-xs text-gray-500">已选 {selectedCount} 件</p>
               <p className="text-xl font-bold text-primary">
-                ¥{fenToYuan(cart.totalAmount)}
+                ¥{fenToYuan(selectedAmount)}
               </p>
               <p className="text-xs text-gray-400">价格以结算时为准</p>
             </div>
             <button
-              onClick={() => router.push("/checkout")}
-              disabled={updating}
-              className="rounded-lg bg-primary px-8 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+              onClick={goCheckout}
+              disabled={selectedItems.length === 0 || updating}
+              className="shrink-0 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
             >
-              去结算
+              去结算{selectedItems.length > 0 ? `(${selectedItems.length})` : ""}
             </button>
           </div>
         </div>

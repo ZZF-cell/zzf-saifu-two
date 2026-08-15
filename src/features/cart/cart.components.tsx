@@ -21,6 +21,8 @@ export interface CartItemData {
 
 interface CartItemRowProps {
   item: CartItemData;
+  checked: boolean;
+  onToggleChecked: (productId: string) => void;
   onQtyChange: (productId: string, qty: number) => void;
   onRemove: (productId: string) => void;
   disabled?: boolean;
@@ -28,12 +30,23 @@ interface CartItemRowProps {
 
 export function CartItemRow({
   item,
+  checked,
+  onToggleChecked,
   onQtyChange,
   onRemove,
   disabled,
 }: CartItemRowProps) {
   return (
     <div className="flex gap-3 rounded-xl border border-gray-100 p-3">
+      {/* 勾选：支持部分结算（只结算选中的商品） */}
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={() => onToggleChecked(item.productId)}
+        disabled={disabled}
+        aria-label={`选择 ${item.productName}`}
+        className="mt-7 h-5 w-5 shrink-0 accent-primary"
+      />
       {/* 图片 */}
       <Link href={`/products/${item.productId}`} className="shrink-0">
         <Image
