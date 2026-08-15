@@ -352,7 +352,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 
 > **超时自动取消**：下单 30 分钟（`ORDER_PAYMENT_TIMEOUT_MS`）未支付，由 Inngest `order-timeout-cancel` 自动将 PENDING 订单置为 CANCELLED 并回补库存（`updateMany` 状态守卫先于回补，防与手动取消/支付回调并发冲突）。
 
-> **销毁（destroy）不改变 status**，仅擦除用户端隐私字段（收货地址、隐私选项等），故不在状态图中。
+> **销毁（destroy）不改变 status**，而是写入 `destroyedAt` 列（非空 = 已销毁）：用户/品牌侧查询层按 `destroyedAt IS NULL` 过滤，销毁后订单在用户与品牌方列表中消失、详情返回 404（视为不存在）；平台管理后台保留全部数据（仍读 `privacy.destroyed` 显示「已销毁」标记）供审计与退款核验。故不在状态图中。
 
 ## 同步 vs 异步策略
 
@@ -388,7 +388,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | POST | `/api/orders/[id]/check-paid` | 查询支付状态 |
 | POST | `/api/orders/[id]/cancel` | 取消订单（仅 PENDING） |
 | POST | `/api/orders/[id]/refund` | 申请退款（仅 PAID） |
-| POST | `/api/orders/[id]/destroy` | 销毁订单记录（隐私保护） |
+| POST | `/api/orders/[id]/destroy` | 销毁订单记录（隐私保护；销毁后用户/品牌侧不可见，管理后台保留） |
 | POST | `/api/orders/[id]/paid` | 支付宝异步回调（幂等） |
 
 ### 购物车
@@ -640,7 +640,7 @@ npm start
 |------|------|--------|
 | 完整下单链路 | 首页 → 商品详情 → 加购 → 结算 → 下单 → 支付跳转 | 乐观锁库存扣减、支付单创建 |
 | 退款链路 | 下单 → 支付 → 申请退款 → 管理员确认退款 | 状态机流转、退款幂等 |
-| 订单销毁 | 下单 → 支付 → 完成 → 一键销毁 | AES 加密、隐私数据擦除 |
+| 订单销毁 | 下单 → 支付 → 完成 → 一键销毁 → 用户/品牌侧列表消失、详情 404 | AES 加密、`destroyedAt` 过滤、管理后台保留 |
 
 ### 明确不测试的内容
 

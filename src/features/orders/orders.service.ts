@@ -597,6 +597,9 @@ export async function destroyOrder(
       data: {
         shippingAddress: "[DESTROYED]",
         privacy: { destroyed: true, destroyedAt: new Date().toISOString() } as unknown as object,
+        // destroyedAt 列是用户/品牌侧查询过滤的唯一依据（destroyedAt IS NULL 才可见），
+        // privacy.destroyed 保留供管理后台显示「已销毁」标记
+        destroyedAt: new Date(),
       },
     });
 

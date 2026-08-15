@@ -1,9 +1,10 @@
-// orders.queries 单元测试 — 一键销毁的查询层隐私掩码（MAJOR 修复回归护栏）
+// orders.queries 单元测试 — 一键销毁的查询层「用户侧消失」契约
 // mock 系统边界：prisma（order.findUnique / findMany / count）
 // 只测公共 seam：getOrderDetail / getOrderList
 //
-// 核心契约：已销毁订单在用户/品牌视图中「金额/流水号/商品名/明细」全部掩码，
-// DB 原样保留（管理端与退款核验仍可查）。
+// 核心契约：销毁（destroyedAt 非空）后，用户列表查询带 destroyedAt: null 过滤
+// （订单不再出现在列表）、详情抛 ORDER_NOT_FOUND（视为不存在，不泄露存在性）；
+// 管理后台不经过此查询层，数据原样保留。
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
@@ -29,10 +30,10 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-// ── getOrderDetail：已销毁订单掩码 ──
+// ── getOrderDetail：已销毁订单 → 404 ──
 
-describe("getOrderDetail — 销毁掩码", () => {
-  it("已销毁订单 → total 置 0、流水号置 null、明细清空、地址掩码", async () => {
+describe("getOrderDetail — 销毁消失", () => {
+  it("已销毁订单（destroyedAt 非空）→ 抛 ORDER_NOT_FOUND，不返回任何数据", async () => {
     findUniqueMock.mockResolvedValue({
       id: "order-1",
       userId: "user-1",
@@ -41,6 +42,7 @@ describe("getOrderDetail — 销毁掩码", () => {
       shippingAddress: "encrypted-addr",
       privacy: destroyedPrivacy,
       outTradeNo: "order-1",
+      destroyedAt: new Date(),
       paidAt: new Date(),
       shippedAt: null,
       deliveredAt: null,
@@ -53,13 +55,9 @@ describe("getOrderDetail — 销毁掩码", () => {
       ],
     });
 
-    const detail = await getOrderDetail("user-1", "order-1");
-
-    expect(detail.isDestroyed).toBe(true);
-    expect(detail.total).toBe(0);
-    expect(detail.outTradeNo).toBeNull();
-    expect(detail.items).toEqual([]);
-    expect(detail.shippingAddress).toBe("[DESTROYED]");
+    await expect(getOrderDetail("user-1", "order-1")).rejects.toMatchObject({
+      code: "ORDER_NOT_FOUND",
+    });
   });
 
   it("正常订单 → 金额/流水号/明细原样返回", async () => {
@@ -71,6 +69,7 @@ describe("getOrderDetail — 销毁掩码", () => {
       shippingAddress: "encrypted-addr",
       privacy: { anonymousPackaging: true },
       outTradeNo: "order-2",
+      destroyedAt: null,
       paidAt: new Date(),
       shippedAt: null,
       deliveredAt: null,
@@ -85,40 +84,35 @@ describe("getOrderDetail — 销毁掩码", () => {
 
     const detail = await getOrderDetail("user-1", "order-2");
 
-    expect(detail.isDestroyed).toBe(false);
     expect(detail.total).toBe(8800);
     expect(detail.outTradeNo).toBe("order-2");
     expect(detail.items).toHaveLength(1);
   });
 });
 
-// ── getOrderList：已销毁订单列表行掩码 ──
+// ── getOrderList：已销毁订单从列表过滤 ──
 
-describe("getOrderList — 销毁掩码", () => {
-  it("已销毁行 → 金额 0、商品名「已销毁」、件数 0", async () => {
-    findManyMock.mockResolvedValue([
-      {
-        id: "order-1",
-        total: 29900,
-        status: "COMPLETED",
-        privacy: destroyedPrivacy,
-        createdAt: new Date(),
-        paidAt: new Date(),
-        _count: { items: 2 },
-        items: [{ productName: "成人用品A" }],
-      },
-    ]);
-    vi.mocked(prisma.order.count).mockResolvedValue(1);
+describe("getOrderList — 销毁消失", () => {
+  it("where 恒带 destroyedAt: null（已销毁订单用户列表不可见），count 用同一过滤", async () => {
+    findManyMock.mockResolvedValue([]);
+    vi.mocked(prisma.order.count).mockResolvedValue(0);
 
-    const result = await getOrderList("user-1", 1, 20);
+    await getOrderList("user-1", 1, 20);
 
-    expect(result.orders[0].isDestroyed).toBe(true);
-    expect(result.orders[0].total).toBe(0);
-    expect(result.orders[0].firstItemName).toBe("已销毁");
-    expect(result.orders[0].itemCount).toBe(0);
+    expect(findManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ destroyedAt: null }),
+      }),
+    );
+    // 分页 total 必须用同一 where，否则分页数包含已销毁订单导致最后一页显示「无订单」
+    expect(prisma.order.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ destroyedAt: null }),
+      }),
+    );
   });
 
-  it("正常行 → 金额/首件商品名/件数原样返回", async () => {
+  it("正常行 → 金额/首件商品名/件数原样返回（无需掩码，已销毁已被过滤）", async () => {
     findManyMock.mockResolvedValue([
       {
         id: "order-2",
@@ -135,7 +129,6 @@ describe("getOrderList — 销毁掩码", () => {
 
     const result = await getOrderList("user-1", 1, 20);
 
-    expect(result.orders[0].isDestroyed).toBe(false);
     expect(result.orders[0].total).toBe(8800);
     expect(result.orders[0].firstItemName).toBe("硅胶产品");
     expect(result.orders[0].itemCount).toBe(1);
@@ -145,7 +138,7 @@ describe("getOrderList — 销毁掩码", () => {
 // ── getOrderList：?status= 多状态筛选透传（M2 订单列表状态 Tab） ──
 
 describe("getOrderList — status 筛选", () => {
-  it("传 statuses → where.status = { in: statuses }", async () => {
+  it("传 statuses → where.status = { in: statuses }，且保留 destroyedAt: null 过滤", async () => {
     findManyMock.mockResolvedValue([]);
     vi.mocked(prisma.order.count).mockResolvedValue(0);
 
@@ -153,12 +146,16 @@ describe("getOrderList — status 筛选", () => {
 
     expect(findManyMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { userId: "user-1", status: { in: ["PENDING", "CANCELLED"] } },
+        where: {
+          userId: "user-1",
+          status: { in: ["PENDING", "CANCELLED"] },
+          destroyedAt: null,
+        },
       }),
     );
   });
 
-  it("不传 statuses → 仅按 userId 筛选，不附加 status 条件", async () => {
+  it("不传 statuses → 仅按 userId + destroyedAt: null 筛选，不附加 status 条件", async () => {
     findManyMock.mockResolvedValue([]);
     vi.mocked(prisma.order.count).mockResolvedValue(0);
 
@@ -168,6 +165,7 @@ describe("getOrderList — status 筛选", () => {
       where: Record<string, unknown>;
     };
     expect(call.where.userId).toBe("user-1");
+    expect(call.where.destroyedAt).toBeNull();
     expect(call.where.status).toBeUndefined();
   });
 
@@ -179,7 +177,7 @@ describe("getOrderList — status 筛选", () => {
 
     expect(findManyMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { userId: "user-1", status: { in: [] } },
+        where: { userId: "user-1", status: { in: [] }, destroyedAt: null },
       }),
     );
   });

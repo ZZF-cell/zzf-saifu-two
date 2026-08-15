@@ -144,6 +144,8 @@ model Order {
   completedAt     DateTime?
   cancelledAt     DateTime?
   refundedAt      DateTime?
+  destroyedAt     DateTime?  // 一键销毁时间：非空 = 已销毁。用户/品牌侧查询过滤 destroyedAt IS NULL，
+                             // 管理后台保留（privacy.destroyed 仍写，供后台显示标记）
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

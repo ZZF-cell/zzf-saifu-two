@@ -595,6 +595,11 @@ export function OrderDetailPage({ id }: { id: string }) {
     setError("");
     try {
       await apiCall("POST", `/api/orders/${id}/${action}`);
+      if (action === "destroy") {
+        // 销毁后订单对用户不可见（详情 404），直接跳回订单列表，不再 fetch 详情
+        router.push("/orders");
+        return;
+      }
       await fetchOrder();
     } catch (err: unknown) {
       setError((err instanceof Error ? err.message : "操作失败"));
@@ -682,9 +687,6 @@ export function OrderDetailPage({ id }: { id: string }) {
         {/* 状态 */}
         <div className="flex items-center justify-between">
           <OrderStatusBadge status={order.status} />
-          {order.isDestroyed && (
-            <span className="text-xs text-red-400">已销毁</span>
-          )}
         </div>
 
         {/* 时间线 */}
@@ -694,32 +696,24 @@ export function OrderDetailPage({ id }: { id: string }) {
         <div className="rounded-xl bg-gray-50 p-4">
           <div className="flex justify-between text-sm">
             <span className="text-gray-500">订单金额</span>
-            {order.isDestroyed ? (
-              <span className="font-bold text-gray-400">已销毁</span>
-            ) : (
-              <span className="font-bold text-primary">¥{fenToYuan(order.total)}</span>
-            )}
+            <span className="font-bold text-primary">¥{fenToYuan(order.total)}</span>
           </div>
           <p className="mt-1 text-xs text-gray-400">订单号: {order.id}</p>
-          {order.outTradeNo && !order.isDestroyed && (
+          {order.outTradeNo && (
             <p className="mt-0.5 text-xs text-gray-400">流水号: {order.outTradeNo}</p>
           )}
         </div>
 
-        {/* 收货地址（已销毁则隐藏） */}
-        {!order.isDestroyed && order.shippingAddress !== "[DESTROYED]" && (
+        {/* 收货地址 */}
+        {order.shippingAddress !== "[DESTROYED]" && (
           <OrderShippingAddress shippingAddress={order.shippingAddress} />
         )}
 
-        {/* 商品列表（已销毁订单不展示任何商品名/单价/数量） */}
+        {/* 商品列表 */}
         <section>
           <h3 className="mb-2 text-sm font-semibold text-gray-700">商品</h3>
           <div className="space-y-2">
-            {order.isDestroyed ? (
-              <div className="rounded-lg border border-gray-50 p-4 text-sm text-gray-400">
-                订单已销毁，商品信息已清除
-              </div>
-            ) : order.items.map((item) => (
+            {order.items.map((item) => (
               <div key={item.id} className="flex justify-between rounded-lg border border-gray-50 p-3">
                 <div>
                   <p className="text-sm text-gray-900">{item.productName}</p>
@@ -742,7 +736,7 @@ export function OrderDetailPage({ id }: { id: string }) {
 
         {/* 操作按钮 */}
         <div className="space-y-2">
-          {order.status === "PENDING" && !order.isDestroyed && (
+          {order.status === "PENDING" && (
             <div className="space-y-2">
               <button
                 onClick={handlePay}
@@ -769,7 +763,7 @@ export function OrderDetailPage({ id }: { id: string }) {
               </div>
             </div>
           )}
-          {order.status === "PAID" && !order.isDestroyed && (
+          {order.status === "PAID" && (
             <button
               onClick={() => handleAction("refund")}
               disabled={acting}
@@ -778,22 +772,13 @@ export function OrderDetailPage({ id }: { id: string }) {
               申请退款
             </button>
           )}
-          {(order.status === "COMPLETED" || order.status === "CANCELLED" || order.status === "REFUNDED") && !order.isDestroyed && (
+          {(order.status === "COMPLETED" || order.status === "CANCELLED" || order.status === "REFUNDED") && (
             <button
               onClick={() => handleAction("destroy")}
               disabled={acting}
               className="w-full rounded-lg border border-red-200 py-2.5 text-sm font-medium text-red-500 transition hover:bg-red-50 disabled:opacity-50"
             >
               一键销毁
-            </button>
-          )}
-          {/* 已销毁订单所有操作按钮隐藏，返回首页是唯一出路（不再依赖浏览器后退） */}
-          {order.isDestroyed && (
-            <button
-              onClick={() => router.push("/")}
-              className="w-full rounded-lg bg-primary py-3 text-sm font-medium text-white transition hover:opacity-90"
-            >
-              返回首页
             </button>
           )}
         </div>

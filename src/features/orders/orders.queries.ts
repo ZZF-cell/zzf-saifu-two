@@ -31,7 +31,6 @@ export interface OrderSummary {
   firstItemName: string;
   createdAt: Date;
   paidAt: Date | null;
-  isDestroyed: boolean;
 }
 
 export interface OrderDetail {
@@ -48,7 +47,6 @@ export interface OrderDetail {
   cancelledAt: Date | null;
   refundedAt: Date | null;
   createdAt: Date;
-  isDestroyed: boolean;
   items: {
     id: string;
     productName: string;
@@ -86,20 +84,16 @@ async function queryOrderSummaries(
   ]);
 
   return {
-    orders: orders.map((o) => {
-      // 已销毁订单：金额/商品名/行数全部掩码（隐私擦除在查询层生效，DB 保留供审计/退款核验）
-      const destroyed = isOrderDestroyed(o.privacy as Record<string, unknown> | null);
-      return {
-        id: o.id,
-        total: destroyed ? 0 : o.total,
-        status: o.status,
-        itemCount: destroyed ? 0 : o._count.items,
-        firstItemName: destroyed ? "已销毁" : o.items[0]?.productName || "商品",
-        createdAt: o.createdAt,
-        paidAt: o.paidAt,
-        isDestroyed: destroyed,
-      };
-    }),
+    // 调用方（用户/品牌方）查询已带 destroyedAt: null 过滤，此处无需掩码——已销毁订单不可见
+    orders: orders.map((o) => ({
+      id: o.id,
+      total: o.total,
+      status: o.status,
+      itemCount: o._count.items,
+      firstItemName: o.items[0]?.productName || "商品",
+      createdAt: o.createdAt,
+      paidAt: o.paidAt,
+    })),
     total,
     page,
     pageSize,
@@ -116,7 +110,8 @@ export async function getOrderList(
 ): Promise<OrderListResult> {
   const where: Prisma.OrderWhereInput = {
     userId,
-    // 不排除已销毁订单，用户可看到「已销毁」标记
+    // 已销毁订单用户不可见（destroyedAt IS NULL 才可见）；管理后台仍保留全部数据
+    destroyedAt: null,
   };
   // ?status= 多状态筛选：statuses 传了（含空数组）即强制 in 条件；
   // 空数组 → in: [] → 显式空结果（API 层过滤后全非法值时不泄漏全量数据）；
@@ -141,7 +136,6 @@ export interface BrandOrderRow {
   status: string;
   createdAt: Date;
   paidAt: Date | null;
-  isDestroyed: boolean;
   brandSubtotal: number; // 本品牌商品行小计（分）= 各行 price 之和（price 已含 qty）
   firstItemName: string; // 本品牌首个商品名
 }
@@ -164,6 +158,8 @@ export async function getOrderListByBrand(
 
   const where: Prisma.OrderWhereInput = {
     items: { some: { productId: { in: brandProductIds } } },
+    // 已销毁订单品牌方同样不可见（隐私对用户与品牌一视同仁）；管理后台仍保留
+    destroyedAt: null,
   };
 
   const [orders, total] = await Promise.all([
@@ -190,10 +186,9 @@ export async function getOrderListByBrand(
   ]);
 
   return {
+    // 已销毁订单已被 where.destroyedAt: null 过滤，此处无需掩码
     orders: orders.map((o) => {
       const brandItems = o.items;
-      // 已销毁订单：品牌方同样看不到金额与商品名（隐私擦除对用户与品牌一视同仁）
-      const destroyed = isOrderDestroyed(o.privacy as Record<string, unknown> | null);
       // OrderItem.price 为「实付分摊后的行总额」（已含 ×qty，见 calculateOrderItems），
       // 小计直接求和即可，不可再乘 qty（否则膨胀 qty 倍）
       const brandSubtotal = brandItems.reduce(
@@ -205,9 +200,8 @@ export async function getOrderListByBrand(
         status: o.status,
         createdAt: o.createdAt,
         paidAt: o.paidAt,
-        isDestroyed: destroyed,
-        brandSubtotal: destroyed ? 0 : brandSubtotal,
-        firstItemName: destroyed ? "已销毁" : brandItems[0]?.productName || "商品",
+        brandSubtotal,
+        firstItemName: brandItems[0]?.productName || "商品",
       };
     }),
     total,
@@ -241,17 +235,19 @@ export async function getOrderDetail(
   if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
   if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_OWNED, "无权查看该订单");
 
-  const destroyed = isOrderDestroyed(order.privacy as Record<string, unknown> | null);
+  // 已销毁订单对用户视为不存在（404，不泄露存在性）；管理后台仍保留全部数据
+  if (order.destroyedAt) {
+    throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
+  }
 
   return {
     id: order.id,
-    // 已销毁订单：金额/流水号/商品明细全部掩码（DB 保留，仅管理端可查）
-    total: destroyed ? 0 : order.total,
+    total: order.total,
     status: order.status,
-    // 已销毁订单不展示收货地址；正常订单先尝试解密
-    shippingAddress: destroyed ? "[DESTROYED]" : decryptAddress(order.shippingAddress),
+    // 配送地址 AES-256-GCM 加密存储，此处解密；解密失败返回原始字符串（可能是旧数据或明文）
+    shippingAddress: decryptAddress(order.shippingAddress),
     privacy: order.privacy,
-    outTradeNo: destroyed ? null : order.outTradeNo,
+    outTradeNo: order.outTradeNo,
     paidAt: order.paidAt,
     shippedAt: order.shippedAt,
     deliveredAt: order.deliveredAt,
@@ -259,13 +255,6 @@ export async function getOrderDetail(
     cancelledAt: order.cancelledAt,
     refundedAt: order.refundedAt,
     createdAt: order.createdAt,
-    isDestroyed: destroyed,
-    items: destroyed ? [] : order.items,
+    items: order.items,
   };
-}
-
-// ── 辅助 ──
-
-function isOrderDestroyed(privacy: Record<string, unknown> | null): boolean {
-  return !!(privacy && (privacy as { destroyed?: boolean }).destroyed);
 }

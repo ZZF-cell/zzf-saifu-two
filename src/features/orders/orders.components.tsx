@@ -33,10 +33,9 @@ interface OrderCardProps {
   status: string;
   firstItemName: string;
   createdAt: Date;
-  isDestroyed: boolean;
 }
 
-export function OrderCard({ id, total, status, firstItemName, createdAt, isDestroyed }: OrderCardProps) {
+export function OrderCard({ id, total, status, firstItemName, createdAt }: OrderCardProps) {
   return (
     <Link
       href={`/orders/${id}`}
@@ -44,22 +43,14 @@ export function OrderCard({ id, total, status, firstItemName, createdAt, isDestr
     >
       <div className="flex items-center justify-between">
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-900 truncate">
-            {isDestroyed ? "已销毁的订单" : firstItemName}
-          </p>
+          <p className="text-sm font-medium text-gray-900 truncate">{firstItemName}</p>
           <p className="mt-0.5 text-xs text-gray-400">
             {new Date(createdAt).toLocaleDateString("zh-CN")}
           </p>
         </div>
         <div className="ml-3 flex flex-col items-end gap-1.5">
           <OrderStatusBadge status={status} />
-          {isDestroyed ? (
-            <span className="text-sm font-medium text-gray-400">已销毁</span>
-          ) : (
-            <span className="text-sm font-bold text-primary">
-              ¥{fenToYuan(total)}
-            </span>
-          )}
+          <span className="text-sm font-bold text-primary">¥{fenToYuan(total)}</span>
         </div>
       </div>
     </Link>

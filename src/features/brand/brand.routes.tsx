@@ -72,7 +72,6 @@ interface BrandOrder {
   status: string;
   createdAt: string;
   firstItemName: string;
-  isDestroyed: boolean;
 }
 
 // ── 品牌概览 ──
@@ -731,14 +730,8 @@ function OrdersTab() {
               <StatusBadge status={o.status} />
             </div>
             <p className="mt-1 text-xs text-gray-400">
-              {o.isDestroyed ? (
-                <span className="text-gray-400">已销毁</span>
-              ) : (
-                <>
-                  ¥{fenToYuan(o.brandSubtotal)} · 下单于{" "}
-                  {new Date(o.createdAt).toLocaleDateString("zh-CN")}
-                </>
-              )}
+              ¥{fenToYuan(o.brandSubtotal)} · 下单于{" "}
+              {new Date(o.createdAt).toLocaleDateString("zh-CN")}
             </p>
           </div>
         ))
