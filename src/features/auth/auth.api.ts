@@ -35,10 +35,13 @@ const setPasswordSchema = z.object({
 
 // ── Cookie 工具 ──
 
+// SameSite=Lax：允许支付宝等跨站支付网关支付完成后 302 回跳（顶级导航）携带 cookie，
+// 否则 Strict 模式跨站回跳 cookie 全丢 → 已登录用户被当新访客反复拦到年龄门禁（死循环）。
+// 安全：Lax 下跨站 POST 不携带 cookie，现有 API 全为 JSON POST，CSRF 风险可控。
 const COOKIE_OPTIONS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === "production",
-  sameSite: "strict" as const,
+  sameSite: "lax" as const,
   path: "/",
 };
 
