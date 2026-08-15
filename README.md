@@ -123,7 +123,7 @@ npx prisma db seed                 # 重新填充种子数据
 | 模块 | 状态 | 功能 | 技术实现 |
 |------|------|------|---------|
 | **管理后台** | ✅ 已完成 | 数据看板（统计卡可跳转 + 近 7 天销售/状态分布/品类分布图表）、品牌审核、商品质检（详情含品类质检清单 + 已提交证书「已交/缺」对照）、订单管理（发货/送达/完成/退款，行展示买家/收货人脱敏/件数）、用户管理（改角色/禁用启用/解锁/重置密码/清除年龄验证）、质检模板增删改 | `features/admin/`；所有状态变更用 `updateMany` 状态守卫（防并发重复操作），与审计日志在同一 `$transaction`（审计失败整体回滚，不留「状态已变但无审计」的账）；重复审核返回 409 区分「不存在」404；用户管理禁止操作自己（403） |
-| **品牌方后台** | ✅ 已完成 | 品牌概览、提交新商品（随附检测证书）、商品列表、订单查看、品牌资料 | `features/brand/`；品牌订单/销售额只聚合本品牌商品行（`OrderItem.price×qty`），混合品牌订单不整单全额重复计入；品牌无商品时直接返回零统计，绝不查询全平台数据（防跨租户泄漏）；提交/编辑商品按品类 `CategoryAuditTemplate.requiredDocs` 展示必交材料清单，可上传证书（图片/PDF）随商品提交 |
+| **品牌方后台** | ✅ 已完成 | 品牌概览、提交新商品（随附检测证书）、商品列表、订单查看、品牌资料 | `features/brand/`；品牌订单/销售额只聚合本品牌商品行（`OrderItem.price` 行总额之和，**price 已含 ×qty 不可再乘**），混合品牌订单不整单全额重复计入；品牌无商品时直接返回零统计，绝不查询全平台数据（防跨租户泄漏）；提交/编辑商品按品类 `CategoryAuditTemplate.requiredDocs` 展示必交材料清单，可上传证书（图片/PDF）随商品提交 |
 | **订单超时自动取消** | ✅ 已完成 | 下单 30 分钟未支付自动取消并回补库存 | `inngest/functions/order-timeout-cancel.ts`：`order/created` 事件 → `step.sleep(30min)` → `cancelExpiredOrder`（**updateMany 状态守卫先于回补库存**，防并发双重回补）；下单时用 `next/server` 的 `after()` 保证 serverless 中事件投递完成 |
 | **品牌入驻** | ✅ 已完成 | 管理员生成邀请码 → 品牌方激活 → 提交资料 → 审核 | `features/invite/`：激活=单事务原子消耗邀请码（`updateMany` 状态守卫含过期判断）+ 创建 PENDING 品牌；管理员审核通过时同事务将负责人升级为 BRAND 角色（品牌已过但角色未升是笔错账）；邀请码列表 EXPIRED 由 `expiresAt` 即时推导不落库 |
 | **OSS 图片上传** | ✅ 已完成 | 商品/品牌图片 + 检测证书上传至阿里云 OSS（后端中转） | `features/upload/`：POST `/api/upload`（multipart + MIME 白名单，`purpose` 枚举 `product`/`brand`/`cert`；图片 ≤4MB、证书 PDF ≤10MB；未配置 OSS 返回 503）。`purpose=product`/`brand` 只收图片，`purpose=cert` 收图片 + PDF；`shared/adapters/oss.adapter.ts` 仿 payment 懒初始化 + 纯函数；`shared/ui/Image` 双源（OSS URL + base64）+ 统一占位图。Vercel 请求体上限 4.5MB → 图片限 ≤4MB；更大文件走 OSS 预签名直传（三期） |
@@ -284,7 +284,7 @@ features/orders/                   features/orders/
 | Product | brandId, category, **subCategory**, status, images, **certificates**, specs, **version, stock** | 商品（两级类目 + version 乐观锁防超卖 + 生命周期状态 + 检测证书）| `version` 字段配合 `updateMany` 实现乐观锁；specs 用 JSONB 存储灵活扩展；`subCategory` 可空（兼容旧数据），新提交商品必填且需与大类组合合法（`isValidCategoryPair`）；`certificates`（JSON 数组 `[{url, name, mime}]`）随商品提交的检测证书（图片/PDF），schema 层校验 OSS host + MIME 白名单；**status** 为 String 枚举：`PENDING`（待质检）→ `APPROVED`（已上架）/ `REJECTED`（已拒绝）；品牌可 `WITHDRAWN`（撤回待审）；双方可 `DELISTED`（下架）→ `APPROVED`（重新上架，不重质检）。改基本信息/证书→回 `PENDING` 重审，仅改价格/库存→直改不重审。所有状态变更均 `version:{increment:1}` + AuditLog 留痕 |
 | CartItem | userId, productId, productName, price, qty | 购物车（唯一约束 userId+productId）| ⚠️ **资损关键点**：`productName` 和 `price` 为展示冗余，**下单时对最新价格进行实时校验并快照到 OrderItem**，不依赖于购物车缓存。商品调价后购物车中的旧价格仅作参考 |
 | Order | userId, total, status, privacy, shippingAddress, **outTradeNo** | 订单（outTradeNo 支付回调幂等）| `total` 为下单时快照的快照总价，不可后续修改；发货地址单独加密存储 |
-| OrderItem | orderId, productName, price, qty | 订单行项目 | **下单时从 Product 表快照**，不引用外键。商品下架或调价不影响历史订单的可追溯性。⚠️ **退款金额 = `price × qty`**，此 `price` 为**实付分摊价**（已含优惠券/满减按比例分摊），非商品原价。优惠分摊逻辑在 `orders.service.ts` 的 `calculateOrderItems` 中实现，单元测试覆盖边界 case（全部退款、部分退款、跨优惠门槛退款） |
+| OrderItem | orderId, productName, price, qty | 订单行项目 | **下单时从 Product 表快照**，不引用外键。商品下架或调价不影响历史订单的可追溯性。⚠️ **`price` 为行总额 = 实付分摊单价 × qty**（已含优惠券/满减按比例分摊），**退款金额 = `price` 行总额**，消费端/品牌侧/看板聚合均**不得再乘 qty**。优惠分摊逻辑在 `orders.service.ts` 的 `calculateOrderItems` 中实现，单元测试覆盖边界 case（全部退款、部分退款、跨优惠门槛退款） |
 | CategoryAuditTemplate | categoryId, requiredDocs, checkPoints | 品类质检模板 | checkPoints 用 JSONB 数组存储，支持不同品类差异化质检项 |
 | AuditLog | targetType, targetId, action, snapshot | 操作审计日志 | snapshot 为操作前数据快照（JSONB），用于回溯和合规审计 |
 
@@ -333,8 +333,9 @@ const result = await prisma.order.updateMany({
 | Access Token (JWT) | 15 分钟 | 不存 DB | `httpOnly Secure SameSite=Strict` |
 | Refresh Token (随机 32B) | 7 天 | DB 存 SHA-256 Hash | `httpOnly Secure SameSite=Strict Path=/api/auth` |
 
-- **Refresh**：Access 过期 → `POST /api/auth/refresh` → 验证 Refresh Hash → 签发新 Access + 新 Refresh（Rotation）→ 旧 Refresh 删除
+- **Refresh**：Access 过期 → `POST /api/auth/refresh` → 验证 Refresh Hash → **检查 `User.status`（禁用即吊销全部 Refresh Token + 403 USER_DISABLED）** → 签发新 Access + 新 Refresh（Rotation）→ 旧 Refresh 删除
 - **Logout**：删除 DB RefreshToken → 清除 Cookies → Access 15 分钟后自然失效
+- **禁用/重置密码会话吊销**：管理端禁用用户或重置密码时，同事务删除该用户全部 Refresh Token——已登录会话在 Access 15 分钟 TTL 内失效，之后无法续期（Access 为无状态 JWT，不逐请求查库，短 TTL 即吊销窗口）
 
 ## 订单状态流转
 
@@ -618,8 +619,8 @@ npm start
      │  ~15 条   │     （Vitest + Docker 本地 PG）
      └───────────┘
   ┌─────────────────┐
-  │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证/管理（用户操作）/品牌（证书）/邀请码/上传（PDF）/OSS 适配器服务层
-  │    ~248 条        │     （Vitest，mock Prisma 与 $transaction）
+  │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证（登录/验证码/补设密码/禁用门禁/Refresh Rotation 吊销）/管理（用户操作/退款回补库存）/品牌（证书）/邀请码/上传（PDF）/OSS 适配器服务层
+  │    ~260 条        │     （Vitest，mock Prisma 与 $transaction）
   └─────────────────┘
 ```
 

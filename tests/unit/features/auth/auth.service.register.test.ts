@@ -50,7 +50,7 @@ beforeEach(() => {
 describe("registerWithPassword — 禁用门禁", () => {
   it("既有短信用户补设密码 + status=DISABLED → 403 USER_DISABLED，不写密码不签发 token", async () => {
     mockValidCode();
-    vi.mocked(prisma.user.findUnique).mockResolvedValue(makeUser({ status: "DISABLED" }));
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(makeUser({ status: "DISABLED" }) as never);
 
     await expect(registerWithPassword(PHONE, "new-pass-123", CODE)).rejects.toMatchObject({
       code: ERROR_CODES.USER_DISABLED.code,
@@ -64,7 +64,7 @@ describe("registerWithPassword — 禁用门禁", () => {
 
   it("既有短信用户补设密码 + ACTIVE → 成功签发双 token（对照：非禁用不受影响）", async () => {
     mockValidCode();
-    vi.mocked(prisma.user.findUnique).mockResolvedValue(makeUser());
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(makeUser() as never);
     vi.mocked(prisma.refreshToken.create).mockResolvedValue({ id: "rt" } as never);
 
     const tokens = await registerWithPassword(PHONE, "new-pass-123", CODE);
