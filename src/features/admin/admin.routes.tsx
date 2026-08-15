@@ -27,7 +27,8 @@ interface DashboardStats {
   userCount: number;
   brandCount: number;
   pendingBrandCount: number;
-  productCount: number;
+  approvedProductCount: number; // 在售商品（仅 APPROVED）
+  delistedProductCount: number; // 已下架商品（DELISTED）
   pendingProductCount: number;
   orderCount: number;
   pendingRefundCount: number;
@@ -173,8 +174,9 @@ function DashboardTab({
     { label: "用户数", value: String(stats.userCount), nav: { tab: "users" } },
     { label: "品牌数", value: String(stats.brandCount), nav: { tab: "brands" } },
     { label: "待审品牌", value: String(stats.pendingBrandCount), highlight: true, nav: { tab: "brands" } },
-    { label: "商品数", value: String(stats.productCount), nav: { tab: "products", preset: { productStatus: "" } } },
+    { label: "在售商品", value: String(stats.approvedProductCount), nav: { tab: "products", preset: { productStatus: "APPROVED" } } },
     { label: "待审商品", value: String(stats.pendingProductCount), highlight: true, nav: { tab: "products", preset: { productStatus: "PENDING" } } },
+    { label: "已下架", value: String(stats.delistedProductCount), nav: { tab: "products", preset: { productStatus: "DELISTED" } } },
     { label: "订单数", value: String(stats.orderCount), nav: { tab: "orders", preset: { orderStatus: "" } } },
     { label: "待退款", value: String(stats.pendingRefundCount), highlight: true, nav: { tab: "orders", preset: { orderStatus: "REFUND_REQUESTED" } } },
     { label: "待发货", value: String(stats.toShipCount), highlight: true, nav: { tab: "orders", preset: { orderStatus: "PAID" } } },

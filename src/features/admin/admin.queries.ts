@@ -26,7 +26,8 @@ export interface DashboardStats {
   userCount: number;
   brandCount: number;
   pendingBrandCount: number;
-  productCount: number;
+  approvedProductCount: number; // 在售商品（仅 APPROVED，下架/拒绝/撤回不计入）
+  delistedProductCount: number; // 已下架商品（DELISTED）
   pendingProductCount: number;
   orderCount: number;
   pendingRefundCount: number;
@@ -37,7 +38,7 @@ export interface DashboardStats {
   todayNewOrders: number; // 今日新增订单
   last7DaysRevenue: number[]; // 近 7 天每日销售额（分），下标 0 = 最早一天
   orderStatusDist: { status: string; count: number }[]; // 订单状态分布
-  categoryDist: { category: string; count: number }[]; // 品类商品数分布
+  categoryDist: { category: string; count: number }[]; // 在售商品品类分布（仅 APPROVED）
 }
 
 /** 已支付订单族（销售统计口径） */
@@ -60,7 +61,8 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     userCount,
     brandCount,
     pendingBrandCount,
-    productCount,
+    approvedProductCount,
+    delistedProductCount,
     pendingProductCount,
     orderCount,
     pendingRefundCount,
@@ -74,7 +76,9 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     prisma.user.count(),
     prisma.brand.count(),
     prisma.brand.count({ where: { status: "PENDING" } }),
-    prisma.product.count(),
+    // 在售商品口径：仅 APPROVED 计入「商品数」；已下架/已拒绝/已撤回是经营异态，独立呈现不虚增总数
+    prisma.product.count({ where: { status: "APPROVED" } }),
+    prisma.product.count({ where: { status: "DELISTED" } }),
     prisma.product.count({ where: { status: "PENDING" } }),
     prisma.order.count(),
     prisma.order.count({ where: { status: ORDER_STATUS.REFUND_REQUESTED } }),
@@ -88,7 +92,12 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     prisma.user.count({ where: { createdAt: { gte: todayStart } } }),
     prisma.order.count({ where: { createdAt: { gte: todayStart } } }),
     prisma.order.groupBy({ by: ["status"], _count: { _all: true } }),
-    prisma.product.groupBy({ by: ["category"], _count: { _all: true } }),
+    // 品类分布与「在售商品」卡同一口径：只聚合 APPROVED，避免图（含下架）与卡（在售）矛盾
+    prisma.product.groupBy({
+      by: ["category"],
+      where: { status: "APPROVED" },
+      _count: { _all: true },
+    }),
   ]);
 
   // 近 7 天销售额：一次性拉取区间内已支付订单，在 JS 按天分桶（避免 7 次聚合查询）
@@ -109,7 +118,8 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     userCount,
     brandCount,
     pendingBrandCount,
-    productCount,
+    approvedProductCount,
+    delistedProductCount,
     pendingProductCount,
     orderCount,
     pendingRefundCount,
