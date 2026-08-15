@@ -109,6 +109,12 @@ export function HomePage() {
     setSubCategory(sub);
   };
 
+  const handleSortChange = (s: { sortBy: string; sortOrder: string }) => {
+    // 排序变化改变结果集：翻到末页切排序会得到空列表，必须与搜索/类目筛选一致回第 1 页
+    setPage(1);
+    setSort(s);
+  };
+
   return (
     <main className="min-h-screen bg-white">
       <SiteHeader />
@@ -148,7 +154,7 @@ export function HomePage() {
           <p className="min-w-20 truncate text-xs text-gray-400">
             {loading ? "加载中..." : `${products.length} 个商品`}
           </p>
-          <SortSelector value={sort} onChange={setSort} />
+          <SortSelector value={sort} onChange={handleSortChange} />
         </div>
 
         {/* Product Grid：首次加载才显示骨架；分类/排序/翻页刷新时保留旧网格避免高度跳变。
