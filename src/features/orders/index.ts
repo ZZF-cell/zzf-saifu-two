@@ -7,6 +7,6 @@ export type { OrderSummary, OrderDetail, OrderListResult } from "./orders.querie
 export { getOrderListByBrand } from "./orders.queries";
 export type { BrandOrderRow, BrandOrderListResult } from "./orders.queries";
 export type { CreateOrderInput, CreateOrderResult } from "./orders.service";
-export { cancelExpiredOrder, ORDER_PAYMENT_TIMEOUT_MS } from "./orders.service";
+export { cancelExpiredOrder, restoreStock, ORDER_PAYMENT_TIMEOUT_MS } from "./orders.service";
 export { ORDER_STATUS, isCancellable, isRefundable, isPayable, isDestroyable } from "./orders.state-machine";
 export type { OrderStatus } from "./orders.state-machine";

@@ -125,7 +125,7 @@ export async function getOrderList(
  * 品牌方订单列表 — 返回本品牌商品行的聚合，绝不泄漏整单金额/其他品牌商品名
  *
  * 关键隐私边界：多品牌混合订单中，品牌 A 只能看到自己商品行的
- * brandSubtotal（本品牌行 price×qty 之和）与本品牌首个商品名，
+ * brandSubtotal（本品牌行 price 之和，price 为行总额）与本品牌首个商品名，
  * 不返回 Order.total（含其他品牌金额）也不返回其他品牌的 firstItemName。
  */
 export interface BrandOrderRow {
@@ -134,7 +134,7 @@ export interface BrandOrderRow {
   createdAt: Date;
   paidAt: Date | null;
   isDestroyed: boolean;
-  brandSubtotal: number; // 本品牌商品行小计（分）
+  brandSubtotal: number; // 本品牌商品行小计（分）= 各行 price 之和（price 已含 qty）
   firstItemName: string; // 本品牌首个商品名
 }
 
@@ -184,8 +184,10 @@ export async function getOrderListByBrand(
   return {
     orders: orders.map((o) => {
       const brandItems = o.items;
+      // OrderItem.price 为「实付分摊后的行总额」（已含 ×qty，见 calculateOrderItems），
+      // 小计直接求和即可，不可再乘 qty（否则膨胀 qty 倍）
       const brandSubtotal = brandItems.reduce(
-        (sum, it) => sum + it.price * it.qty,
+        (sum, it) => sum + it.price,
         0,
       );
       return {

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { OrderCard, OrderStatusBadge, OrderTimeline, AddressForm } from "./orders.components";
 import type { OrderSummary, OrderDetail } from "./orders.queries";
-import { fenToYuan, multiplyFen } from "@/shared/utils/money";
+import { fenToYuan } from "@/shared/utils/money";
 import { apiFetch } from "@/shared/api/client";
 import { SiteHeader } from "@/shared/ui/SiteHeader";
 
@@ -424,12 +424,13 @@ export function OrderDetailPage({ id }: { id: string }) {
               <div key={item.id} className="flex justify-between rounded-lg border border-gray-50 p-3">
                 <div>
                   <p className="text-sm text-gray-900">{item.productName}</p>
+                  {/* OrderItem.price 为行总额（含 ×qty），单价 = 行总额 ÷ 数量，行小计 = 行总额 */}
                   <p className="mt-0.5 text-xs text-gray-400">
-                    ¥{fenToYuan(item.price)} × {item.qty}
+                    单价 ¥{fenToYuan(item.price / item.qty)} × {item.qty}
                   </p>
                 </div>
                 <span className="text-sm font-medium text-gray-900">
-                  ¥{fenToYuan(multiplyFen(item.price, item.qty))}
+                  ¥{fenToYuan(item.price)}
                 </span>
               </div>
             ))}

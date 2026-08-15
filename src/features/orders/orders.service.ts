@@ -237,7 +237,8 @@ export async function createOrder(
 
 // ── 恢复库存（取消订单 / 超时取消共用） ──
 
-async function restoreStock(
+/** 回补库存 + 回减销量（取消/超时取消/确认退款共用，须在同一事务内调用） */
+export async function restoreStock(
   tx: Prisma.TransactionClient,
   items: { productId: string | null; qty: number }[],
 ): Promise<void> {
