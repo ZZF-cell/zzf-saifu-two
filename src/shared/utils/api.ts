@@ -2,7 +2,14 @@
 
 import { NextResponse } from "next/server";
 import { ZodSchema, ZodError } from "zod";
+import { captureException } from "@sentry/nextjs";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
+
+// E4：Sentry 集成后异常走上报。未配置 DSN 时 SDK 不初始化（见 sentry.*.config），
+// 这里的模块级开关避免未初始化 SDK 在每次 500 时刷一遍 "Sentry Logger" 警告。
+const sentryConfigured = Boolean(
+  process.env.NEXT_PUBLIC_SENTRY_DSN || process.env.SENTRY_DSN,
+);
 
 /**
  * 校验中间件 — 包装 API Route Handler
@@ -63,9 +70,11 @@ export function apiError(error: unknown): NextResponse {
     );
   }
 
-  // 未知异常 → Sentry 捕获（如果配置了）
+  // 未知异常 → Sentry 捕获（E4：配置 DSN 后自动上报，否则忽略）
   console.error("[API Error]", error);
-  // captureException(error); // Sentry 集成后取消注释
+  if (sentryConfigured) {
+    captureException(error);
+  }
 
   return NextResponse.json(
     { error: ERROR_CODES.INTERNAL_ERROR.code, message: "服务器内部错误" },
@@ -83,9 +92,12 @@ export function parsePagination(
   url: URL,
   defaultSize = 20,
 ): { page: number; pageSize: number } {
-  const page = Math.max(
-    1,
-    parseInt(url.searchParams.get("page") || "1") || 1,
+  // L7：page 也必须封顶——`?page=10^9` 会让 Prisma 生成巨大 OFFSET 拖垮 DB。
+  // 此前只封顶 pageSize（<=100），page 无上界。
+  const MAX_PAGE = 10000;
+  const page = Math.min(
+    MAX_PAGE,
+    Math.max(1, parseInt(url.searchParams.get("page") || "1") || 1),
   );
   const pageSize = Math.min(
     100,
