@@ -53,6 +53,16 @@ export function requireRole(authUser: AuthUser | null, roles: string[] = []): bo
 /**
  * 路由保护配置
  */
+/**
+ * 构造带 ?redirect= 的登录跳转（保留目标页 pathname+query，登录后回跳，
+ * 防「未登录访问 /checkout?items=… 登录后丢失部分结算上下文」；login 页侧有防 Open Redirect）
+ */
+function loginRedirect(req: NextRequest): NextResponse {
+  const url = new URL("/login", req.url);
+  url.searchParams.set("redirect", req.nextUrl.pathname + req.nextUrl.search);
+  return NextResponse.redirect(url);
+}
+
 export function checkRoutePermission(
   req: NextRequest,
   authUser: AuthUser | null,
@@ -62,14 +72,14 @@ export function checkRoutePermission(
   // 管理后台
   if (path.startsWith("/admin")) {
     if (!authUser || authUser.role !== "ADMIN") {
-      return NextResponse.redirect(new URL("/login", req.url));
+      return loginRedirect(req);
     }
   }
 
   // 品牌方后台（仅 BRAND：品牌中心是品牌方自己的后台，ADMIN 走 /admin）
   if (path.startsWith("/brand")) {
     if (!authUser || authUser.role !== "BRAND") {
-      return NextResponse.redirect(new URL("/login", req.url));
+      return loginRedirect(req);
     }
   }
 
@@ -77,7 +87,7 @@ export function checkRoutePermission(
   const protectedPaths = ["/cart", "/checkout", "/orders", "/account"];
   if (protectedPaths.some((p) => path.startsWith(p))) {
     if (!authUser) {
-      return NextResponse.redirect(new URL("/login", req.url));
+      return loginRedirect(req);
     }
   }
 

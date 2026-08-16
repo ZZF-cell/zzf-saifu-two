@@ -142,6 +142,21 @@ export async function createOrder(
       qty: number;
     }[] = [];
 
+    // Step 0: 下单商品必须是当前用户购物车中的商品（防前端「无 ?items= 回退全量」误删
+    // 整张购物车、以及恶意提交任意商品组合；当前唯一结算入口是购物车勾选）
+    const cartRows = await tx.cartItem.findMany({
+      where: { userId },
+      select: { productId: true },
+    });
+    const cartProductIds = new Set(cartRows.map((c) => c.productId));
+    const notInCart = input.items.find((i) => !cartProductIds.has(i.productId));
+    if (notInCart) {
+      throw new AppError(
+        ERROR_CODES.VALIDATION_ERROR,
+        `商品「${notInCart.productId}」不在购物车中，请先加购后再结算`,
+      );
+    }
+
     // Step 1: 逐商品校验 + 乐观锁扣减
     for (const item of input.items) {
       const product = await tx.product.findUnique({

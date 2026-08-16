@@ -387,7 +387,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | 方法 | 路由 | 说明 |
 |------|------|------|
 | GET | `/api/orders` | 我的订单列表 |
-| POST | `/api/orders` | 创建订单（乐观锁防超卖） |
+| POST | `/api/orders` | 创建订单（乐观锁防超卖；**items 必须来自当前用户购物车**——服务端校验，防"结算页回退全量"误删整张购物车/恶意提交任意商品组合） |
 | GET | `/api/orders/[id]` | 订单详情 |
 | POST | `/api/orders/[id]/check-paid` | 查询支付状态 |
 | POST | `/api/orders/[id]/cancel` | 取消订单（仅 PENDING） |
@@ -509,6 +509,8 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
   }
 }
 ```
+
+> **items 约束**：下单商品必须全部存在于当前用户购物车（`createOrder` Step 0 服务端校验）。这是对前端结算页「无 `?items=` 回退全量」缺陷的纵深防御——修复前直接访问 `/checkout`（手输/书签/登录跳转丢 query）会静默把整张购物车当作结算项提交，下单后 `deleteMany` 把全部购物车行删光（用户以为只下单一个，剩余商品却全部消失）。修复后：结算页无 `?items=` 时显示空态引导"未选择结算商品，请先到购物车勾选"（不回退全量）；服务端拒绝购物车外的商品；提交按钮带 `submitting` 守卫防连点双下单；middleware 未登录重定向携带 `?redirect=` 保留目标页上下文（含 `?items=`）。
 
 **Response (201)**:
 ```json

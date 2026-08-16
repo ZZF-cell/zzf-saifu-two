@@ -155,3 +155,69 @@ test.describe("订单销毁", () => {
     }
   });
 });
+
+// ---------- 购物车部分结算回归（bug: 下单一个后剩余商品被误删） ----------
+// 回归点：修复前结算页在 /checkout 无 ?items=（直接访问/书签/登录跳转丢 query）时
+// 「静默回退全量」，把整张购物车 POST 下单 → createOrder Step 4 删光全部行。
+// 修复：前端去回退全量（空态引导），服务端校验 items ⊆ 购物车。
+// 两个测试按顺序共享购物车（场景2 复用场景1 剩余的「山茶润体油」），同文件串行安全。
+
+test.describe("购物车部分结算", () => {
+  test("勾选一个商品去结算下单，剩余商品应保留", async ({ page }) => {
+    await passwordLogin(page, "13800138000", "123456");
+
+    // API 加购两个商品（复用登录 cookie）
+    await page.request.post("/api/cart", { data: { productId: "seed-悦己手环 Pro", qty: 1 } });
+    await page.request.post("/api/cart", { data: { productId: "seed-山茶润体油", qty: 1 } });
+
+    // 购物车应显示 2 个商品
+    await page.goto("/cart");
+    await expect(page.getByText("悦己手环 Pro").first()).toBeVisible();
+    await expect(page.getByText("山茶润体油").first()).toBeVisible();
+
+    // 只勾选「悦己手环 Pro」去结算（部分结算，只带 1 个）
+    await page.getByRole("checkbox", { name: "选择 悦己手环 Pro" }).check();
+    await page.getByRole("button", { name: /去结算/ }).click();
+    await page.waitForURL(/\/checkout/);
+
+    // 结算页应只显示勾选的悦己手环 Pro
+    await expect(page.getByText("悦己手环 Pro").first()).toBeVisible();
+    await expect(page.getByText("山茶润体油")).not.toBeVisible();
+
+    // 填地址提交下单
+    await page.getByPlaceholder("收货人姓名").fill("复现测试");
+    await page.getByPlaceholder("手机号").fill("13800138000");
+    await page.getByPlaceholder("省份").fill("广东省");
+    await page.getByPlaceholder("城市").fill("深圳市");
+    await page.getByPlaceholder("区/县").fill("南山区");
+    await page.getByPlaceholder("详细地址").fill("科技园路 1 号");
+    await page.getByRole("button", { name: "提交订单" }).click();
+    await expect(page.getByText(/订单已创建|扫码支付/).first()).toBeVisible({ timeout: 20000 });
+
+    // 返回购物车：山茶润体油应保留、悦己手环 Pro 已下单消失
+    await page.goto("/cart");
+    await expect(page.getByText("山茶润体油").first()).toBeVisible();
+    await expect(page.getByText("悦己手环 Pro")).not.toBeVisible();
+  });
+
+  test("直接访问 /checkout（无 ?items=）显示空态引导，购物车商品不被误删", async ({ page }) => {
+    await passwordLogin(page, "13800138000", "123456");
+
+    // 此时购物车已有场景1 剩余的「山茶润体油」；再加购一个「悦己手环 Pro」
+    await page.request.post("/api/cart", { data: { productId: "seed-悦己手环 Pro", qty: 1 } });
+
+    // 不经过购物车勾选，直接访问 /checkout（模拟手输/书签/登录跳转丢 query）
+    await page.goto("/checkout");
+    // 修复后：无 ?items= 显示空态引导，不展示商品、不静默全量结算
+    await expect(page.getByText("未选择结算商品，请先到购物车勾选").first()).toBeVisible();
+    await expect(page.getByText("悦己手环 Pro")).not.toBeVisible();
+    await expect(page.getByText("山茶润体油")).not.toBeVisible();
+    await expect(page.getByRole("button", { name: "提交订单" })).not.toBeVisible();
+
+    // 点「去购物车」返回后，两个商品都应保留（未发生误删）
+    await page.getByRole("button", { name: "去购物车" }).click();
+    await page.waitForURL(/\/cart/);
+    await expect(page.getByText("悦己手环 Pro").first()).toBeVisible();
+    await expect(page.getByText("山茶润体油").first()).toBeVisible();
+  });
+});

@@ -249,7 +249,8 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
   });
 
   // 部分结算：URL ?items= 携带本次待结算的 productId 列表（购物车勾选去结算跳转而来）。
-  // CUID 不含逗号，逗号拆分安全；空集 = 直接访问 /checkout（无 ?items=）→ 回退全量。
+  // CUID 不含逗号，逗号拆分安全；空集 = 直接访问 /checkout（无 ?items=）→ 空态引导，
+  // 绝不回退全量结算（防"下单一个却把整张购物车下单删除"的误删，见 tmp-cart-bug 复现）。
   const selectedProductIds = useMemo(() => {
     const raw = initialItems.split(",").map((s) => s.trim()).filter(Boolean);
     return new Set(raw);
@@ -262,13 +263,14 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
       .then((data) => {
         if (data?.items) {
           // 部分结算：只展示本次勾选的商品（以服务端最新购物车为准过滤，
-          // 已下架/已结算的选中项自然排除；无 ?items= 时回退全量向后兼容）
+          // 已下架/已结算的选中项自然排除）；无 ?items= 时 items 强制为空，
+          // 页面走空态引导（见下），提交前服务端也会校验 items ⊆ 购物车。
           const items: CartItem[] =
             selectedProductIds.size > 0
               ? (data.items as CartItem[]).filter((i) =>
                   selectedProductIds.has(i.productId),
                 )
-              : data.items;
+              : [];
           // 金额只统计本次结算项（订单提交/价格变更比较都以该重算值为基准）
           setCart({ items, totalAmount: sumFen(items.map((i) => i.subtotal)) });
         }
@@ -278,6 +280,8 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
   }, [selectedProductIds]);
 
   const handleSubmit = async () => {
+    // 防连点：提交中直接忽略，避免重复下单/重复扣库存
+    if (submitting) return;
     // 基本校验
     if (!address.name || !address.phone || !address.province || !address.city || !address.detail) {
       setError("请填写完整收货地址");
@@ -348,18 +352,32 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
   }
 
   if (!cart || cart.items.length === 0) {
+    // 无 ?items=（直接访问结算页）：引导回购物车勾选，绝不静默全量结算；
+    // 有 ?items= 但结算项已全部消失（已结算/已下架）：提示已不存在。
+    const noSelection = selectedProductIds.size === 0;
     return (
       <main className="mx-auto min-h-screen max-w-6xl p-4">
         <div className="mx-auto mt-20 w-full max-w-2xl text-center text-gray-400">
           <p className="text-lg">
-            {selectedProductIds.size > 0 ? "所选商品已不存在或已结算" : "购物车为空"}
+            {noSelection ? "未选择结算商品，请先到购物车勾选" : "所选商品已不存在或已结算"}
           </p>
-          <button
-            onClick={() => router.push("/")}
-            className="mt-3 rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white"
-          >
-            去逛逛
-          </button>
+          <div className="mt-3 flex items-center justify-center gap-3">
+            {noSelection ? (
+              <button
+                onClick={() => router.push("/cart")}
+                className="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white"
+              >
+                去购物车
+              </button>
+            ) : (
+              <button
+                onClick={() => router.push("/")}
+                className="rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white"
+              >
+                去逛逛
+              </button>
+            )}
+          </div>
         </div>
       </main>
     );
