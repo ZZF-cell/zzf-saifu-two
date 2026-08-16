@@ -70,7 +70,36 @@ describe("getProfile — 个人信息 + 订单统计", () => {
     });
     expect(prisma.order.groupBy).toHaveBeenCalledWith({
       by: ["status"],
-      where: { userId: USER_ID },
+      where: { userId: USER_ID, destroyedAt: null },
+      _count: { _all: true },
+    });
+  });
+
+  it("M7：已销毁订单不纳入统计（destroyedAt 过滤与订单列表同口径）", async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      nickname: "小赛夫",
+      role: "USER",
+      ageVerified: true,
+      createdAt: new Date("2026-08-01T00:00:00Z"),
+    } as never);
+
+    // 统计查询本身按 destroyedAt: null 过滤（由 where 断言保证）；此处验证「非销毁订单」正常计数，
+    // 已销毁订单在查询边界就被排除，不会出现在 groupBy 返回里。
+    vi.mocked(prisma.order.groupBy).mockResolvedValue([
+      { status: "PAID", _count: { _all: 1 } },
+    ] as never);
+
+    const profile = await getProfile(USER_ID);
+
+    expect(profile.stats).toEqual({
+      totalOrders: 1,
+      pendingPayment: 0,
+      paidOrders: 1,
+      cancelledOrders: 0,
+    });
+    expect(prisma.order.groupBy).toHaveBeenCalledWith({
+      by: ["status"],
+      where: { userId: USER_ID, destroyedAt: null },
       _count: { _all: true },
     });
   });

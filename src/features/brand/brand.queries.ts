@@ -71,16 +71,20 @@ export async function getBrandOverview(brandId: string): Promise<BrandOverview> 
   ];
   const orderWhere: Prisma.OrderWhereInput = {
     items: { some: { productId: { in: productIds } } },
+    // 已销毁订单品牌侧同样不可见（隐私契约，README §销毁）——概览计数与订单列表同口径，
+    // 否则「概览数字 ≠ 列表条数」且已销毁订单的销售额仍被计入收入。
+    destroyedAt: null,
   };
 
   const [orderCount, paidItems] = await Promise.all([
     prisma.order.count({ where: orderWhere }),
     // 只聚合本品牌商品行的实付金额（price 行总额之和，price 已含 ×qty），
-    // 避免混合品牌订单的整单金额被每个涉及品牌各全额计入（跨品牌金额泄漏）
+    // 避免混合品牌订单的整单金额被每个涉及品牌各全额计入（跨品牌金额泄漏）；
+    // destroyedAt: null 过滤已销毁订单的收入。
     prisma.orderItem.findMany({
       where: {
         productId: { in: productIds },
-        order: { status: { in: paidFamily } },
+        order: { status: { in: paidFamily }, destroyedAt: null },
       },
       select: { price: true },
     }),

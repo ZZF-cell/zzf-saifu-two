@@ -30,10 +30,12 @@ export async function getProfile(userId: string): Promise<UserProfile> {
 
   if (!user) throw new AppError(ERROR_CODES.UNAUTHORIZED, "用户不存在");
 
-  // 订单统计：按状态分组计数，避免 N+1
+  // 订单统计：按状态分组计数，避免 N+1。
+  // destroyedAt: null — 已销毁订单用户侧不可见（隐私契约，README §销毁），
+  // 统计口径与订单列表一致，否则「个人中心卡片数字 ≠ 列表条数」。
   const grouped = await prisma.order.groupBy({
     by: ["status"],
-    where: { userId },
+    where: { userId, destroyedAt: null },
     _count: { _all: true },
   });
 

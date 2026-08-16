@@ -181,62 +181,64 @@ async function main() {
     cancelledAt: Date | null;
     refundedAt: Date | null;
     outTradeNo: string | null;
-    items: { productId: string; productName: string; price: number; qty: number }[];
+    // unitPrice 为商品单价（分）；OrderItem.price 须为行总额 = unitPrice × qty
+    // （README §OrderItem：price 为行总额已含 ×qty，消费端/聚合不得再乘）
+    items: { productId: string; productName: string; unitPrice: number; qty: number }[];
   }[] = [
     {
       id: "seed-order-pending", status: "PENDING",
       createdAt: ts(0, 1), paidAt: null, shippedAt: null, deliveredAt: null,
       completedAt: null, cancelledAt: null, refundedAt: null, outTradeNo: null,
-      items: [{ productId: hand.id, productName: hand.name, price: hand.price, qty: 1 }],
+      items: [{ productId: hand.id, productName: hand.name, unitPrice: hand.price, qty: 1 }],
     },
     {
       id: "seed-order-paid", status: "PAID",
       createdAt: ts(1), paidAt: ts(1, 2), shippedAt: null, deliveredAt: null,
       completedAt: null, cancelledAt: null, refundedAt: null, outTradeNo: "seed-pay-001",
       items: [
-        { productId: oil.id, productName: oil.name, price: oil.price, qty: 2 },
+        { productId: oil.id, productName: oil.name, unitPrice: oil.price, qty: 2 },
       ],
     },
     {
       id: "seed-order-shipped", status: "SHIPPED",
       createdAt: ts(2), paidAt: ts(2, 1), shippedAt: ts(1, 6), deliveredAt: null,
       completedAt: null, cancelledAt: null, refundedAt: null, outTradeNo: "seed-pay-002",
-      items: [{ productId: hand.id, productName: hand.name, price: hand.price, qty: 1 }],
+      items: [{ productId: hand.id, productName: hand.name, unitPrice: hand.price, qty: 1 }],
     },
     {
       id: "seed-order-delivered", status: "DELIVERED",
       createdAt: ts(3), paidAt: ts(3, 1), shippedAt: ts(2, 10), deliveredAt: ts(1, 5),
       completedAt: null, cancelledAt: null, refundedAt: null, outTradeNo: "seed-pay-003",
-      items: [{ productId: oil.id, productName: oil.name, price: oil.price, qty: 3 }],
+      items: [{ productId: oil.id, productName: oil.name, unitPrice: oil.price, qty: 3 }],
     },
     {
       id: "seed-order-completed", status: "COMPLETED",
       createdAt: ts(5), paidAt: ts(5, 1), shippedAt: ts(4, 10), deliveredAt: ts(4, 2),
       completedAt: ts(3, 6), cancelledAt: null, refundedAt: null, outTradeNo: "seed-pay-004",
-      items: [{ productId: hand.id, productName: hand.name, price: hand.price, qty: 1 }],
+      items: [{ productId: hand.id, productName: hand.name, unitPrice: hand.price, qty: 1 }],
     },
     {
       id: "seed-order-refund-requested", status: "REFUND_REQUESTED",
       createdAt: ts(4), paidAt: ts(4, 1), shippedAt: null, deliveredAt: null,
       completedAt: null, cancelledAt: null, refundedAt: null, outTradeNo: "seed-pay-005",
-      items: [{ productId: oil.id, productName: oil.name, price: oil.price, qty: 1 }],
+      items: [{ productId: oil.id, productName: oil.name, unitPrice: oil.price, qty: 1 }],
     },
     {
       id: "seed-order-refunded", status: "REFUNDED",
       createdAt: ts(6), paidAt: ts(6, 1), shippedAt: null, deliveredAt: null,
       completedAt: null, cancelledAt: null, refundedAt: ts(5, 4), outTradeNo: "seed-pay-006",
-      items: [{ productId: hand.id, productName: hand.name, price: hand.price, qty: 2 }],
+      items: [{ productId: hand.id, productName: hand.name, unitPrice: hand.price, qty: 2 }],
     },
     {
       id: "seed-order-cancelled", status: "CANCELLED",
       createdAt: ts(7), paidAt: null, shippedAt: null, deliveredAt: null,
       completedAt: null, cancelledAt: ts(7, 2), refundedAt: null, outTradeNo: null,
-      items: [{ productId: oil.id, productName: oil.name, price: oil.price, qty: 1 }],
+      items: [{ productId: oil.id, productName: oil.name, unitPrice: oil.price, qty: 1 }],
     },
   ];
 
   for (const o of seedOrders) {
-    const total = o.items.reduce((sum, i) => sum + i.price * i.qty, 0);
+    const total = o.items.reduce((sum, i) => sum + i.unitPrice * i.qty, 0);
     await prisma.order.upsert({
       where: { id: o.id },
       // update 同步状态与时间线，保证重跑后状态与 README 一致
@@ -274,7 +276,9 @@ async function main() {
         orderId: o.id,
         productId: i.productId,
         productName: i.productName,
-        price: i.price,
+        // OrderItem.price 必须为行总额 = unitPrice × qty（README §OrderItem 契约），
+        // 写入单价会导致品牌概览/退款/看板聚合少计（再乘 qty 又是错的）。
+        price: i.unitPrice * i.qty,
         qty: i.qty,
       })),
     });

@@ -128,12 +128,54 @@ describe("getBrandOverview — 品牌概览", () => {
     expect(overview.orderCount).toBe(3);
     expect(overview.paidRevenue).toBe(10500); // 行总额直接求和：10000 + 500（price 已含 ×qty，不再乘 qty）
     // 品牌概览必须查 OrderItem 行聚合而非 Order._sum.total（后者含其他品牌金额）
+    expect(prisma.order.count).toHaveBeenCalledWith({
+      where: {
+        items: { some: { productId: { in: ["p1", "p2"] } } },
+        destroyedAt: null, // M8：已销毁订单不计入品牌概览
+      },
+    });
     expect(prisma.orderItem.findMany).toHaveBeenCalledWith({
       where: {
         productId: { in: ["p1", "p2"] },
-        order: { status: { in: ["PAID", "SHIPPED", "DELIVERED", "COMPLETED"] } },
+        order: {
+          status: { in: ["PAID", "SHIPPED", "DELIVERED", "COMPLETED"] },
+          destroyedAt: null, // M8：已销毁订单的收入不计入销售额
+        },
       },
       select: { price: true },
     });
+  });
+
+  it("M8：已销毁订单不计入订单数/销售额（destroyedAt 过滤，与品牌订单列表同口径）", async () => {
+    vi.mocked(prisma.brand.findUnique).mockResolvedValue({
+      id: "brand-1",
+      name: "品牌A",
+      logo: null,
+      status: "APPROVED",
+      createdAt: new Date("2026-01-01"),
+    } as never);
+    vi.mocked(prisma.product.findMany).mockResolvedValue([
+      { id: "p1", status: "APPROVED" },
+    ] as never);
+    vi.mocked(prisma.order.count).mockResolvedValue(2);
+    vi.mocked(prisma.orderItem.findMany).mockResolvedValue([
+      { price: 9900 },
+    ] as never);
+
+    await getBrandOverview("brand-1");
+
+    // 已销毁订单在查询边界就被 destroyedAt: null 排除——断言两条查询都带该过滤条件
+    expect(prisma.order.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ destroyedAt: null }),
+      }),
+    );
+    expect(prisma.orderItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          order: expect.objectContaining({ destroyedAt: null }),
+        }),
+      }),
+    );
   });
 });
