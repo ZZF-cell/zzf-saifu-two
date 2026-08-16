@@ -131,7 +131,7 @@ npx prisma db seed                 # 重新填充种子数据
 | **商品两级类目** | ✅ 已完成 | 大类+子类两级选择与筛选 | `shared/constants/product-categories.ts` 预设清单为唯一来源（改常量即可调整）；Product 增加 `subCategory` 字段（可空兼容旧数据）；品牌提交商品改为大类→子类级联下拉；首页两级筛选；详情/品牌后台/管理后台展示「大类/子类」 |
 | **商品生命周期** | ✅ 已完成 | 撤回待审 / 下架 / 重新上架 / 编辑（双方同状态机）+ 管理员完整审核详情 | `features/brand` 与 `features/admin` 同一套状态机（status 为 String 无需迁移）：`PENDING`→`WITHDRAWN`（品牌撤回）；`APPROVED`⇄`DELISTED`（品牌/管理员可做，重新上架不重质检）；编辑商品「基本信息变更→回 `PENDING` 重审、仅改运营信息（价格/库存）→直改」。**检测证书（`certificates`）属基本信息，仅改证书也会触发重审**。所有变更用 `updateMany` 状态守卫（含品牌侧 `brandId` 归属守卫，越权 403）+ `version:{increment:1}` + AuditLog（snapshot 存 before/after）；守卫 0 行二次 `findUnique` 区分 404/403/409。公开商品详情仅放行 `APPROVED`（DB 层过滤，下架/待审深链 404）。管理端 `GET /api/admin/products/[id]` 返回完整信息 + 品类质检清单 + 已提交证书，审核决策信息闭环 |
 | **微信支付** | ⏳ 待开发 | 接入微信支付 SDK | `shared/adapters/payment.adapter.ts` 定义 `PaymentAdapter` 接口，微信支付实现同一接口；回调幂等逻辑直接复用 `payment.callback.ts` 的 `updateMany` 模式 |
-| **实名认证** | ⏳ 待开发 | 对接实名认证服务 | 新增 `shared/adapters/realname.adapter.ts`；用户表增加 `realNameVerified` 字段，不影响现有登录流程 |
+| **实名认证** | ⏳ 适配器占位已就绪 | 对接实名认证服务 | `shared/adapters/realname.adapter.ts` 已定义 `RealNameAdapter` 接口 + 身份证二要素演示 provider（`REALNAME_MOCK=true`，格式预检 + 演示通过；未配置时安全降级拒绝，与支付适配器一致）。真实服务商接入时实现同一接口替换；用户表增加 `realNameVerified` 字段（待接服务商时落地），不影响现有登录流程 |
 
 > **技术债预警原则**：每个二期功能的 `features/` 模块是独立的，不跨模块修改，只通过现有 Public API 或新增 Adapter 扩展。如果某个功能需要修改现有模块的内部实现，说明边界设计需要调整。
 
