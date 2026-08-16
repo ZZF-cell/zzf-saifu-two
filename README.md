@@ -127,7 +127,7 @@ npx prisma db seed                 # 重新填充种子数据
 | **订单超时自动取消** | ✅ 已完成 | 下单 30 分钟未支付自动取消并回补库存 | `inngest/functions/order-timeout-cancel.ts`：`order/created` 事件 → `step.sleep(30min)` → `cancelExpiredOrder`（**updateMany 状态守卫先于回补库存**，防并发双重回补）；下单时用 `next/server` 的 `after()` 保证 serverless 中事件投递完成 |
 | **确认收货 + 7 天自动确认** | ✅ 已完成 | 用户确认收货（DELIVERED→COMPLETED）后订单可一键销毁；送达 7 天未确认由系统自动完成 | `confirmReceipt`（归属校验 + `updateMany` 带 `status=DELIVERED` 守卫，与后台 `completeOrder`/自动确认并发只命中一次）+ `inngest/functions/order-delivery-complete-sweep.ts`（每天 3 点 cron 扫 `deliveredAt < now-7d` 的 DELIVERED 订单，`autoCompleteDeliveredOrder` 非 DELIVERED 静默 no-op）；三入口共用 `AUTO_CONFIRM_RECEIPT_MS`=7 天窗口 |
 | **品牌入驻** | ✅ 已完成 | 管理员生成邀请码 → 品牌方激活 → 提交资料 → 审核 | `features/invite/`：激活=单事务原子消耗邀请码（`updateMany` 状态守卫含过期判断）+ 创建 PENDING 品牌；管理员审核通过时同事务将负责人升级为 BRAND 角色（品牌已过但角色未升是笔错账）；邀请码列表 EXPIRED 由 `expiresAt` 即时推导不落库；**管理端可作废邀请码**（`POST /api/admin/invite-codes/[code]/revoke`，置 DISABLED，仅 UNUSED 码可作废，已使用/已作废 409；作废码激活时报「已作废」409）。**REJECTED 非死胡同**：品牌审核状态筛选含「已拒绝」，管理员可**重审通过**（改判错杀，`reviewBrand` 守卫放行 `PENDING`/`REJECTED` 的 APPROVED，但 REJECTED 不可再拒 409）或**删除品牌**（`DELETE /api/admin/brands/[id]`，仅 REJECTED 可删，其余状态 409 `BRAND_NOT_DELETABLE`）；删除后商家可用新邀请码重新入驻 |
-| **OSS 图片上传** | ✅ 已完成 | 商品/品牌图片 + 检测证书上传至阿里云 OSS（后端中转） | `features/upload/`：POST `/api/upload`（multipart + MIME 白名单，`purpose` 枚举 `product`/`brand`/`cert`；图片 ≤4MB、证书 PDF ≤10MB；未配置 OSS 返回 503）。`purpose=product`/`brand` 只收图片，`purpose=cert` 收图片 + PDF；`shared/adapters/oss.adapter.ts` 仿 payment 懒初始化 + 纯函数；`shared/ui/Image` 双源（OSS URL + base64）+ 统一占位图。Vercel 请求体上限 4.5MB → 图片限 ≤4MB；更大文件走 OSS 预签名直传（三期） |
+| **OSS 图片上传** | ✅ 已完成 | 商品/品牌图片 + 检测证书上传至阿里云 OSS（后端中转） | `features/upload/`：POST `/api/upload`（multipart + MIME 白名单，`purpose` 枚举 `product`/`brand`/`cert`；图片 ≤4MB、证书 PDF 代码阈值 10MB；未配置 OSS 返回 503）。`purpose=product`/`brand` 只收图片，`purpose=cert` 收图片 + PDF；`shared/adapters/oss.adapter.ts` 仿 payment 懒初始化 + 纯函数；`shared/ui/Image` 双源（OSS URL + base64）+ 统一占位图。**平台实际请求体上限约 4.5MB**（Vercel Node Serverless）：PDF 代码阈值 10MB 属预留，超 4.5MB 的证书会被平台层 413 拦截——大文件直传依赖三期 OSS 预签名方案 |
 | **商品两级类目** | ✅ 已完成 | 大类+子类两级选择与筛选 | `shared/constants/product-categories.ts` 预设清单为唯一来源（改常量即可调整）；Product 增加 `subCategory` 字段（可空兼容旧数据）；品牌提交商品改为大类→子类级联下拉；首页两级筛选；详情/品牌后台/管理后台展示「大类/子类」 |
 | **商品生命周期** | ✅ 已完成 | 撤回待审 / 下架 / 重新上架 / 编辑（双方同状态机）+ 管理员完整审核详情 | `features/brand` 与 `features/admin` 同一套状态机（status 为 String 无需迁移）：`PENDING`→`WITHDRAWN`（品牌撤回）；`APPROVED`⇄`DELISTED`（品牌/管理员可做，重新上架不重质检）；编辑商品「基本信息变更→回 `PENDING` 重审、仅改运营信息（价格/库存）→直改」。**检测证书（`certificates`）属基本信息，仅改证书也会触发重审**。所有变更用 `updateMany` 状态守卫（含品牌侧 `brandId` 归属守卫，越权 403）+ `version:{increment:1}` + AuditLog（snapshot 存 before/after）；守卫 0 行二次 `findUnique` 区分 404/403/409。公开商品详情仅放行 `APPROVED`（DB 层过滤，下架/待审深链 404）。管理端 `GET /api/admin/products/[id]` 返回完整信息 + 品类质检清单 + 已提交证书，审核决策信息闭环 |
 | **微信支付** | ⏳ 待开发 | 接入微信支付 SDK | `shared/adapters/payment.adapter.ts` 定义 `PaymentAdapter` 接口，微信支付实现同一接口；回调幂等逻辑直接复用 `payment.callback.ts` 的 `updateMany` 模式 |
@@ -278,7 +278,7 @@ features/orders/                   features/orders/
 | 模型 | 关键字段 | 说明 | Trade-off 备注 |
 |------|---------|------|---------------|
 | User | phoneHash, passwordHash, role, **status**, ageVerified, **failedLoginAttempts, lockUntil** | 用户（角色: USER/BRAND/ADMIN）| 手机号不存明文，仅存 `pepper + SHA-256` 哈希；密码存 **scrypt 慢哈希**（格式 `scrypt.salt.hash`，旧 SHA-256 兼容并在登录成功时自动升级）；`failedLoginAttempts`/`lockUntil` 实现密码爆破防护（连续失败 ≥5 次锁定 15 分钟）；`status`（`ACTIVE`/`DISABLED`）供管理员禁用/启用，**禁用用户登录直接 403**，不逐请求查库（access token 15min 内仍有效，可接受）；角色用枚举约束避免权限越界 |
-| RefreshToken | userId, tokenHash, expiresAt | JWT Refresh Token Rotation | 存 SHA-256 Hash 而非原文——即使 DB 泄露也无法伪造 Token；定时清理过期记录 |
+| RefreshToken | userId, tokenHash, expiresAt, revokedAt | JWT Refresh Token Rotation | 存 SHA-256 Hash 而非原文——即使 DB 泄露也无法伪造 Token；清理为**惰性**：refresh 轮换事务内顺带删除该用户已过期 token（无独立定时任务）；`revokedAt` 软吊销留痕供重放检测 |
 | VerificationCode | phoneHash, code, expiresAt, **attempts** | 短信验证码（手机号哈希关联）| 不存明文手机号（同 User.phoneHash 规则）；`attempts` 验证码错误尝试计数，≥5 次删除记录（防爆破）；索引 `(phoneHash, createdAt)` 支持滑动窗口查询 |
 | Brand | name, status, inviteCode, ownerId | 品牌（归属用户 + 邀请码）| ownerId 指向 User，一个用户只能拥有一个品牌，防止品牌方多账号绕审核 |
 | InviteCode | code(unique), status, createdBy, usedBy, expiresAt | 品牌入驻邀请码 | `code` 为自然键（大写，剔除 0/O/1/I 混淆字符）；`EXPIRED` 为推导态（UNUSED + 过期）不落库，读取时即时推导；消耗用 `updateMany` 状态守卫（含过期判断）防并发重复激活；激活侧对无效码一律返回 400，防枚举探测码存在性 |
@@ -409,6 +409,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 |------|------|------|
 | GET | `/api/user/profile` | 个人信息 + 订单统计 |
 | PATCH | `/api/user/profile` | 修改昵称 |
+| POST | `/api/user/age-verify` | 年龄验证确认（服务端签发签名 cookie，绕过年龄门禁） |
 
 ### 商品
 | 方法 | 路由 | 说明 |
@@ -428,6 +429,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | GET | `/api/admin/dashboard` | 数据看板（统计卡 + 近 7 天销售/订单状态分布/品类分布，卡片跳转预置筛选） |
 | GET | `/api/admin/brands` | 品牌列表 |
 | POST | `/api/admin/brands/[id]/review` | 品牌审核（PENDING → APPROVED/REJECTED，重复审核 409） |
+| DELETE | `/api/admin/brands/[id]` | 删除品牌（仅 REJECTED 可删，其余状态 409 `BRAND_NOT_DELETABLE`；删除后可用新邀请码重新入驻） |
 | GET | `/api/admin/products` | 商品列表（可按 status 筛选） |
 | GET | `/api/admin/products/[id]` | 商品详情（完整信息 + 品类质检清单 requiredDocs/checkPoints + 已提交证书 certificates，无模板返回 null） |
 | POST | `/api/admin/products/[id]/review` | 商品质检（PENDING → APPROVED/REJECTED，重复质检 409） |
@@ -456,7 +458,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 ### 图片上传（任意登录用户）
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| POST | `/api/upload` | 上传文件到 OSS，返回公开 URL（multipart；`purpose` 枚举 `product`/`brand`/`cert`；`product`/`brand` 只收图片 JPG/PNG/WebP ≤4MB，`cert` 收图片 + PDF ≤10MB；未配置 OSS 返回 503 STORAGE_NOT_CONFIGURED；key 内嵌 userId 按人归属） |
+| POST | `/api/upload` | 上传文件到 OSS，返回公开 URL（multipart；`purpose` 枚举 `product`/`brand`/`cert`；`product`/`brand` 只收图片 JPG/PNG/WebP ≤4MB，`cert` 收图片 + PDF（代码阈值 10MB，**平台实际 4.5MB**）；未配置 OSS 返回 503 STORAGE_NOT_CONFIGURED；key 内嵌 userId 按人归属） |
 
 ### 品牌方（BRAND）
 | 方法 | 路由 | 说明 |
@@ -610,8 +612,8 @@ npm start
 | `NEXT_PUBLIC_BASE_URL` | 是 | 回调基础 URL |
 | `ENCRYPTION_KEYS` | 否 | AES-256-GCM 加密密钥（优先级从左到右，最左侧为当前加密密钥。格式：`v2:newkey,v1:oldkey`）。旧密钥仅在所有历史数据重加密完成后才可移除 |
 | `PEPPER` | 否 | 手机号哈希 pepper（生产环境未配置时 fail-fast 拒绝启动/计算，绝不使用默认值） |
-| `INNGEST_EVENT_KEY` | 否 | Inngest Event Key |
-| `INNGEST_SIGNING_KEY` | 否 | Inngest Signing Key |
+| `INNGEST_EVENT_KEY` | 是（生产） | Inngest Event Key（事件投递必需） |
+| `INNGEST_SIGNING_KEY` | 是（生产） | Inngest Signing Key（serve() 在 cloud 模式强制验签，缺失则 `/api/inngest` 全 401，订单超时/自动确认 cron 全部失效） |
 | `SENTRY_DSN` | 否 | Sentry DSN |
 | `REDIS_URL` | 否 | Redis 连接（预留） |
 
@@ -621,18 +623,16 @@ npm start
 
 ```
         ┌──────┐
-        │ E2E  │  ← 核心闭环：注册→浏览→加购→下单→支付回调→退款
+        │ E2E  │  ← 核心闭环：注册→浏览→加购→结算（部分结算）→下单→支付回调→退款
         │ 3 条 │     （Playwright）
         └──────┘
-     ┌───────────┐
-     │  集成测试  │  ← Service + Prisma 事务（测试数据库），下单/退款/支付回调
-     │  ~15 条   │     （Vitest + Docker 本地 PG）
-     └───────────┘
   ┌─────────────────┐
-  │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证（登录/验证码/补设密码/禁用门禁/Refresh Rotation 吊销）/管理（用户操作/退款回补库存/品牌重审与删除/看板在售口径）/品牌（证书）/邀请码/上传（PDF）/OSS 适配器服务层
-  │    ~268 条        │     （Vitest，mock Prisma 与 $transaction）
+  │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证（登录/验证码/补设密码/禁用门禁/Refresh Rotation 吊销/原子限流）/管理（用户操作/退款回补库存/品牌重审与删除/看板在售口径）/品牌（证书）/邀请码/上传（PDF）/OSS 适配器服务层
+  │  448 条          │     （Vitest，mock Prisma 与 $transaction）
   └─────────────────┘
 ```
+
+> **说明**：仓库没有独立「集成测试」层（无 Docker PG 测试库）。Service + Prisma 事务逻辑由单元测试以 mock `$transaction` 覆盖（事务原子性/守卫语义），真实端到端路径由 Playwright E2E 闭环验证；`docker-compose.yml` 仅提供本地开发 PG。
 
 ### 覆盖率阈值
 
@@ -641,23 +641,25 @@ npm start
 | 状态机 (`*.state-machine.ts`) | **100%** | 每个状态转换路径必须覆盖，包括异常路径 |
 | 金额工具 (`shared/utils/money.ts`) | **100%** | 边界值：0、负数、`Number.MAX_SAFE_INTEGER`、小数点精度 |
 | 加密工具 (`shared/utils/crypto.ts`) | **100%** | 加密/解密往返、空字符串、Unicode、长文本 |
-| Service 层 (`*.service.ts`) | **≥75%**（vitest 全局强制） | 核心业务分支、事务回滚、异常处理路径；**80% 为演进目标**（`npm run test:coverage` 卡全局下限，新增模块需达标） |
+| Service 层 (`*.service.ts`) | **≥75%**（vitest 全局聚合强制） | 核心业务分支、事务回滚、异常处理路径；**80% 为演进目标**（`npm run test:coverage` 卡全局聚合下限） |
 | UI 组件 (`*.components.tsx`) | 不强制 | E2E 覆盖关键交互即可 |
 
-> **强制机制（L12）**：阈值在 `vitest.config.ts` 的 `coverage.thresholds` 中落地——状态机/金额/加密工具三个文件用 **glob 分键强制 100%**，其余文件走全局下限（stmts/lines 75%、funcs 70%、branches 75%）。`npx vitest run --coverage` 不达标即退出码 1。
+> **强制机制（L12）**：阈值在 `vitest.config.ts` 的 `coverage.thresholds` 中落地——状态机/金额/加密工具三个文件用 **glob 分键强制 100%**，其余文件走全局聚合下限（stmts/lines 75%、funcs 70%、branches 75%）。`npx vitest run --coverage` 不达标即退出码 1。
+>
+> **口径声明**：阈值按**全局聚合**（所有文件合并统计）而非逐文件强制。个别模块覆盖率可能低于下限而未被暴露——例如 `cart`/`products` 模块覆盖率明显偏低（约 33%/38%），被高覆盖模块（订单/认证/支付）聚合稀释。计划将逐文件门槛纳入后续迭代（见模块 H CI workflow）。
 
 ### E2E 核心闭环（3 条）
 
 | 测试 | 路径 | 覆盖点 |
 |------|------|--------|
-| 完整下单链路 | 首页 → 商品详情 → 加购 → 结算 → 下单 → 支付跳转 | 乐观锁库存扣减、支付单创建 |
+| 完整下单链路 | 首页 → 商品详情 → 加购 → 结算 → 下单 → 支付跳转 | 乐观锁库存扣减、支付单创建、**购物车部分结算**（仅扣减下单商品，未购商品留购物车） |
 | 退款链路 | 下单 → 支付 → 申请退款 → 管理员确认退款 | 状态机流转、退款幂等 |
 | 订单销毁 | 下单 → 支付 → 发货 → 送达 → 用户确认收货（或 7 天自动）→ 一键销毁 → 用户/品牌侧列表消失、详情 404 | AES 加密、`destroyedAt` 过滤、管理后台保留 |
 
 ### 明确不测试的内容
 
 - **shadcn/ui 组件内部样式**：第三方库自带测试，我们不做冗余验证
-- **支付宝 SDK 内部逻辑**：集成测试只验证 adapter 返回值，不测试支付宝服务端
+- **支付宝 SDK 内部逻辑**：适配器层测试只验证 adapter 返回值，不测试支付宝服务端
 - **Prisma 生成的类型**：ORM 层不需要额外类型测试
 - **Tailwind 样式**：E2E 截图对比仅做首页 + 商品详情页，不做全量像素级回归
 
