@@ -158,6 +158,9 @@ model Order {
   items OrderItem[]
 
   @@index([userId, createdAt(sort: Desc)])
+  // M16：sweep（order-timeout-cancel 按 PENDING、order-delivery-complete 按 DELIVERED）
+  // 与管理后台按 status 分页均为热查询，此前仅 userId 索引 → 全表扫描
+  @@index([status, createdAt(sort: Desc)])
 }
 
 model OrderItem {
@@ -171,6 +174,9 @@ model OrderItem {
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
+  // M16：品牌方按商品查订单（items: { some: { productId: { in } } }）为热查询，
+  // 此前 OrderItem 无 productId 索引 → 品牌订单列表/概览全表扫描
+  @@index([productId])
 }
 
 // ═══════════════════════════════════
