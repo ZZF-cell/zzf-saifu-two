@@ -14,13 +14,16 @@ function AgeGateContent() {
   const redirect =
     rawRedirect.startsWith("/") && !rawRedirect.startsWith("//") ? rawRedirect : "/";
 
-  const handleConfirm = () => {
-    // 设置年龄验证 Cookie（1 年有效），生产环境加 Secure 标志
-    // SameSite=Lax：支付网关跨站回跳时仍携带，避免回跳后重进门禁（与登录 cookie 策略一致）
-    const secure = location.protocol === "https:" ? "; Secure" : "";
-    document.cookie = `age_verified=1; path=/; max-age=${365 * 24 * 60 * 60}; SameSite=Lax${secure}`;
-    // 如果已登录，同步更新 DB 中的 ageVerified（best-effort，不阻塞跳转）
-    fetch("/api/user/age-verify", { method: "POST", credentials: "include" }).catch(() => {});
+  const handleConfirm = async () => {
+    // L4：签名 cookie 只能由服务端签发（/api/user/age-verify 返回 Set-Cookie，
+    // HMAC 验签由中间件完成）。修复前客户端 document.cookie 直接写 age_verified=1
+    // 一行 JS 即可伪造绕过门禁；现在客户端不写任何可伪造的 age_verified。
+    // 同步失败 → fail-closed 停留门禁，不给无签名入口。
+    try {
+      await fetch("/api/user/age-verify", { method: "POST", credentials: "include" });
+    } catch {
+      return;
+    }
     setConfirmed(true);
     setTimeout(() => router.push(redirect), 600);
   };

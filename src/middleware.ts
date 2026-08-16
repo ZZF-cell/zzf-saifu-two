@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser, checkRoutePermission } from "@/shared/auth/middleware";
+import { verifyAgeVerified } from "@/shared/utils/age-verified";
 
 export async function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
@@ -24,11 +25,15 @@ export async function middleware(req: NextRequest) {
   }
 
   // 年龄验证门禁：已登录（token 有效）放行 —— 登录用户年龄已验证，支付回跳后不再被误拦；
-  // 未登录且无 age_verified cookie → 拦到 age-gate（含首页，满足「访问页面第一步」先认证）。
+  // 未登录 → 验签 age_verified cookie（L4）：签名不符/伪造/过期一律视为未认证，拦到 age-gate
+  //（含首页，满足「访问页面第一步」先认证）。修复前只看 cookie 存在性，客户端可伪造跳过。
   const authUser = await getAuthUser(req);
-  const ageVerified = req.cookies.get("age_verified")?.value;
-  if (!ageVerified && !authUser) {
-    return NextResponse.redirect(new URL("/age-gate?redirect=" + encodeURIComponent(path), req.url));
+  if (!authUser) {
+    const ageVerified = req.cookies.get("age_verified")?.value;
+    const verified = ageVerified ? await verifyAgeVerified(ageVerified) : false;
+    if (!verified) {
+      return NextResponse.redirect(new URL("/age-gate?redirect=" + encodeURIComponent(path), req.url));
+    }
   }
 
   // 路由权限校验

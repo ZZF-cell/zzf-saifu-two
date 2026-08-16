@@ -63,33 +63,53 @@ function loginRedirect(req: NextRequest): NextResponse {
   return NextResponse.redirect(url);
 }
 
-export function checkRoutePermission(
-  req: NextRequest,
-  authUser: AuthUser | null,
-): NextResponse | null {
-  const path = req.nextUrl.pathname;
+/**
+ * M10：已登录但角色不符 → 403 而非跳登录。
+ * 修复前一律 loginRedirect：已登录的 BRAND 访问 /admin → 被送去 /login?redirect=/admin，
+ * login 页对已登录用户自动回跳 → 又回到 /admin → 无限重定向循环。
+ * 403 直接终止循环，且语义正确（已认证 ≠ 有权限）。
+ */
+function forbidden(): NextResponse {
+  return NextResponse.json(
+    { error: "FORBIDDEN", message: "您没有访问该页面的权限" },
+    { status: 403 },
+  );
+}
 
+/** 路由守卫决策（纯函数，可单测）：路径 + 角色 → 放行 / 去登录 / 403 */
+export type RouteGuardDecision = "allow" | "login" | "forbidden";
+
+export function getRouteGuardDecision(
+  path: string,
+  authUser: AuthUser | null,
+): RouteGuardDecision {
   // 管理后台
   if (path.startsWith("/admin")) {
-    if (!authUser || authUser.role !== "ADMIN") {
-      return loginRedirect(req);
-    }
+    if (!authUser) return "login";
+    if (authUser.role !== "ADMIN") return "forbidden"; // M10
   }
 
   // 品牌方后台（仅 BRAND：品牌中心是品牌方自己的后台，ADMIN 走 /admin）
   if (path.startsWith("/brand")) {
-    if (!authUser || authUser.role !== "BRAND") {
-      return loginRedirect(req);
-    }
+    if (!authUser) return "login";
+    if (authUser.role !== "BRAND") return "forbidden"; // M10
   }
 
   // 需要登录的页面
   const protectedPaths = ["/cart", "/checkout", "/orders", "/account"];
   if (protectedPaths.some((p) => path.startsWith(p))) {
-    if (!authUser) {
-      return loginRedirect(req);
-    }
+    if (!authUser) return "login";
   }
 
+  return "allow";
+}
+
+export function checkRoutePermission(
+  req: NextRequest,
+  authUser: AuthUser | null,
+): NextResponse | null {
+  const decision = getRouteGuardDecision(req.nextUrl.pathname, authUser);
+  if (decision === "login") return loginRedirect(req);
+  if (decision === "forbidden") return forbidden();
   return null; // 放行
 }
