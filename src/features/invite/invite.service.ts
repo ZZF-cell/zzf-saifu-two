@@ -72,6 +72,10 @@ export async function activateInviteCode(
         select: { status: true, expiresAt: true },
       });
       if (!ic) throw new AppError(ERROR_CODES.INVITE_CODE_INVALID, "邀请码无效");
+      if (ic.status === "DISABLED") {
+        // L6：管理端主动作废的码不可激活（同 USED/EXPIRED 一样暴露存在性，管理员明确操作不算枚举泄漏）
+        throw new AppError(ERROR_CODES.INVITE_CODE_DISABLED, "邀请码已作废");
+      }
       if (ic.status === "USED") {
         throw new AppError(ERROR_CODES.INVITE_CODE_USED, "邀请码已被使用");
       }

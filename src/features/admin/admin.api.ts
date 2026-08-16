@@ -340,6 +340,21 @@ export const generateInviteCodes = withValidation(
   },
 );
 
+/**
+ * POST /api/admin/invite-codes/[code]/revoke — 作废邀请码（L6）
+ * 作废 = 置 DISABLED，仅 UNUSED 码可作废；已使用/已作废 → 409，不存在 → 404
+ */
+export async function revokeInviteCode(req: Request, ctx: { params: Promise<{ code: string }> }) {
+  try {
+    const admin = await requireRole(req, ["ADMIN"]);
+    const { code } = await ctx.params;
+    await adminService.revokeInviteCode(admin.userId, code);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
 // ── 用户管理操作 ──
 
 // action 与参数强耦合（discriminatedUnion）：setRole 缺 role / setStatus 缺 status /

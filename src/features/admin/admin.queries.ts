@@ -483,7 +483,7 @@ export async function getAuditTemplates(): Promise<AuditTemplate[]> {
 export interface AdminInviteCodeRow {
   id: string;
   code: string;
-  status: string; // UNUSED | USED | EXPIRED（EXPIRED 为推导态，不落库）
+  status: string; // UNUSED | USED | DISABLED | EXPIRED（EXPIRED 为推导态，不落库）
   createdBy: string;
   usedBy: string | null;
   createdAt: Date;
@@ -499,9 +499,9 @@ export interface AdminInviteCodeListResult {
   totalPages: number;
 }
 
-/** 推导行状态：USED > EXPIRED > UNUSED（EXPIRED 由 expiresAt 即时推导） */
+/** 推导行状态：USED/DISABLED 落库态 > EXPIRED（由 expiresAt 即时推导）> UNUSED */
 function deriveInviteStatus(status: string, expiresAt: Date | null, now: Date): string {
-  if (status === "USED") return "USED";
+  if (status === "USED" || status === "DISABLED") return status;
   if (expiresAt && expiresAt.getTime() < now.getTime()) return "EXPIRED";
   return "UNUSED";
 }
@@ -518,6 +518,8 @@ export async function getAdminInviteCodes(params: {
   const where: Prisma.InviteCodeWhereInput = {};
   if (status === "USED") {
     where.status = "USED";
+  } else if (status === "DISABLED") {
+    where.status = "DISABLED";
   } else if (status === "EXPIRED") {
     where.status = "UNUSED";
     where.expiresAt = { lt: now };

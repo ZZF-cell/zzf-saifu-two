@@ -37,6 +37,7 @@ export const ERROR_CODES = {
   INVITE_CODE_INVALID: { status: 400, code: "INVITE_CODE_INVALID" },
   INVITE_CODE_USED: { status: 409, code: "INVITE_CODE_USED" },
   INVITE_CODE_EXPIRED: { status: 410, code: "INVITE_CODE_EXPIRED" },
+  INVITE_CODE_DISABLED: { status: 409, code: "INVITE_CODE_DISABLED" },
 
   // 存储/上传 8xxx
   STORAGE_NOT_CONFIGURED: { status: 503, code: "STORAGE_NOT_CONFIGURED" },

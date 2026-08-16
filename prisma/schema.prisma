@@ -76,7 +76,7 @@ model Brand {
 model InviteCode {
   id        String   @id @default(cuid())
   code      String   @unique          // 邀请码明文（统一大写），自然键（upsert 键）
-  status    String   @default("UNUSED") // UNUSED | USED（EXPIRED 由 expiresAt 读取时推导，不落库）
+  status    String   @default("UNUSED") // UNUSED | USED | DISABLED（EXPIRED 由 expiresAt 读取时推导，不落库；DISABLED 为管理端主动作废）
   createdBy String
   usedBy    String?                    // 使用用户 id（仅参考，无外键约束，参照 OrderItem.productId 模式）
   createdAt DateTime @default(now())

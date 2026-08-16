@@ -1746,6 +1746,18 @@ function InviteCodesTab() {
     }
   };
 
+  // L6：作废邀请码（仅待使用/已过期可作废；作废后不可再激活）
+  const handleRevoke = async (code: string) => {
+    if (!window.confirm(`确认作废邀请码 ${code}？作废后该码不可再激活。`)) return;
+    setError("");
+    try {
+      await apiCall("POST", `/api/admin/invite-codes/${encodeURIComponent(code)}/revoke`);
+      await fetchCodes();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "作废失败");
+    }
+  };
+
   const fmtTime = (v: string | null) =>
     v ? new Date(v).toLocaleString("zh-CN", { hour12: false }) : "—";
 
@@ -1790,6 +1802,7 @@ function InviteCodesTab() {
                 <th className="px-4 py-3 font-medium">使用人</th>
                 <th className="px-4 py-3 font-medium">过期时间</th>
                 <th className="px-4 py-3 font-medium">使用时间</th>
+                <th className="px-4 py-3 font-medium">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -1810,6 +1823,18 @@ function InviteCodesTab() {
                   </td>
                   <td className="px-3 py-2 text-sm text-gray-400">{fmtTime(c.expiresAt)}</td>
                   <td className="px-3 py-2 text-sm text-gray-400">{fmtTime(c.usedAt)}</td>
+                  <td className="px-3 py-2 text-sm">
+                    {c.status === "UNUSED" || c.status === "EXPIRED" ? (
+                      <button
+                        onClick={() => handleRevoke(c.code)}
+                        className="rounded-md border border-red-200 px-2.5 py-1 text-xs text-red-600 transition hover:bg-red-50"
+                      >
+                        作废
+                      </button>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

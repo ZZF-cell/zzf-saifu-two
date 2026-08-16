@@ -24,6 +24,7 @@ export const STATUS_LABEL: Record<string, string> = {
   UNUSED: "待使用",
   USED: "已使用",
   EXPIRED: "已过期",
+  DISABLED: "已作废",
 };
 
 export function StatusBadge({ status }: { status: string }) {

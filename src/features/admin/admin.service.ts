@@ -433,6 +433,33 @@ export async function generateInviteCodes(
   return codes;
 }
 
+/**
+ * 作废邀请码 — L6：邀请码管理此前只有生成/消耗，无撤销手段；泄露或误发的码只能等过期，
+ * 过期又无法显式标记。作废 = 置 DISABLED（仅 UNUSED 码可作废），同事务写审计。
+ * updateMany 状态守卫：已使用(USED)/已作废(DISABLED) 的码不命中，并发双击只生效一次。
+ */
+export async function revokeInviteCode(operatorId: string, code: string): Promise<void> {
+  const normalized = code.trim().toUpperCase();
+  await prisma.$transaction(async (tx) => {
+    const revoked = await tx.inviteCode.updateMany({
+      where: { code: normalized, status: "UNUSED" },
+      data: { status: "DISABLED" },
+    });
+    if (revoked.count === 0) {
+      const ic = await tx.inviteCode.findUnique({
+        where: { code: normalized },
+        select: { status: true },
+      });
+      if (!ic) throw new AppError(ERROR_CODES.INVITE_CODE_NOT_FOUND, "邀请码不存在");
+      if (ic.status === "USED") {
+        throw new AppError(ERROR_CODES.INVITE_CODE_USED, "邀请码已被使用，无法作废");
+      }
+      throw new AppError(ERROR_CODES.INVITE_CODE_DISABLED, "邀请码已作废");
+    }
+    await writeAuditLog(tx, "InviteCode", normalized, "INVITE_REVOKED", operatorId);
+  });
+}
+
 // ── 用户管理：改角色 / 禁用启用 / 解锁 / 重置密码 / 清除年龄验证 ──
 // 约束：管理员不能对自己操作（setRole / setStatus）；解锁仅限锁定用户（未锁定 409）；
 // 全部状态变更沿用 updateMany + 同事务审计策略，防并发竞态

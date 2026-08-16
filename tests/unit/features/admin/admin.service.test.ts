@@ -16,7 +16,7 @@ vi.mock("@/shared/db/client", () => ({
     product: { updateMany: vi.fn(), findUnique: vi.fn() },
     order: { updateMany: vi.fn(), findUnique: vi.fn() },
     user: { update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
-    inviteCode: { create: vi.fn() },
+    inviteCode: { create: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
     auditLog: { create: vi.fn() },
     categoryAuditTemplate: { upsert: vi.fn(), deleteMany: vi.fn() },
     refreshToken: { deleteMany: vi.fn() },
@@ -56,6 +56,7 @@ import {
   completeOrder,
   confirmRefund,
   generateInviteCodes,
+  revokeInviteCode,
   setUserRole,
   setUserStatus,
   unlockUser,
@@ -71,7 +72,7 @@ type Tx = {
   product: { updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
   order: { updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
   user: { update: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
-  inviteCode: { create: ReturnType<typeof vi.fn> };
+  inviteCode: { create: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
   auditLog: { create: ReturnType<typeof vi.fn> };
   categoryAuditTemplate: { upsert: ReturnType<typeof vi.fn>; deleteMany: ReturnType<typeof vi.fn> };
   refreshToken: { deleteMany: ReturnType<typeof vi.fn> };
@@ -88,7 +89,7 @@ beforeEach(() => {
     product: { updateMany: vi.fn(), findUnique: vi.fn() },
     order: { updateMany: vi.fn(), findUnique: vi.fn() },
     user: { update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
-    inviteCode: { create: vi.fn() },
+    inviteCode: { create: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
     auditLog: { create: vi.fn() },
     categoryAuditTemplate: { upsert: vi.fn(), deleteMany: vi.fn() },
     refreshToken: { deleteMany: vi.fn() },
@@ -719,6 +720,71 @@ describe("generateInviteCodes — 批量生成邀请码", () => {
     for (const call of tx.inviteCode.create.mock.calls) {
       expect(call[0].data.expiresAt).toBe(future);
     }
+  });
+});
+
+// ── 作废邀请码（L6） ──
+
+describe("revokeInviteCode — 作废邀请码（置 DISABLED，仅 UNUSED 可作废）", () => {
+  it("UNUSED 码作废 → 置 DISABLED + 审计 INVITE_REVOKED（同事务）", async () => {
+    tx.inviteCode.updateMany.mockResolvedValue({ count: 1 });
+
+    await revokeInviteCode("admin-1", "inv-code-001");
+
+    expect(tx.inviteCode.updateMany).toHaveBeenCalledWith({
+      where: { code: "INV-CODE-001", status: "UNUSED" },
+      data: { status: "DISABLED" },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          targetType: "InviteCode",
+          targetId: "INV-CODE-001",
+          action: "INVITE_REVOKED",
+          operatorId: "admin-1",
+        }),
+      }),
+    );
+  });
+
+  it("小写 code → 归一化为大写后再作废（与激活侧同规约）", async () => {
+    tx.inviteCode.updateMany.mockResolvedValue({ count: 1 });
+
+    await revokeInviteCode("admin-1", "inv-abc-1234");
+
+    expect(tx.inviteCode.updateMany).toHaveBeenCalledWith({
+      where: { code: "INV-ABC-1234", status: "UNUSED" },
+      data: { status: "DISABLED" },
+    });
+  });
+
+  it("已使用(USED)码 → 409 INVITE_CODE_USED，不写审计", async () => {
+    tx.inviteCode.updateMany.mockResolvedValue({ count: 0 });
+    tx.inviteCode.findUnique.mockResolvedValue({ status: "USED" });
+
+    await expect(revokeInviteCode("admin-1", "INV-USED")).rejects.toMatchObject({
+      code: ERROR_CODES.INVITE_CODE_USED.code,
+    });
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("已作废(DISABLED)码 → 409 INVITE_CODE_DISABLED（并发双击只生效一次）", async () => {
+    tx.inviteCode.updateMany.mockResolvedValue({ count: 0 });
+    tx.inviteCode.findUnique.mockResolvedValue({ status: "DISABLED" });
+
+    await expect(revokeInviteCode("admin-1", "INV-DONE")).rejects.toMatchObject({
+      code: ERROR_CODES.INVITE_CODE_DISABLED.code,
+    });
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("不存在的码 → 404 INVITE_CODE_NOT_FOUND", async () => {
+    tx.inviteCode.updateMany.mockResolvedValue({ count: 0 });
+    tx.inviteCode.findUnique.mockResolvedValue(null);
+
+    await expect(revokeInviteCode("admin-1", "INV-NOPE")).rejects.toMatchObject({
+      code: ERROR_CODES.INVITE_CODE_NOT_FOUND.code,
+    });
   });
 });
 

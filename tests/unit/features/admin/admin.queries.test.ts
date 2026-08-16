@@ -15,6 +15,7 @@ vi.mock("@/shared/db/client", () => ({
     brand: { count: vi.fn() },
     product: { count: vi.fn(), groupBy: vi.fn() },
     order: { count: vi.fn(), aggregate: vi.fn(), groupBy: vi.fn(), findMany: vi.fn() },
+    inviteCode: { findMany: vi.fn(), count: vi.fn() },
   },
 }));
 
@@ -32,7 +33,7 @@ vi.mock("@/features/orders", () => ({
 }));
 
 import { prisma } from "@/shared/db/client";
-import { getDashboardStats } from "@/features/admin/admin.queries";
+import { getDashboardStats, getAdminInviteCodes } from "@/features/admin/admin.queries";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -101,5 +102,43 @@ describe("getDashboardStats — 数据看板", () => {
     expect(stats.pendingProductCount).toBe(0);
     expect(stats.paidRevenue).toBe(0);
     expect(stats.categoryDist).toEqual([]);
+  });
+});
+
+// ── 邀请码列表（L6 DISABLED 作废态） ──
+
+describe("getAdminInviteCodes — 邀请码列表（DISABLED 作废态）", () => {
+  it("DISABLED 为落库态，不受 EXPIRED 推导覆盖（即使 expiresAt 已过仍显示「已作废」）", async () => {
+    vi.mocked(prisma.inviteCode.findMany).mockResolvedValue([
+      {
+        id: "c1",
+        code: "INV-AAAA-1111",
+        status: "DISABLED",
+        createdBy: "admin-1",
+        usedBy: null,
+        createdAt: new Date("2026-08-01T00:00:00Z"),
+        usedAt: null,
+        expiresAt: new Date("2020-01-01T00:00:00Z"), // 已过期，但 DISABLED 优先于 EXPIRED 推导
+      },
+    ] as never);
+    vi.mocked(prisma.inviteCode.count).mockResolvedValue(1);
+
+    const result = await getAdminInviteCodes({ page: 1, pageSize: 20 });
+
+    expect(result.items[0].status).toBe("DISABLED");
+  });
+
+  it("status=DISABLED 筛选 → 直查 DISABLED（findMany + count 同 where）", async () => {
+    vi.mocked(prisma.inviteCode.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.inviteCode.count).mockResolvedValue(0);
+
+    await getAdminInviteCodes({ page: 1, pageSize: 20, status: "DISABLED" });
+
+    expect(prisma.inviteCode.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { status: "DISABLED" } }),
+    );
+    expect(prisma.inviteCode.count).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { status: "DISABLED" } }),
+    );
   });
 });

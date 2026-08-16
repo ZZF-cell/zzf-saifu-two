@@ -176,6 +176,21 @@ describe("activateInviteCode — 品牌入驻激活", () => {
     });
   });
 
+  it("消耗未命中且码已作废 → 409 INVITE_CODE_DISABLED（作废码不可激活）", async () => {
+    tx.brand.findUnique.mockResolvedValue(null);
+    tx.user.findUnique.mockResolvedValue({ role: "USER" });
+    tx.inviteCode.updateMany.mockResolvedValue({ count: 0 });
+    tx.inviteCode.findUnique.mockResolvedValue({ status: "DISABLED", expiresAt: null });
+
+    await expect(
+      activateInviteCode({ code: "INVITE-BRAND-101", name: "测试品牌" }, "user-1"),
+    ).rejects.toMatchObject({
+      code: ERROR_CODES.INVITE_CODE_DISABLED.code,
+      statusCode: 409,
+    });
+    expect(tx.brand.create).not.toHaveBeenCalled();
+  });
+
   it("并发兜底：brand.create 唯一约束冲突且用户已有品牌 → 409 BRAND_ALREADY_EXISTS", async () => {
     tx.brand.findUnique.mockResolvedValueOnce(null); // 首次查无品牌
     tx.user.findUnique.mockResolvedValue({ role: "USER" });
