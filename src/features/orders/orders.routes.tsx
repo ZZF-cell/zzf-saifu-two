@@ -132,6 +132,12 @@ function usePayQr() {
     (orderId: string) => {
       stopPolling();
       setPayTarget(null);
+      // L9：支付完成即清理「待支付提醒」标记——订单已非待支付，提醒失去意义
+      try {
+        sessionStorage.removeItem(LAST_PAY_KEY);
+      } catch {
+        // 忽略
+      }
       router.push(`/orders/${orderId}`);
     },
     [router, stopPolling],
@@ -206,6 +212,24 @@ function useLastPayOrder() {
     setLastPayOrderId(null);
   }, []);
 
+  // L9 待支付提醒清理：提醒指向的订单已非 PENDING（已支付/已取消/已销毁/过期被自动取消）
+  // 时自动清除标记，避免点击「去支付」跳转到一个早已终结的订单。
+  useEffect(() => {
+    if (!lastPayOrderId) return;
+    let stale = false;
+    apiCall("GET", `/api/orders/${lastPayOrderId}`)
+      .then((data) => {
+        if (stale) return;
+        if (!data || data.status !== "PENDING") dismissLastPay();
+      })
+      .catch(() => {
+        // 网络异常保持提醒，用户手动关闭；404 也会被 catch 兜住，不误清
+      });
+    return () => {
+      stale = true;
+    };
+  }, [lastPayOrderId, dismissLastPay]);
+
   return { lastPayOrderId, dismissLastPay };
 }
 
@@ -230,6 +254,12 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  // M13/E1 支付不可用提示：qrCode 为 null 时区分「未配置(dev)」与「创建失败(真实异常)」，
+  // 都给出「去订单详情继续支付」的显式重试入口，而非只留一行易错过的红字。
+  const [paymentNotice, setPaymentNotice] = useState<{
+    orderId: string;
+    state: "unavailable" | "failed";
+  } | null>(null);
   // 下单后服务端重算金额与购物车显示不一致（商品调价）→ 提示用户后等待确认
   const [priceChanged, setPriceChanged] = useState(false);
   const [finalTotal, setFinalTotal] = useState(0);
@@ -237,6 +267,7 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
     qrCode: string | null;
     orderId: string;
     total: number;
+    paymentState: "ok" | "unavailable" | "failed";
   } | null>(null);
   const [address, setAddress] = useState({
     name: "",
@@ -295,6 +326,7 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
     setSubmitting(true);
     setError("");
     setPriceChanged(false);
+    setPaymentNotice(null);
     try {
       const order = await apiCall("POST", "/api/orders", {
         items: cart!.items.map((item) => ({
@@ -312,12 +344,17 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
       // 与购物车展示金额不一致（可能被调价）→ 提示用户确认后继续，绝不静默改价
       if (typeof order.total === "number" && order.total !== cart!.totalAmount) {
         setFinalTotal(order.total);
-        setPendingOrder({ qrCode: order.qrCode, orderId: order.orderId, total: order.total });
+        setPendingOrder({
+          qrCode: order.qrCode,
+          orderId: order.orderId,
+          total: order.total,
+          paymentState: order.paymentState ?? "unavailable",
+        });
         setPriceChanged(true);
         return;
       }
 
-      showQrCode(order);
+      showPayOutcome(order);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "下单失败";
       setError(msg);
@@ -330,13 +367,26 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
     }
   };
 
-  /** 展示扫码支付：有二维码弹窗扫码；无二维码显式提示（订单已创建，不静默跳详情） */
-  const showQrCode = (order: { qrCode: string | null; orderId: string; total: number }) => {
+  /**
+   * 展示支付结果（M13/E1）：
+   * - qrCode 有值 → 弹扫码窗
+   * - qrCode 为 null → 显式提示 + 「去订单详情继续支付」重试入口（区分未配置/真实失败），
+   *   绝不静默跳详情或只留一行红字
+   */
+  const showPayOutcome = (order: {
+    qrCode: string | null;
+    orderId: string;
+    total: number;
+    paymentState?: "ok" | "unavailable" | "failed";
+  }) => {
     if (order.qrCode) {
       openPayQr(order.qrCode, order.orderId, order.total);
-    } else {
-      setError("支付服务暂不可用，订单已创建，可稍后到订单详情页继续支付");
+      return;
     }
+    setPaymentNotice({
+      orderId: order.orderId,
+      state: order.paymentState === "failed" ? "failed" : "unavailable",
+    });
   };
 
   if (loading) {
@@ -454,7 +504,24 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
           <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>
         )}
 
-        {priceChanged && pendingOrder ? (
+        {paymentNotice ? (
+          // M13：支付不可用/失败时显式提示 + 重试入口（订单已创建，绝不静默）
+          // 与「提交订单」按钮互斥——防止用户误以为未下单而重复下单
+          <div className="rounded-lg bg-yellow-50 px-3 py-3 text-sm text-yellow-700">
+            <p>
+              {paymentNotice.state === "failed"
+                ? "支付服务异常，订单已创建"
+                : "支付服务暂不可用，订单已创建"}
+              ，可稍后继续支付
+            </p>
+            <button
+              onClick={() => router.push(`/orders/${paymentNotice.orderId}`)}
+              className="mt-2 w-full rounded-lg bg-primary py-3 text-sm font-medium text-white transition hover:opacity-90"
+            >
+              去订单详情继续支付
+            </button>
+          </div>
+        ) : priceChanged && pendingOrder ? (
           // 下单时服务端按实时价重算，与购物车展示金额不一致（可能被调价）
           // 订单已创建，金额以服务端快照为准 —— 明确提示后由用户确认继续支付
           <div className="rounded-lg bg-yellow-50 px-3 py-3 text-sm text-yellow-700">
@@ -463,7 +530,7 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
               <b className="text-base">¥{fenToYuan(finalTotal)}</b> 为准
             </p>
             <button
-              onClick={() => showQrCode(pendingOrder)}
+              onClick={() => showPayOutcome(pendingOrder)}
               className="mt-2 w-full rounded-lg bg-primary py-3 text-sm font-medium text-white transition hover:opacity-90"
             >
               继续支付 ¥{fenToYuan(finalTotal)}

@@ -60,6 +60,33 @@ describe("getOrderDetail — 销毁消失", () => {
     });
   });
 
+  it("非本人订单 → 抛 ORDER_NOT_FOUND（统一 404 折叠，不泄露订单存在性）", async () => {
+    // E2 隐私边界：成人用品订单号即隐私，非本人订单与已销毁订单同口径 404。
+    // 若抛 403 ORDER_NOT_OWNED，攻击者可逐 id 探测「哪些订单存在」，统一 404 不可枚举。
+    findUniqueMock.mockResolvedValue({
+      id: "order-1",
+      userId: "user-other", // 非本人
+      total: 29900,
+      status: "PAID",
+      shippingAddress: "encrypted-addr",
+      privacy: { anonymousPackaging: true },
+      outTradeNo: "order-1",
+      destroyedAt: null,
+      paidAt: new Date(),
+      shippedAt: null,
+      deliveredAt: null,
+      completedAt: null,
+      cancelledAt: null,
+      refundedAt: null,
+      createdAt: new Date(),
+      items: [],
+    });
+
+    await expect(getOrderDetail("user-1", "order-1")).rejects.toMatchObject({
+      code: "ORDER_NOT_FOUND",
+    });
+  });
+
   it("正常订单 → 金额/流水号/明细原样返回", async () => {
     findUniqueMock.mockResolvedValue({
       id: "order-2",

@@ -14,9 +14,13 @@ vi.mock("@/shared/db/client", () => ({
   prisma: { $transaction: vi.fn() },
 }));
 
-// 阻断订单 service 对真实 payment 模块的调用（支付宝网关不可测）；createPayment 由用例 mock
+// 阻断订单 service 对真实 payment 模块的调用（支付宝网关不可测）；createPayment/isPaymentConfigured 由用例 mock
 vi.mock("@/features/payment", () => ({
-  paymentService: { createPayment: vi.fn(), queryAlipayTrade: vi.fn() },
+  paymentService: {
+    createPayment: vi.fn(),
+    queryAlipayTrade: vi.fn(),
+    isPaymentConfigured: vi.fn(),
+  },
 }));
 vi.mock("@/shared/adapters/payment.adapter", () => ({
   paymentAdapter: { createPayment: vi.fn(), verifyCallback: vi.fn(), queryPayment: vi.fn() },
@@ -60,6 +64,8 @@ beforeEach(() => {
     order: { create: vi.fn() },
   };
   transactionMock.mockImplementation((fn: (tx: Tx) => Promise<unknown>) => fn(tx));
+  // E1 默认：支付宝未配置（paymentState=unavailable），支付测试用例自行开启
+  vi.mocked(paymentService.isPaymentConfigured).mockReturnValue(false);
 });
 
 describe("createOrder — 购物车子集校验（防回退全量误删）", () => {
@@ -111,5 +117,100 @@ describe("createOrder — 购物车子集校验（防回退全量误删）", () 
       createOrder("u1", { ...baseInput, items: [] }),
     ).rejects.toThrow("订单至少包含一个商品");
     expect(tx.cartItem.findMany).not.toHaveBeenCalled();
+  });
+});
+
+// ── M2 去重 / M3 qty 上限 / E1 支付失败可见 ──
+
+describe("createOrder — M2 去重 / M3 qty 上限 / E1 支付状态", () => {
+  /** 事务内 happy path：购物车含 p1、商品可扣、建单成功 */
+  function mockHappyPath(total = 19900) {
+    tx.cartItem.findMany.mockResolvedValue([{ productId: "p1" }]);
+    tx.product.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
+      Promise.resolve({
+        id: where.id, name: "商品1", price: 19900, stock: 100, version: 1, status: "APPROVED",
+      }),
+    );
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+    tx.order.create.mockResolvedValue({
+      id: "order1", total, status: "PENDING", items: [],
+    });
+  }
+
+  it("M2：同一 productId 重复行合并 → 单次扣减合并后 qty、建单仅一行", async () => {
+    mockHappyPath(99500);
+
+    const r = await createOrder("u1", {
+      ...baseInput,
+      items: [{ productId: "p1", qty: 2 }, { productId: "p1", qty: 3 }],
+    });
+
+    // 合并后按 qty=5 单次扣减（修复前逐行扣 2+3 可「逐行均足、合计超卖」）
+    expect(tx.product.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.product.updateMany).toHaveBeenCalledWith({
+      where: { id: "p1", stock: { gte: 5 }, version: 1 },
+      data: { stock: { decrement: 5 }, version: { increment: 1 }, sales: { increment: 5 } },
+    });
+    // 建单只有一行同商品 OrderItem（修复前生成两条，对账混乱）
+    expect(tx.order.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          items: { create: [expect.objectContaining({ productId: "p1", qty: 5 })] },
+        }),
+      }),
+    );
+    expect(r.total).toBe(99500);
+  });
+
+  it("M3：单行 qty 超上限(1000) → VALIDATION_ERROR，事务内不执行任何操作", async () => {
+    await expect(
+      createOrder("u1", { ...baseInput, items: [{ productId: "p1", qty: 1000 }] }),
+    ).rejects.toThrow(/p1/);
+    expect(tx.cartItem.findMany).not.toHaveBeenCalled();
+    expect(tx.order.create).not.toHaveBeenCalled();
+  });
+
+  it("M3：重复行合并后 qty 超上限 → VALIDATION_ERROR（防重复行绕过单行上限）", async () => {
+    await expect(
+      createOrder("u1", {
+        ...baseInput,
+        items: [{ productId: "p1", qty: 500 }, { productId: "p1", qty: 500 }],
+      }),
+    ).rejects.toThrow(/p1/);
+    expect(tx.cartItem.findMany).not.toHaveBeenCalled();
+  });
+
+  it("E1：已配置且支付单创建成功 → paymentState=ok + qrCode", async () => {
+    mockHappyPath();
+    vi.mocked(paymentService.isPaymentConfigured).mockReturnValue(true);
+    vi.mocked(paymentService.createPayment).mockResolvedValue({ qrCode: "alipay_qr_1" });
+
+    const r = await createOrder("u1", baseInput);
+
+    expect(r.paymentState).toBe("ok");
+    expect(r.qrCode).toBe("alipay_qr_1");
+    expect(r.orderId).toBe("order1");
+  });
+
+  it("E1：已配置但支付单创建失败 → paymentState=failed，订单仍创建（不阻塞下单）", async () => {
+    mockHappyPath();
+    vi.mocked(paymentService.isPaymentConfigured).mockReturnValue(true);
+    vi.mocked(paymentService.createPayment).mockRejectedValue(new Error("alipay down"));
+
+    const r = await createOrder("u1", baseInput);
+
+    expect(r.paymentState).toBe("failed");
+    expect(r.qrCode).toBeNull();
+    expect(r.orderId).toBe("order1");
+  });
+
+  it("E1：未配置 → paymentState=unavailable 且不调 createPayment（dev 降级）", async () => {
+    mockHappyPath();
+
+    const r = await createOrder("u1", baseInput);
+
+    expect(r.paymentState).toBe("unavailable");
+    expect(r.qrCode).toBeNull();
+    expect(paymentService.createPayment).not.toHaveBeenCalled();
   });
 });

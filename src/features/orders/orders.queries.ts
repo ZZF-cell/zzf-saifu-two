@@ -232,11 +232,14 @@ export async function getOrderDetail(
     },
   });
 
-  if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
-  if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_OWNED, "无权查看该订单");
-
-  // 已销毁订单对用户视为不存在（404，不泄露存在性）；管理后台仍保留全部数据
-  if (order.destroyedAt) {
+  // E2 隐私边界：非本人订单与已销毁订单一律 404「订单不存在」。
+  // 若先抛 403 ORDER_NOT_OWNED，攻击者可探测任意订单 id 是否存在（成人用品
+  // 订单号即隐私）。统一 404 让订单对外不可枚举；管理后台走独立查询不受影响。
+  if (
+    !order ||
+    order.destroyedAt ||
+    order.userId !== userId
+  ) {
     throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
   }
 

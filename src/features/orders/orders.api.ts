@@ -9,6 +9,7 @@ import { notifyOrderCreated } from "./order-events";
 import { ORDER_STATUS } from "./orders.state-machine";
 import * as ordersService from "./orders.service";
 import * as ordersQueries from "./orders.queries";
+import { MAX_ORDER_ITEM_QTY, MAX_ORDER_ITEMS } from "./orders.service";
 
 /**
  * 解析支付宝回调请求体
@@ -37,10 +38,12 @@ const createOrderSchema = z.object({
     .array(
       z.object({
         productId: z.string().min(1),
-        qty: z.number().int().min(1),
+        // M3 qty 上限：Int4(stock/sales) 溢出防护 + 金额计算边界（与 service 双保险）
+        qty: z.number().int().min(1).max(MAX_ORDER_ITEM_QTY),
       }),
     )
-    .min(1, "订单至少包含一个商品"),
+    .min(1, "订单至少包含一个商品")
+    .max(MAX_ORDER_ITEMS, `单笔订单最多 ${MAX_ORDER_ITEMS} 种商品`),
   shippingAddress: z.object({
     name: z.string().min(2, "姓名至少 2 个字符").max(50),
     phone: z.string().regex(/^1[3-9]\d{9}$/, "手机号格式不正确"),

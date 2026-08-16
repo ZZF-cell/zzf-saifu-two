@@ -68,7 +68,13 @@ beforeEach(() => {
 
 /** 未过期 PENDING 订单快照（checkPaymentStatus 首次读取） */
 function snapshot(
-  overrides: Partial<{ userId: string; status: string; total: number; createdAt: Date }> = {},
+  overrides: Partial<{
+    userId: string;
+    status: string;
+    total: number;
+    createdAt: Date;
+    items?: { productId: string | null; qty: number }[];
+  }> = {},
 ) {
   return {
     userId: "user-1",
@@ -195,23 +201,49 @@ describe("checkPaymentStatus — 查询支付状态（真正查支付宝）", ()
     expect(queryTradeMock).not.toHaveBeenCalled();
   });
 
-  it("已超时 PENDING → 惰性取消订单（Inngest 兜底），返回 CANCELLED，不查支付宝", async () => {
+  it("已超时 PENDING → 先查支付(未支付) → 惰性取消订单，返回 CANCELLED", async () => {
     findUniqueMock.mockResolvedValue(
-      snapshot({ createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000) }),
+      snapshot({
+        createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+        items: [{ productId: "p1", qty: 1 }],
+      }),
     );
-    // cancelExpiredOrder 事务：读 PENDING + items → 守卫命中 → 回补库存
-    tx.order.findUnique.mockResolvedValue({
-      status: "PENDING",
-      items: [{ productId: "p1", qty: 1 }],
-    });
+    // M1 回归：超时取消前必须向支付宝核对终态；未支付(success:false)才允许取消
+    queryTradeMock.mockResolvedValue({ success: false });
     tx.order.updateMany.mockResolvedValue({ count: 1 });
     tx.product.updateMany.mockResolvedValue({ count: 1 });
 
     const result = await checkPaymentStatus("user-1", "order-1");
 
     expect(result).toEqual({ status: "CANCELLED" });
-    expect(queryTradeMock).not.toHaveBeenCalled();
+    // 修复后：取消前确实查了支付（而非修复前直接取消）
+    expect(queryTradeMock).toHaveBeenCalledWith("order-1");
     // 取消成功后库存回补确实触发
     expect(tx.product.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("已超时 PENDING 但支付宝已支付 → 标记 PAID，返回 PAID（不取消，防资损）", async () => {
+    findUniqueMock.mockResolvedValue(
+      snapshot({
+        createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+        total: 100,
+      }),
+    );
+    queryTradeMock.mockResolvedValue({
+      success: true,
+      tradeStatus: "TRADE_SUCCESS",
+      outTradeNo: "order-1",
+      totalAmountFen: 100,
+      alipayTradeNo: "alipay-1",
+    });
+    // markOrderPaid 幂等事务
+    tx.order.findUnique.mockResolvedValue({ total: 100 });
+    tx.order.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await checkPaymentStatus("user-1", "order-1");
+
+    expect(result).toEqual({ status: "PAID" });
+    // 取消动作绝不触发：不回补库存
+    expect(tx.product.updateMany).not.toHaveBeenCalled();
   });
 });

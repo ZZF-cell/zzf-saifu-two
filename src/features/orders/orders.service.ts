@@ -28,6 +28,17 @@ export const ORDER_PAYMENT_TIMEOUT_MS = 30 * 60 * 1000;
  */
 export const AUTO_CONFIRM_RECEIPT_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * 单个 SKU 最大购买数量（M3）：防 qty 任意大造成
+ * - stock/sales Int4 溢出（sales + qty > 2^31-1 → DB 报错 500）
+ * - multiplyFen 计算异常放大
+ * 下单 API zod 与 service 双层校验（service 是公共 seam，须自带防御）。
+ */
+export const MAX_ORDER_ITEM_QTY = 999;
+
+/** 单笔订单最大行数（M3）：防超大数组拖垮事务/循环 */
+export const MAX_ORDER_ITEMS = 100;
+
 // ── 类型 ──
 
 export interface CreateOrderItem {
@@ -57,8 +68,15 @@ export interface CreateOrderResult {
   total: number;
   currency: string;
   status: string;
-  /** 当面付二维码内容（支付宝 App 扫码支付）；未配置时 null（订单已创建，可稍后到详情页续付） */
+  /** 当面付二维码内容（支付宝 App 扫码支付）；未配置/失败时 null（订单已创建，可稍后到详情页续付） */
   qrCode: string | null;
+  /**
+   * 支付单创建状态（E1：支付失败对前端可见）：
+   * - ok          二维码已生成，可直接拉起扫码
+   * - unavailable 支付宝未配置（开发环境降级，前端提示「稍后继续支付」）
+   * - failed      已配置但创建失败（真实异常，前端应给「去详情重试」入口）
+   */
+  paymentState: "ok" | "unavailable" | "failed";
   expiresAt: string;
 }
 
@@ -133,6 +151,32 @@ export async function createOrder(
   if (input.items.length === 0) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "订单至少包含一个商品");
   }
+  if (input.items.length > MAX_ORDER_ITEMS) {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      `单笔订单最多 ${MAX_ORDER_ITEMS} 种商品`,
+    );
+  }
+
+  // M2 去重：同一 productId 多行（[{A,2},{A,3}]）合并为单行 qty=5。
+  // 否则每个重复行都独立校验库存并扣减，可能「逐行均足、合计超卖」，
+  // 且生成两条同商品 OrderItem 使对账混乱。合并后 qty 才是该 SKU 的真实需求。
+  const mergedMap = new Map<string, number>();
+  for (const item of input.items) {
+    mergedMap.set(item.productId, (mergedMap.get(item.productId) ?? 0) + item.qty);
+  }
+  // M3 防御：qty 上限（zod 在 API 层已拦，service 是公共 seam 须自带校验）+ Int32 预检。
+  // Int4 列（stock/sales）最大 2^31-1，qty 合并后需 ≤ MAX_ORDER_ITEM_QTY，
+  // 否则 sales: increment 可能溢出报错（500 而非业务错误）。
+  for (const [productId, qty] of mergedMap) {
+    if (!Number.isInteger(qty) || qty < 1 || qty > MAX_ORDER_ITEM_QTY) {
+      throw new AppError(
+        ERROR_CODES.VALIDATION_ERROR,
+        `商品「${productId}」购买数量需在 1~${MAX_ORDER_ITEM_QTY} 之间`,
+      );
+    }
+  }
+  const items = [...mergedMap].map(([productId, qty]) => ({ productId, qty }));
 
   const result = await prisma.$transaction(async (tx) => {
     const orderItems: {
@@ -149,7 +193,7 @@ export async function createOrder(
       select: { productId: true },
     });
     const cartProductIds = new Set(cartRows.map((c) => c.productId));
-    const notInCart = input.items.find((i) => !cartProductIds.has(i.productId));
+    const notInCart = items.find((i) => !cartProductIds.has(i.productId));
     if (notInCart) {
       throw new AppError(
         ERROR_CODES.VALIDATION_ERROR,
@@ -158,7 +202,7 @@ export async function createOrder(
     }
 
     // Step 1: 逐商品校验 + 乐观锁扣减
-    for (const item of input.items) {
+    for (const item of items) {
       const product = await tx.product.findUnique({
         where: { id: item.productId },
         select: { id: true, name: true, price: true, stock: true, version: true, status: true },
@@ -242,12 +286,19 @@ export async function createOrder(
 
   // Step 5: 调用支付模块创建支付单（事务外 — 支付失败不回滚订单）
   // 未配置支付宝环境变量时 createPayment 抛 PAYMENT_FAILED → 捕获后降级为 null qrCode（不阻塞下单）
+  // E1: paymentState 区分「未配置(dev 降级)」与「已配置但失败(真实异常)」，
+  //     前端据此决定提示文案与是否给「去详情重试支付」入口，绝不静默。
   let qrCode: string | null = null;
-  try {
-    const payment = await paymentService.createPayment(userId, result.id);
-    qrCode = payment.qrCode;
-  } catch (error) {
-    console.error("[orders] 支付单创建失败:", result.id, error);
+  let paymentState: CreateOrderResult["paymentState"] = "unavailable";
+  if (paymentService.isPaymentConfigured()) {
+    try {
+      const payment = await paymentService.createPayment(userId, result.id);
+      qrCode = payment.qrCode;
+      paymentState = qrCode ? "ok" : "failed";
+    } catch (error) {
+      console.error("[orders] 支付单创建失败:", result.id, error);
+      paymentState = "failed";
+    }
   }
 
   return {
@@ -256,6 +307,7 @@ export async function createOrder(
     currency: "CNY",
     status: ORDER_STATUS.PENDING,
     qrCode,
+    paymentState,
     expiresAt: new Date(Date.now() + ORDER_PAYMENT_TIMEOUT_MS).toISOString(),
   };
 }
@@ -350,23 +402,48 @@ export async function cancelOrder(
 export async function cancelExpiredOrder(
   orderId: string,
 ): Promise<{ cancelled: boolean; status: string }> {
-  return prisma.$transaction(async (tx) => {
-    const order = await tx.order.findUnique({
-      where: { id: orderId },
-      select: {
-        status: true,
-        items: { select: { productId: true, qty: true } },
-      },
-    });
+  // 先只读订单状态（不占事务）：已非 PENDING 直接 no-op，不发起无谓的支付查询
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: {
+      status: true,
+      total: true,
+      items: { select: { productId: true, qty: true } },
+    },
+  });
+  if (!order || order.status !== ORDER_STATUS.PENDING) {
+    return { cancelled: false, status: order?.status ?? "NOT_FOUND" };
+  }
 
-    // 订单不存在或已非 PENDING（已支付/已取消）→ no-op
-    if (!order || order.status !== ORDER_STATUS.PENDING) {
-      return { cancelled: false, status: order?.status ?? "NOT_FOUND" };
+  // M1 超时先查支付：取消前必须向支付宝确认交易未完成。
+  // 用户可能已真实付款但异步通知丢失（notifyUrl 未到/沙箱环境），直接取消
+  // = 「钱已扣、订单已取消」资损。先 query 终态：
+  // - 已支付(TRADE_SUCCESS/FINISHED) 且金额与快照一致 → 幂等标记 PAID，绝不取消
+  // - 已支付但金额不符 → 资损风险，保持 PENDING 交人工介入，不取消
+  // - 未支付 / 查询失败(网关异常/未配置) → 允许进入取消（事务内状态守卫兜底并发支付）
+  const query = await paymentService.queryAlipayTrade(orderId);
+  const terminalSuccess =
+    query.success &&
+    (query.tradeStatus === "TRADE_SUCCESS" || query.tradeStatus === "TRADE_FINISHED");
+  if (terminalSuccess) {
+    const paidFen = query.totalAmountFen;
+    if (paidFen !== null && paidFen === order.total) {
+      const result = await markOrderPaid(
+        orderId,
+        query.outTradeNo ?? orderId,
+        paidFen,
+        query.alipayTradeNo,
+      );
+      if (result.success) return { cancelled: false, status: ORDER_STATUS.PAID };
     }
+    // 金额不符 / 标记冲突：不取消，保持 PENDING（人工介入）
+    return { cancelled: false, status: order.status };
+  }
 
-    // 状态守卫必须先于库存回补：
-    // updateMany 带 status=PENDING，与支付回调并发时若回调抢先置 PAID，
-    // 命中 0 行 → 提前 return（事务无写入提交），绝不回补已支付订单的库存（防资损）
+  // 未支付 → 事务内取消（状态守卫必须先于库存回补：
+  // updateMany 带 status=PENDING，与支付回调并发时若回调抢先置 PAID，
+  // 命中 0 行 → 提前 return（事务无写入提交），绝不回补已支付订单的库存（防资损））
+  return prisma.$transaction(async (tx) => {
     const updated = await tx.order.updateMany({
       where: { id: orderId, status: ORDER_STATUS.PENDING },
       data: { status: ORDER_STATUS.CANCELLED, cancelledAt: new Date() },
@@ -696,7 +773,16 @@ export async function destroyOrder(
 ): Promise<void> {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
-    select: { id: true, userId: true, status: true },
+    select: {
+      id: true,
+      userId: true,
+      status: true,
+      total: true,
+      privacy: true,
+      items: {
+        select: { id: true, productId: true, productName: true, qty: true, price: true },
+      },
+    },
   });
 
   if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
@@ -711,24 +797,46 @@ export async function destroyOrder(
   }
 
   await prisma.$transaction(async (tx) => {
+    // E3 保留原隐私选项：合并而非整体覆盖 —— 后台仍能读到
+    // anonymousPackaging/hideProductName 等原值（丢失会让后台无法识别
+    // 「曾匿名包装」的订单），只追加 destroyed 标记。
+    const originalPrivacy = (order.privacy as Record<string, unknown> | null) ?? {};
     await tx.order.update({
       where: { id: orderId },
       data: {
         shippingAddress: "[DESTROYED]",
-        privacy: { destroyed: true, destroyedAt: new Date().toISOString() } as unknown as object,
+        privacy: {
+          ...originalPrivacy,
+          destroyed: true,
+          destroyedAt: new Date().toISOString(),
+        } as unknown as object,
         // destroyedAt 列是用户/品牌侧查询过滤的唯一依据（destroyedAt IS NULL 才可见），
         // privacy.destroyed 保留供管理后台显示「已销毁」标记
         destroyedAt: new Date(),
       },
     });
 
-    // 审计日志（异步 Inngest，此处同步写入）
+    // 审计快照（E3）：记录销毁前订单元数据（状态/金额/商品行），不含配送地址
+    // （隐私承诺：地址随销毁一并擦除，审计不得回存 PII）。后台可据此核验
+    // 「谁在何时销毁了哪笔订单、销毁了什么」，且订单行本身仍保留供退款核验。
     await tx.auditLog.create({
       data: {
         targetType: "Order",
         targetId: orderId,
         action: "DESTROYED",
         operatorId: userId,
+        snapshot: {
+          status: order.status,
+          total: order.total,
+          itemCount: order.items.length,
+          items: order.items.map((i) => ({
+            id: i.id,
+            productId: i.productId,
+            productName: i.productName,
+            qty: i.qty,
+            price: i.price,
+          })),
+        },
       },
     });
   });

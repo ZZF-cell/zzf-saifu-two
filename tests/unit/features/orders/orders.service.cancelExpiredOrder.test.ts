@@ -12,6 +12,7 @@ vi.mock("@/shared/db/client", () => ({
   prisma: {
     order: { findUnique: vi.fn(), updateMany: vi.fn() },
     product: { updateMany: vi.fn() },
+    auditLog: { create: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -22,6 +23,7 @@ vi.mock("@/shared/adapters/payment.adapter", () => ({
 }));
 
 import { prisma } from "@/shared/db/client";
+import { paymentAdapter } from "@/shared/adapters/payment.adapter";
 import { cancelExpiredOrder } from "@/features/orders/orders.service";
 
 // ── 交互事务 mock：$transaction(fn) 以 tx 对象调用 fn ──
@@ -31,7 +33,8 @@ type TxOrder = {
   updateMany: ReturnType<typeof vi.fn>;
 };
 type TxProduct = { updateMany: ReturnType<typeof vi.fn> };
-type Tx = { order: TxOrder; product: TxProduct };
+type TxAudit = { create: ReturnType<typeof vi.fn> };
+type Tx = { order: TxOrder; product: TxProduct; auditLog: TxAudit };
 
 let tx: Tx;
 type TransactionImpl = (fn: (tx: Tx) => Promise<unknown>) => Promise<unknown>;
@@ -42,8 +45,14 @@ beforeEach(() => {
   tx = {
     order: { findUnique: vi.fn(), updateMany: vi.fn() },
     product: { updateMany: vi.fn() },
+    auditLog: { create: vi.fn().mockResolvedValue(undefined) },
   };
+  // M1：cancelExpiredOrder 先「外层只读」用 prisma.order.findUnique（判断非 PENDING 即 no-op），
+  // 事务内(markOrderPaid)再读 tx.order.findUnique —— 共享同一 mock，测试只需设置一次。
+  prisma.order.findUnique = tx.order.findUnique as never;
   transactionMock.mockImplementation((fn: (tx: Tx) => Promise<unknown>) => fn(tx));
+  // M1 默认：支付宝查询返回「未支付」（success:false），走正常取消路径
+  vi.mocked(paymentAdapter.queryPayment).mockResolvedValue({ success: false });
 });
 
 // ── cancelExpiredOrder：超时取消 + 库存回补 ──
@@ -147,5 +156,67 @@ describe("cancelExpiredOrder — 支付超时自动取消", () => {
       where: { id: "p2" },
       data: { stock: { increment: 3 }, sales: { decrement: 3 } },
     });
+  });
+
+  it("M1：支付宝返回已支付且金额一致 → 幂等标记 PAID，绝不取消/不回补库存", async () => {
+    // 用户已真实付款但异步通知丢失（notifyUrl 未到）——超时取消前必须先查支付，
+    // 已支付订单被取消 = 「钱已扣、订单已取消」资损（本次修复的核心断言）
+    tx.order.findUnique.mockResolvedValue({
+      status: "PENDING",
+      total: 100,
+      items: [{ productId: "p1", qty: 1 }],
+    });
+    vi.mocked(paymentAdapter.queryPayment).mockResolvedValue({
+      success: true,
+      tradeStatus: "TRADE_SUCCESS",
+      outTradeNo: "order-1",
+      totalAmountFen: 100,
+      alipayTradeNo: "alipay-xyz",
+    });
+    // markOrderPaid 的幂等事务：读订单 → 金额核验通过 → 状态守卫命中 → 写 PAID
+    tx.order.findUnique.mockResolvedValue({
+      status: "PENDING",
+      total: 100,
+      items: [{ productId: "p1", qty: 1 }],
+    });
+    tx.order.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await cancelExpiredOrder("order-1");
+
+    expect(result).toEqual({ cancelled: false, status: "PAID" });
+    // 走 markOrderPaid 的 updateMany（置 PAID），而非取消的 updateMany（置 CANCELLED）
+    expect(tx.order.updateMany).toHaveBeenCalledWith({
+      where: { id: "order-1", status: "PENDING" },
+      data: expect.objectContaining({ status: "PAID", outTradeNo: "order-1" }),
+    });
+    // 绝不含取消动作：不回补库存
+    expect(tx.product.updateMany).not.toHaveBeenCalled();
+    // 支付到账审计
+    expect(tx.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: "PAID", operatorId: null }),
+      }),
+    );
+  });
+
+  it("M1：支付宝已支付但金额与订单快照不符 → 保持 PENDING，不取消也不标记（人工介入）", async () => {
+    tx.order.findUnique.mockResolvedValue({
+      status: "PENDING",
+      total: 100,
+      items: [{ productId: "p1", qty: 1 }],
+    });
+    vi.mocked(paymentAdapter.queryPayment).mockResolvedValue({
+      success: true,
+      tradeStatus: "TRADE_SUCCESS",
+      outTradeNo: "order-1",
+      totalAmountFen: 99, // 与订单 100 分不符 → 资损风险，拒绝标记也拒绝取消
+      alipayTradeNo: "alipay-xyz",
+    });
+
+    const result = await cancelExpiredOrder("order-1");
+
+    expect(result).toEqual({ cancelled: false, status: "PENDING" });
+    expect(transactionMock).not.toHaveBeenCalled();
+    expect(tx.product.updateMany).not.toHaveBeenCalled();
   });
 });

@@ -73,6 +73,19 @@ export async function createPayment(
 }
 
 /**
+ * 支付宝是否已配置（三个必需环境变量齐全）
+ * 供 orders.createOrder 区分「未配置(dev 降级)」与「已配置但创建失败(真实异常)」，
+ * 让支付失败对前端可见（E1），而非一律吞成 null qrCode。
+ */
+export function isPaymentConfigured(): boolean {
+  return Boolean(
+    process.env.ALIPAY_APP_ID &&
+      process.env.ALIPAY_PRIVATE_KEY &&
+      process.env.ALIPAY_PUBLIC_KEY,
+  );
+}
+
+/**
  * 主动查询支付宝交易状态（alipay.trade.query）
  *
  * 场景：本地沙箱异步通知（notifyUrl=localhost）收不到，用户点「查询支付」/支付回跳页
