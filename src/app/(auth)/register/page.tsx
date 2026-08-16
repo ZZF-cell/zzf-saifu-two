@@ -1,2 +1,2 @@
-import { RegisterPage } from "@/features/auth/auth.routes";
+import { RegisterPage } from "@/features/auth";
 export default RegisterPage;

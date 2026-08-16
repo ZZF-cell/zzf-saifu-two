@@ -1,2 +1,2 @@
-import { HomePage } from "@/features/products/products.routes";
+import { HomePage } from "@/features/products";
 export default HomePage;

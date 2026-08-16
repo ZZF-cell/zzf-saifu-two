@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { OrderListPage } from "@/features/orders/orders.routes";
+import { OrderListPage } from "@/features/orders";
 
 // OrderListPage 使用 useSearchParams（?status= Tab 同步），Next 15 要求外层 Suspense
 export default function OrdersPage() {

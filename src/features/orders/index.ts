@@ -1,4 +1,7 @@
 // Orders 模块 Public API
+// 双 seam 设计（M14）：本文件供页面/组件/查询消费（client 安全），
+// HTTP route handlers 从 "./orders.api" 直连（server-only）——
+// orders.api → payment → alipay-sdk 依赖 Node fs，若经 index 重导出会被拉进页面图
 export * as ordersService from "./orders.service";
 export * as ordersQueries from "./orders.queries";
 export { CheckoutPage, OrderListPage, OrderDetailPage } from "./orders.routes";

@@ -1,2 +1,2 @@
-import { confirmReceipt } from "@/features/orders/orders.api";
-export const POST = confirmReceipt;
+import { confirmReceiptHandler } from "@/features/orders/orders.api";
+export const POST = confirmReceiptHandler;

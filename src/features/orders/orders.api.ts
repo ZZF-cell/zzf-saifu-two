@@ -1,5 +1,5 @@
 // 订单 API Route Handlers（需登录）
-import { NextResponse, after } from "next/server";
+import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withValidation, apiError, parsePagination } from "@/shared/utils/api";
 import { authenticate } from "@/shared/api/auth";
@@ -104,6 +104,9 @@ export const createOrder = withValidation(
     });
     // 投递订单超时取消事件（after() 在响应返回后仍执行，确保 serverless 中投递完成；
     // 失败在 notifyOrderCreated 内部静默降级，不阻塞下单主流程）
+    // M14 后 orders.api 经 index `export *` 进入 Server Component 页面图，
+    // 顶层静态 import after 会被 Next 拒绝 → 改为 handler 内动态导入（route handler 上下文合法）
+    const { after } = await import("next/server");
     after(() => notifyOrderCreated(order.orderId));
     return NextResponse.json(order, { status: 201 });
   },
@@ -155,7 +158,9 @@ export async function cancelOrder(
 }
 
 /** POST /api/orders/[id]/confirm-receipt — 确认收货（DELIVERED → COMPLETED） */
-export async function confirmReceipt(
+// 命名带 Handler 后缀：index 已从 orders.service 导出同名 confirmReceipt，
+// 经 `export * from "./orders.api"` 导出时避免与 service 层撞名（M14）
+export async function confirmReceiptHandler(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {

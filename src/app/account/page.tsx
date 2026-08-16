@@ -1,2 +1,2 @@
-import { AccountPage } from "@/features/user/user.routes";
+import { AccountPage } from "@/features/user";
 export default AccountPage;

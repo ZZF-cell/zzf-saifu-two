@@ -1,2 +1,2 @@
-import { CartPage } from "@/features/cart/cart.routes";
+import { CartPage } from "@/features/cart";
 export default CartPage;

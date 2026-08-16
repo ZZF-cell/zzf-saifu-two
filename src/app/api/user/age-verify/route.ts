@@ -5,7 +5,7 @@
 import { NextResponse } from "next/server";
 import { ERROR_CODES, AppError } from "@/shared/errors/errors";
 import { apiError } from "@/shared/utils/api";
-import * as authService from "@/features/auth/auth.service";
+import { authService } from "@/features/auth";
 import { signAgeVerified } from "@/shared/utils/age-verified";
 
 const COOKIE_MAX_AGE_SECONDS = 365 * 24 * 60 * 60;
