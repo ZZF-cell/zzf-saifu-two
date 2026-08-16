@@ -87,32 +87,27 @@ export async function addToCart(
     throw new AppError(ERROR_CODES.STOCK_CONFLICT, "商品库存不足");
   }
 
-  const existing = await prisma.cartItem.findUnique({
+  // M6 原子 upsert：单条 DB 语句同时处理「已有行更新」与「新行插入」，
+  // 消除 check-then-act 竞态。修复前 findUnique→create/update 两步：
+  // 并发双击「加入购物车」时两请求都读到 existing=null → 双双走 create →
+  // 违反 @@unique([userId, productId]) 抛 P2002 → 500 而非优雅合并。
+  // update 用 qty increment 原子累加；价格/名称快照同步刷新到最新。
+  // （购物车数量是 best-effort：getCart 展示时按实时库存钳制，下单时乐观锁严格校验）
+  await prisma.cartItem.upsert({
     where: { userId_productId: { userId, productId } },
+    create: {
+      userId,
+      productId,
+      productName: product.name,
+      price: product.price,
+      qty: Math.min(qty, product.stock),
+    },
+    update: {
+      qty: { increment: qty },
+      price: product.price,
+      productName: product.name,
+    },
   });
-
-  if (existing) {
-    const newQty = existing.qty + qty;
-    await prisma.cartItem.update({
-      where: { id: existing.id },
-      data: {
-        qty: Math.min(newQty, product.stock),
-        // 价格快照更新到最新
-        price: product.price,
-        productName: product.name,
-      },
-    });
-  } else {
-    await prisma.cartItem.create({
-      data: {
-        userId,
-        productId,
-        productName: product.name,
-        price: product.price,
-        qty: Math.min(qty, product.stock),
-      },
-    });
-  }
 }
 
 // ── 修改数量 ──

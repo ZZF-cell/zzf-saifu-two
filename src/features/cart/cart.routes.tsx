@@ -6,6 +6,9 @@ import { CartItemRow, EmptyCart } from "./cart.components";
 import type { CartItemData } from "./cart.components";
 import { fenToYuan, sumFen } from "@/shared/utils/money";
 import { SiteHeader } from "@/shared/ui/SiteHeader";
+// M11 统一走 apiFetch：401 自动刷新 Access Token 并重试；Refresh 也失效才跳登录页。
+// 修复前手写 fetch 只做 router.push("/login")，Access Token 过期时把用户误踢回登录页。
+import { apiFetch } from "@/shared/api/client";
 
 interface CartData {
   items: CartItemData[];
@@ -26,11 +29,8 @@ export function CartPage() {
 
   const fetchCart = useCallback(async () => {
     try {
-      const res = await fetch("/api/cart", { credentials: "include" });
-      if (res.status === 401) {
-        router.push("/login");
-        return;
-      }
+      // apiFetch 处理 401 自动刷新；Refresh 失效时已跳登录页并抛错
+      const res = await apiFetch("/api/cart");
       const data = await res.json();
       if (res.ok) {
         setCart(data);
@@ -41,12 +41,13 @@ export function CartPage() {
           return next.size === prev.size ? prev : next;
         });
       } else setErrorMsg(data.message || "加载购物车失败");
-    } catch {
-      setErrorMsg("网络错误，请稍后重试");
+    } catch (err: unknown) {
+      // apiFetch 在 Refresh Token 失效时已跳转登录页并抛错，这里只提示其他异常
+      setErrorMsg(err instanceof Error ? err.message : "网络错误，请稍后重试");
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, []);
 
   useEffect(() => {
     fetchCart();
@@ -57,21 +58,21 @@ export function CartPage() {
     setUpdating(true);
     setErrorMsg("");
     try {
-      const res = await fetch(url, {
+      // apiFetch：401 自动刷新并重试，不把用户误踢回登录页
+      const res = await apiFetch(url, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-        credentials: "include",
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as ApiError;
-        if (res.status === 401 || data.error === "UNAUTHORIZED") { router.push("/login"); return; }
         setErrorMsg(data.message || "操作失败，请重试");
         return;
       }
       await fetchCart();
-    } catch {
-      setErrorMsg("网络错误，请稍后重试");
+    } catch (err: unknown) {
+      // apiFetch 在 Refresh Token 失效时已跳转登录页并抛错，这里只提示其他异常
+      setErrorMsg(err instanceof Error ? err.message : "网络错误，请稍后重试");
     } finally {
       setUpdating(false);
     }
@@ -82,21 +83,21 @@ export function CartPage() {
     setUpdating(true);
     setErrorMsg("");
     try {
-      const res = await fetch("/api/cart", {
+      // apiFetch：401 自动刷新并重试，不把用户误踢回登录页
+      const res = await apiFetch("/api/cart", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId }),
-        credentials: "include",
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as ApiError;
-        if (res.status === 401 || data.error === "UNAUTHORIZED") { router.push("/login"); return; }
         setErrorMsg(data.message || "删除失败，请重试");
         return;
       }
       await fetchCart();
-    } catch {
-      setErrorMsg("网络错误，请稍后重试");
+    } catch (err: unknown) {
+      // apiFetch 在 Refresh Token 失效时已跳转登录页并抛错，这里只提示其他异常
+      setErrorMsg(err instanceof Error ? err.message : "网络错误，请稍后重试");
     } finally {
       setUpdating(false);
     }
