@@ -121,6 +121,18 @@ export async function getOrderById(
     const userId = await authenticate(req);
     const { id } = await ctx.params;
     const detail = await ordersQueries.getOrderDetail(userId, id);
+    // 惰性自动确认收货（Inngest cron 兜底，模式同 checkPaymentStatus 惰性取消）：
+    // 送达 AUTO_CONFIRM_RECEIPT_MS（7 天）无手动确认 → 查看详情时自动 DELIVERED→COMPLETED，
+    // 否则 DELIVERED 订单在 cron 未配置/失效时永不进入终态、用户无法一键销毁。
+    // autoCompleteDeliveredOrder 自带 status=DELIVERED 守卫，已确认/已销毁静默 no-op。
+    if (
+      detail.status === ORDER_STATUS.DELIVERED &&
+      detail.deliveredAt &&
+      detail.deliveredAt.getTime() + ordersService.AUTO_CONFIRM_RECEIPT_MS <= Date.now()
+    ) {
+      await ordersService.autoCompleteDeliveredOrder(id);
+      return NextResponse.json(await ordersQueries.getOrderDetail(userId, id));
+    }
     return NextResponse.json(detail);
   } catch (error) {
     return apiError(error);
