@@ -6,6 +6,7 @@
 // 品牌 Logo：支持「上传本地图片」（调 POST /api/upload → OSS URL 自动填入）或
 // 直接粘贴已有 OSS URL。上传限制与后端 uploadFormSchema 保持一致（前端预检，避免无效请求）。
 import { useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { apiFetch } from "@/shared/api/client";
 import { firstFieldError } from "@/shared/utils/api-errors";
@@ -13,6 +14,7 @@ import { Image } from "@/shared/ui/Image";
 import { MAX_UPLOAD_BYTES, ALLOWED_IMAGE_TYPES } from "@/shared/constants/upload";
 
 export function InvitePage() {
+  const router = useRouter();
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [logo, setLogo] = useState("");
@@ -97,11 +99,27 @@ export function InvitePage() {
   }
 
   return (
-    <main className="mx-auto min-h-screen max-w-6xl bg-white px-4 py-10">
-      <h1 className="text-center text-xl font-bold">品牌方入驻</h1>
-      <p className="mt-1 text-center text-xs text-gray-400">凭管理员发放的入驻邀请码激活品牌</p>
+    <main className="mx-auto min-h-screen max-w-6xl bg-white pb-10">
+      {/* 返回：深链直达时无历史记录则回首页，避免浏览器退出 */}
+      <div className="sticky top-0 z-10 mx-auto w-full max-w-6xl border-b bg-white/90 px-4 py-3 backdrop-blur">
+        <div className="relative">
+          <button
+            onClick={() =>
+              window.history.length > 1 ? router.back() : router.push("/")
+            }
+            aria-label="返回"
+            className="absolute left-0 top-1/2 -translate-y-1/2 text-sm text-gray-500 transition hover:text-gray-900"
+          >
+            ← 返回
+          </button>
+          <h1 className="text-center text-base font-bold">品牌方入驻</h1>
+        </div>
+      </div>
 
-      <form onSubmit={handleSubmit} className="mx-auto mt-6 w-full max-w-lg space-y-4">
+      <div className="mx-auto w-full max-w-lg px-4 pt-6">
+        <p className="text-center text-xs text-gray-400">凭管理员发放的入驻邀请码激活品牌</p>
+
+      <form onSubmit={handleSubmit} className="mt-6 w-full space-y-4">
         {error && (
           <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>
         )}
@@ -181,12 +199,13 @@ export function InvitePage() {
         </button>
       </form>
 
-      <p className="mt-6 text-center text-xs text-gray-400">
-        还没有账号？{" "}
-        <Link href="/register" className="text-primary">先注册</Link>
-        {" 或 "}
-        <Link href="/login?redirect=/invite" className="text-primary">登录</Link>
-      </p>
+        <p className="mt-6 text-center text-xs text-gray-400">
+          还没有账号？{" "}
+          <Link href="/register" className="text-primary">先注册</Link>
+          {" 或 "}
+          <Link href="/login?redirect=/invite" className="text-primary">登录</Link>
+        </p>
+      </div>
     </main>
   );
 }
