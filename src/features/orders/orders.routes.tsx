@@ -278,6 +278,12 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
     detail: "",
     zipCode: "",
   });
+  // M12 隐私选项：默认全开（匿名包装 + 隐藏商品名），用户可逐项关闭。
+  // 修复前结算页硬编码两项为 true，用户无选择权。
+  const [privacy, setPrivacy] = useState({
+    anonymousPackaging: true,
+    hideProductName: true,
+  });
 
   // 部分结算：URL ?items= 携带本次待结算的 productId 列表（购物车勾选去结算跳转而来）。
   // CUID 不含逗号，逗号拆分安全；空集 = 直接访问 /checkout（无 ?items=）→ 空态引导，
@@ -334,10 +340,7 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
           qty: item.qty,
         })),
         shippingAddress: address,
-        privacy: {
-          anonymousPackaging: true,
-          hideProductName: true,
-        },
+        privacy,
       });
 
       // 服务端按下单时点商品价格快照重算金额（订单快照权威）
@@ -489,6 +492,46 @@ export function CheckoutPage({ initialItems = "" }: { initialItems?: string }) {
                 </span>
               </div>
             ))}
+          </div>
+        </section>
+
+        {/* 隐私选项（M12）：默认全开，用户可关闭。关闭后订单记录仍创建，
+            只是不额外隐藏（外包装含商品信息 / 商品名原样展示） */}
+        <section>
+          <h3 className="mb-3 text-sm font-semibold text-gray-700">隐私选项</h3>
+          <div className="space-y-3 rounded-lg border border-gray-50 p-3">
+            <label className="flex cursor-pointer items-start gap-3">
+              <input
+                type="checkbox"
+                checked={privacy.anonymousPackaging}
+                onChange={(e) =>
+                  setPrivacy((p) => ({ ...p, anonymousPackaging: e.target.checked }))
+                }
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+              />
+              <span>
+                <span className="block text-sm font-medium text-gray-900">匿名包装配送</span>
+                <span className="block text-xs text-gray-400">
+                  外包装与快递面单不含商品信息与品牌标识
+                </span>
+              </span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-3">
+              <input
+                type="checkbox"
+                checked={privacy.hideProductName}
+                onChange={(e) =>
+                  setPrivacy((p) => ({ ...p, hideProductName: e.target.checked }))
+                }
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+              />
+              <span>
+                <span className="block text-sm font-medium text-gray-900">隐藏商品名称</span>
+                <span className="block text-xs text-gray-400">
+                  我的订单列表与详情中商品名显示为「私密商品」
+                </span>
+              </span>
+            </label>
           </div>
         </section>
 

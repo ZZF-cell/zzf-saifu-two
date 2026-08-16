@@ -209,3 +209,107 @@ describe("getOrderList — status 筛选", () => {
     );
   });
 });
+
+// ── M12 隐私掩码：hideProductName=true → 列表/详情统一显示「私密商品」 ──
+
+describe("M12 隐私掩码 — 用户侧列表/详情", () => {
+  const baseOrder = {
+    id: "order-1",
+    userId: "user-1",
+    total: 8800,
+    status: "PAID",
+    shippingAddress: "encrypted-addr",
+    outTradeNo: "order-1",
+    destroyedAt: null,
+    paidAt: new Date(),
+    shippedAt: null,
+    deliveredAt: null,
+    completedAt: null,
+    cancelledAt: null,
+    refundedAt: null,
+    createdAt: new Date(),
+  };
+
+  it("hideProductName=true → 详情逐行商品名掩码为「私密商品」", async () => {
+    findUniqueMock.mockResolvedValue({
+      ...baseOrder,
+      privacy: { anonymousPackaging: true, hideProductName: true },
+      items: [
+        { id: "i1", productName: "硅胶产品A", price: 8800, qty: 1, productId: "p1" },
+        { id: "i2", productName: "润滑油B", price: 9900, qty: 2, productId: "p2" },
+      ],
+    });
+
+    const detail = await getOrderDetail("user-1", "order-1");
+
+    expect(detail.items.map((i) => i.productName)).toEqual(["私密商品", "私密商品"]);
+  });
+
+  it("hideProductName=false → 详情商品名原样返回", async () => {
+    findUniqueMock.mockResolvedValue({
+      ...baseOrder,
+      privacy: { anonymousPackaging: false, hideProductName: false },
+      items: [
+        { id: "i1", productName: "硅胶产品A", price: 8800, qty: 1, productId: "p1" },
+      ],
+    });
+
+    const detail = await getOrderDetail("user-1", "order-1");
+
+    expect(detail.items[0].productName).toBe("硅胶产品A");
+  });
+
+  it("privacy 缺省（旧数据/未传）→ 详情商品名原样返回（不误掩码）", async () => {
+    findUniqueMock.mockResolvedValue({
+      ...baseOrder,
+      privacy: null,
+      items: [
+        { id: "i1", productName: "硅胶产品A", price: 8800, qty: 1, productId: "p1" },
+      ],
+    });
+
+    const detail = await getOrderDetail("user-1", "order-1");
+
+    expect(detail.items[0].productName).toBe("硅胶产品A");
+  });
+
+  it("hideProductName=true → 列表首件商品名掩码为「私密商品」", async () => {
+    findManyMock.mockResolvedValue([
+      {
+        id: "order-1",
+        total: 8800,
+        status: "PAID",
+        privacy: { anonymousPackaging: true, hideProductName: true },
+        createdAt: new Date(),
+        paidAt: new Date(),
+        _count: { items: 2 },
+        items: [{ productName: "硅胶产品A" }],
+      },
+    ]);
+    vi.mocked(prisma.order.count).mockResolvedValue(1);
+
+    const result = await getOrderList("user-1", 1, 20);
+
+    expect(result.orders[0].firstItemName).toBe("私密商品");
+  });
+
+  it("hideProductName=false → 列表首件商品名原样返回", async () => {
+    findManyMock.mockResolvedValue([
+      {
+        id: "order-1",
+        total: 8800,
+        status: "PAID",
+        privacy: { anonymousPackaging: true, hideProductName: false },
+        createdAt: new Date(),
+        paidAt: new Date(),
+        _count: { items: 1 },
+        items: [{ productName: "硅胶产品A" }],
+      },
+    ]);
+    vi.mocked(prisma.order.count).mockResolvedValue(1);
+
+    const result = await getOrderList("user-1", 1, 20);
+
+    expect(result.orders[0].firstItemName).toBe("硅胶产品A");
+  });
+});

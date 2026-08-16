@@ -14,6 +14,16 @@ function decryptAddress(shippingAddress: string): string {
   }
 }
 
+// M12 隐私掩码：hideProductName=true 时，用户侧列表/详情统一显示「私密商品」。
+// 掩码放查询层而非 UI 层——一处实现，列表/详情/任何消费端一致生效，且可单测。
+// 品牌方订单列表/管理后台不经过此掩码（商家履约需要真实商品名）。
+const MASKED_PRODUCT_NAME = "私密商品";
+
+function maskProductName(privacy: unknown, name: string): string {
+  const p = privacy as { hideProductName?: boolean } | null | undefined;
+  return p?.hideProductName ? MASKED_PRODUCT_NAME : name;
+}
+
 // ── 类型 ──
 
 export interface OrderListResult {
@@ -84,13 +94,14 @@ async function queryOrderSummaries(
   ]);
 
   return {
-    // 调用方（用户/品牌方）查询已带 destroyedAt: null 过滤，此处无需掩码——已销毁订单不可见
+    // 调用方（用户/品牌方）查询已带 destroyedAt: null 过滤，此处无需掩码——已销毁订单不可见。
+    // M12：hideProductName=true 时首件商品名掩码为「私密商品」（仅用户列表；品牌列表独立查询不掩码）
     orders: orders.map((o) => ({
       id: o.id,
       total: o.total,
       status: o.status,
       itemCount: o._count.items,
-      firstItemName: o.items[0]?.productName || "商品",
+      firstItemName: maskProductName(o.privacy, o.items[0]?.productName || "商品"),
       createdAt: o.createdAt,
       paidAt: o.paidAt,
     })),
@@ -258,6 +269,10 @@ export async function getOrderDetail(
     cancelledAt: order.cancelledAt,
     refundedAt: order.refundedAt,
     createdAt: order.createdAt,
-    items: order.items,
+    // M12：hideProductName=true 时逐行掩码商品名（用户侧详情；商家后台独立查询不受影响）
+    items: order.items.map((i) => ({
+      ...i,
+      productName: maskProductName(order.privacy, i.productName),
+    })),
   };
 }
