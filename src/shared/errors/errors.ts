@@ -56,6 +56,7 @@ export const ERROR_CODES = {
 
   // 通用
   VALIDATION_ERROR: { status: 422, code: "VALIDATION_ERROR" },
+  RATE_LIMITED: { status: 429, code: "RATE_LIMITED" },
   INTERNAL_ERROR: { status: 500, code: "INTERNAL_ERROR" },
 } as const;
 

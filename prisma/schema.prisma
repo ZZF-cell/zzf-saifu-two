@@ -205,6 +205,28 @@ model VerificationCode {
 }
 
 // ═══════════════════════════════════
+// 通用限流桶（DB 原子计数限流）
+// ═══════════════════════════════════
+// 用 INSERT..ON CONFLICT DO UPDATE（单语句原子）做计数闸门，替代 check-then-act
+// 竞态。唯一键 (scope, bucketKey, bucketStart) 保证同桶并发只递增一次。
+// 用途示例：
+//   sms:phone  —— 60s 同号发送窗口（key=SHA-256 手机号，bucket=1min）
+//   sms:ip     —— IP 维度发送限流（key=SHA-256 IP，bucket=1min / 1day）
+//   upload:daily —— 每用户每日上传配额（key=userId，bucket=1day）
+model RateLimitBucket {
+  id          String   @id @default(cuid())
+  scope       String   // 限流维度：sms:phone / sms:ip / upload:daily
+  bucketKey   String   // 维度内实体键（哈希后的手机号 / IP / 用户 id）
+  bucketStart DateTime // 桶起始时间（floor(now/bucketMs)*bucketMs）
+  count       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([scope, bucketKey, bucketStart])
+  @@index([scope, bucketStart])
+}
+
+// ═══════════════════════════════════
 // 审计日志
 // ═══════════════════════════════════
 model AuditLog {

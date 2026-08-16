@@ -16,6 +16,7 @@ import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import type { AuthUser } from "@/shared/auth/middleware";
 import { sendSms } from "@/shared/adapters/sms.adapter";
 import { captureMessage } from "@sentry/nextjs";
+import { hitRateLimit, hashKey } from "@/shared/utils/rate-limit";
 
 // ── 配置 ──
 
@@ -36,6 +37,13 @@ const MAX_LOGIN_ATTEMPTS = 5; // 密码登录失败上限，达到后锁定账�
 const LOGIN_LOCK_MS = 15 * 60 * 1000; // 密码锁定 15 分钟
 
 // ── 短信验证码（DB 存储，Serverless 多实例共享）──
+
+// 限流窗口常量（RateLimitBucket 原子桶）
+const SMS_PHONE_WINDOW_MS = 60 * 1000; // 同号 60s 窗口
+const SMS_IP_MINUTE_WINDOW_MS = 60 * 1000; // 同 IP 每分钟窗口
+const SMS_IP_MINUTE_MAX = 10; // 同 IP 每分钟最多 10 次（防瞬时短信轰炸）
+const SMS_IP_DAILY_WINDOW_MS = 24 * 60 * 60 * 1000; // 同 IP 每日窗口
+const SMS_IP_DAILY_MAX = 200; // 同 IP 每日最多 200 次（防持久轮换手机号刷量）
 
 function generateCode(): string {
   return String(crypto.randomInt(100000, 999999));
@@ -146,22 +154,48 @@ export interface AuthTokens {
 
 /**
  * 发送短信验证码。
- * 返回「演示模式回显码」：短信未实际送达（未配置密钥 / SDK 未接入）时返回验证码供前端页面提示展示，
- * 便于线上验收阶段无短信也能登录；真实送达（配好短信后）返回 null，届时前端不再显示。
+ * @param ip 客户端 IP（防短信轰炸的 IP 维度限流；未传则只做同号限流）
+ * @returns 「演示模式回显码」：短信未实际送达（未配置密钥 / SDK 未接入）时返回验证码供前端页面提示展示，
+ *          便于线上验收阶段无短信也能登录；真实送达（配好短信后）返回 null，届时前端不再显示。
  */
 export async function sendVerificationCode(
   phone: string,
+  ip?: string,
 ): Promise<string | null> {
   const phoneHash = hashPhone(phone);
-  // 频率限制：60 秒内同号码不可重复发送
-  const recent = await prisma.verificationCode.findFirst({
-    where: {
-      phoneHash,
-      createdAt: { gt: new Date(Date.now() - 60 * 1000) },
-    },
+  // 原子限流：同一手机号 60s 窗口最多 1 次。
+  // 原 check-then-act（findFirst 60s 内记录在事务外）有竞态——并发请求各自读到
+  // 「无近期记录」后同时放行，绕过频率限制；upsert 编译为 INSERT..ON CONFLICT
+  // 单语句原子递增，同窗口并发由 DB 串行化，计数只增一次（major② 修复）。
+  const phoneLimit = await hitRateLimit("sms:phone", phoneHash, {
+    windowMs: SMS_PHONE_WINDOW_MS,
+    max: 1,
   });
-  if (recent) {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "请 60 秒后再试");
+  if (!phoneLimit.allowed) {
+    throw new AppError(
+      ERROR_CODES.RATE_LIMITED,
+      `发送太频繁，请 ${Math.max(1, Math.ceil(phoneLimit.retryAfterMs / 1000))} 秒后再试`,
+    );
+  }
+
+  // IP 维度过量防护：send-code 为未登录接口，攻击者可轮换手机号刷接口轰炸任意号码。
+  // 双窗口互补：分钟窗口防瞬时轰炸，日窗口防持久刷量（bucketKey 为哈希后的 IP）。
+  if (ip) {
+    const ipKey = hashKey(ip);
+    const ipMinute = await hitRateLimit("sms:ip:minute", ipKey, {
+      windowMs: SMS_IP_MINUTE_WINDOW_MS,
+      max: SMS_IP_MINUTE_MAX,
+    });
+    if (!ipMinute.allowed) {
+      throw new AppError(ERROR_CODES.RATE_LIMITED, "发送过于频繁，请稍后再试");
+    }
+    const ipDaily = await hitRateLimit("sms:ip:daily", ipKey, {
+      windowMs: SMS_IP_DAILY_WINDOW_MS,
+      max: SMS_IP_DAILY_MAX,
+    });
+    if (!ipDaily.allowed) {
+      throw new AppError(ERROR_CODES.RATE_LIMITED, "今日发送次数已达上限，请明天再试");
+    }
   }
 
   const code = generateCode();

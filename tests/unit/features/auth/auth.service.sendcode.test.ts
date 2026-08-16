@@ -1,7 +1,7 @@
-// sendVerificationCode 单元测试 — 演示模式验证码回显
-// mock 系统边界：prisma（verificationCode 频率查询 / 事务写入）+ sms.adapter.sendSms
+// sendVerificationCode 单元测试 — 演示模式验证码回显 + 原子限流
+// mock 系统边界：prisma（rateLimitBucket 原子限流 / verificationCode 事务写入）+ sms.adapter.sendSms
 // 契约：
-// - 60 秒内重复发送 → 抛 VALIDATION_ERROR（频率限制）
+// - 同一手机号 60s 窗口第 2 次发送 → 抛 RATE_LIMITED（原子 upsert 计数 > 1，不写库）
 // - 短信未实际送达（dev-fallback / placeholder）→ 返回验证码（演示回显，前端展示）
 // - 短信真实送达（真实 messageId）→ 返回 null（不回显，前端不显示）
 
@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
 vi.mock("@/shared/db/client", () => ({
   prisma: {
     verificationCode: { findFirst: vi.fn(), deleteMany: vi.fn(), create: vi.fn() },
+    rateLimitBucket: { upsert: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -24,6 +25,7 @@ import { sendVerificationCode } from "@/features/auth/auth.service";
 import { ERROR_CODES } from "@/shared/errors/errors";
 
 const smsMock = vi.mocked(sendSms);
+const rateLimitUpsertMock = vi.mocked(prisma.rateLimitBucket.upsert);
 
 // ── 交互事务 mock：$transaction(fn) 以 tx 对象调用 fn（发码 = 清旧码 + 写新码 同事务） ──
 type Tx = {
@@ -37,13 +39,14 @@ const transactionMock = prisma.$transaction as unknown as Mock<TransactionImpl>;
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.PEPPER = "test-pepper";
+  // 默认：首次请求（count=1）放行 —— 每个测试只需关心自己 mock 的限流路径
+  rateLimitUpsertMock.mockResolvedValue({ count: 1 } as never);
   tx = {
     verificationCode: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       create: vi.fn().mockResolvedValue({ id: "vc-1" }),
     },
   };
-  vi.mocked(prisma.verificationCode.findFirst).mockResolvedValue(null);
   transactionMock.mockImplementation((fn: (tx: Tx) => Promise<unknown>) => fn(tx));
 });
 
@@ -95,14 +98,34 @@ describe("sendVerificationCode — 演示模式回显", () => {
     }
   });
 
-  it("60 秒内重复发送 → 抛 VALIDATION_ERROR（频率限制，不写库）", async () => {
-    vi.mocked(prisma.verificationCode.findFirst).mockResolvedValue({
-      id: "vc-old",
-    } as never);
+  it("同一手机号 60s 窗口第 2 次 → 抛 RATE_LIMITED（原子桶计数>1，不写库）", async () => {
+    // 原子限流语义：单条 upsert 返回窗口内计数（含本次）。count=2 > max=1 → 拒绝，
+    // 且拒绝发生在写验证码事务之前（$transaction 不被调用）。
+    rateLimitUpsertMock.mockResolvedValue({ count: 2 } as never);
 
     await expect(sendVerificationCode("13800138000")).rejects.toMatchObject({
-      code: ERROR_CODES.VALIDATION_ERROR.code,
+      code: ERROR_CODES.RATE_LIMITED.code,
     });
     expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(tx.verificationCode.create).not.toHaveBeenCalled();
+  });
+
+  it("同号限流通过后再按 IP 限流（同一 IP 分钟窗口超限 → RATE_LIMITED）", async () => {
+    // 第一次 upsert（sms:phone）返回 count=1 放行；第二次（sms:ip:minute）返回 count=11 > max=10 → 拒绝
+    rateLimitUpsertMock.mockResolvedValueOnce({ count: 1 } as never).mockResolvedValueOnce({ count: 11 } as never);
+
+    await expect(sendVerificationCode("13800138000", "1.2.3.4")).rejects.toMatchObject({
+      code: ERROR_CODES.RATE_LIMITED.code,
+    });
+  });
+
+  it("同一 IP 日窗口超限（第 3 次 upsert count=201）→ RATE_LIMITED 今日上限", async () => {
+    rateLimitUpsertMock
+      .mockResolvedValueOnce({ count: 1 } as never) // phone
+      .mockResolvedValueOnce({ count: 1 } as never) // ip minute
+      .mockResolvedValueOnce({ count: 201 } as never); // ip daily > 200
+    await expect(sendVerificationCode("13800138000", "1.2.3.4")).rejects.toMatchObject({
+      code: ERROR_CODES.RATE_LIMITED.code,
+    });
   });
 });

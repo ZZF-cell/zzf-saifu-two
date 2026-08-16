@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withValidation, apiError } from "@/shared/utils/api";
+import { clientIp } from "@/shared/utils/rate-limit";
 import { ERROR_CODES, AppError } from "@/shared/errors/errors";
 import * as authService from "./auth.service";
 import * as authQueries from "./auth.queries";
@@ -86,8 +87,9 @@ async function requireAuthFromRequest(req: Request): Promise<AuthUser> {
 // ── Route Handlers ──
 
 /** POST /api/auth/send-code */
-export const sendCode = withValidation(sendCodeSchema, async ({ phone }) => {
-  const demoCode = await authService.sendVerificationCode(phone);
+export const sendCode = withValidation(sendCodeSchema, async ({ phone }, req) => {
+  // 传客户端 IP 做 IP 维度限流（防轮换手机号刷接口短信轰炸）；取不到 IP 仍保留同号限流
+  const demoCode = await authService.sendVerificationCode(phone, clientIp(req));
   // 演示模式：短信未送达时响应携带 demoCode，前端页面提示展示（配好真短信后自动不返回）
   return NextResponse.json({
     success: true,
