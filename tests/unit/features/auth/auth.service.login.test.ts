@@ -77,6 +77,30 @@ describe("loginWithPassword — 密码登录与爆破防护", () => {
     expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
+  it("未注册手机号 与 密码错误 → 同一错误文案「手机号或密码错误」（防账号枚举）", async () => {
+    // L3 修复回归：账户枚举攻击靠区分「手机号不存在」与「密码错误」的文案差异识别有效账号。
+    // 未注册手机号（findUnique 返回 null）与密码错误必须返回逐字一致的 message。
+    const passwordHash = await makeScryptHash("real-pass-123");
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(null as never);
+
+    const unregistered = await loginWithPassword(PHONE, "whatever-123")
+      .then(() => null)
+      .catch((e) => e as Error);
+
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(
+      makeUser({ passwordHash }) as never,
+    );
+    mockIncrementReturn(makeUser({ passwordHash }), 1); // 4 次以内，不锁定
+    const wrongPass = await loginWithPassword(PHONE, "wrong-pass")
+      .then(() => null)
+      .catch((e) => e as Error);
+
+    expect(unregistered).toBeInstanceOf(Error);
+    expect(wrongPass).toBeInstanceOf(Error);
+    expect((unregistered as Error).message).toBe((wrongPass as Error).message);
+    expect((unregistered as Error).message).toBe("手机号或密码错误");
+  });
+
   it("错误密码 → 事务内原子递增失败计数 +1，抛 INVALID_CREDENTIALS", async () => {
     const passwordHash = await makeScryptHash("real-pass-123");
     const user = makeUser({ passwordHash });

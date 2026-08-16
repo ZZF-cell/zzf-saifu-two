@@ -199,10 +199,18 @@ export const refreshHandler = async (req: Request) => {
 
 /** POST /api/auth/logout */
 export const logoutHandler = async (req: Request) => {
-  const token = extractAccessToken(req);
-  if (token) {
-    const user = await authService.verifyAccessToken(token);
-    if (user) await authService.logout(user.userId);
+  // 服务端吊销会话：优先从 access token 解析 userId；access token 过期（页面闲置 >15min）
+  // 或缺失时，从 refresh token 解析（其内嵌 userId）——否则「登出」后被盗的 refresh cookie
+  // 仍能续期最多 7 天（用户以为已退出，实则会话仍存活）。
+  const accessToken = extractAccessToken(req);
+  const user = accessToken ? await authService.verifyAccessToken(accessToken) : null;
+  if (user) {
+    await authService.logout(user.userId);
+  } else {
+    const refreshToken = extractRefreshToken(req);
+    if (refreshToken) {
+      await authService.logoutByRefreshToken(refreshToken);
+    }
   }
   const response = NextResponse.json({ success: true });
   clearTokenCookies(response);

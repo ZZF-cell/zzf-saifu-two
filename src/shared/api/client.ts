@@ -6,26 +6,39 @@
 //
 // 并发去抖：多个请求同时 401 时共享同一次 refresh（避免刷新风暴）。
 
-let refreshing: Promise<boolean> | null = null;
+let refreshing: Promise<RefreshResult> | null = null;
 
-/** 刷新 Access Token（单例，多个并发 401 共享） */
-async function refreshAccessToken(): Promise<boolean> {
-  if (!refreshing) {
-    refreshing = fetch("/api/auth/refresh", { method: "POST", credentials: "include" })
-      .then((res) => res.ok)
-      .catch(() => false)
-      .finally(() => {
-        refreshing = null;
-      });
-  }
-  return refreshing;
+type RefreshResult = "ok" | "disabled" | "failed";
+
+/**
+ * 刷新 Access Token（单例，多个并发 401 共享）
+ * 结果三态：ok（成功）/ disabled（账号被禁用）/ failed（其余失败）
+ */
+async function refreshAccessToken(): Promise<RefreshResult> {
+  if (refreshing) return refreshing;
+  const pending = (async () => {
+    try {
+      const res = await fetch("/api/auth/refresh", { method: "POST", credentials: "include" });
+      if (res.ok) return "ok" as const;
+      // 后端对禁用账号透传 USER_DISABLED(403)：读取响应体区分「拒绝续期」与「会话过期」，
+      // 避免把被禁用用户误导性地提示为「登录已过期」
+      const body = await res.json().catch(() => null);
+      return body?.error === "USER_DISABLED" ? ("disabled" as const) : ("failed" as const);
+    } catch {
+      return "failed" as const;
+    } finally {
+      refreshing = null;
+    }
+  })();
+  refreshing = pending;
+  return pending;
 }
 
-/** 刷新失败 → 登出并跳转登录页 */
-function redirectToLogin(): void {
+/** 刷新失败 → 登出并跳转登录页（disabled 时带标记供登录页提示「账号已被禁用」） */
+function redirectToLogin(disabled = false): void {
   if (typeof window !== "undefined") {
     const redirect = encodeURIComponent(window.location.pathname + window.location.search);
-    window.location.href = `/login?redirect=${redirect}`;
+    window.location.href = `/login?redirect=${redirect}${disabled ? "&disabled=1" : ""}`;
   }
 }
 
@@ -43,9 +56,10 @@ export async function apiFetch(
   if (res.status !== 401) return res;
 
   const refreshed = await refreshAccessToken();
-  if (!refreshed) {
-    redirectToLogin();
-    throw new Error("登录已过期，请重新登录");
+  if (refreshed !== "ok") {
+    const disabled = refreshed === "disabled";
+    redirectToLogin(disabled);
+    throw new Error(disabled ? "账号已被禁用，请联系管理员" : "登录已过期，请重新登录");
   }
 
   const retried = await fetch(input, { ...init, credentials: "include" });

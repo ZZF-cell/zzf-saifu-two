@@ -43,9 +43,14 @@ model RefreshToken {
   userId    String
   tokenHash String   @unique
   expiresAt DateTime
+  // 软吊销时间：轮换/登出时置非空而非物理删除，
+  // 使「已轮换的旧 token 被重放」可被检测（令牌失窃信号，见 auth.service refreshAccessToken）
+  revokedAt DateTime?
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // ═══════════════════════════════════

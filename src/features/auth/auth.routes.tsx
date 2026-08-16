@@ -25,6 +25,8 @@ function LoginPageContent() {
   const rawRedirect = searchParams.get("redirect") || "/";
   const redirect =
     rawRedirect.startsWith("/") && !rawRedirect.startsWith("//") ? rawRedirect : "/";
+  // 被禁用账号的 access token 过期后刷新被拒 → 携带 ?disabled=1 跳转，这里展示明确提示
+  const disabled = searchParams.get("disabled") === "1";
 
   const handleCodeLogin = async (phone: string, code: string) => {
     await apiCall("/api/auth/verify-code", { phone, code });
@@ -67,6 +69,12 @@ function LoginPageContent() {
             密码登录
           </button>
         </div>
+
+        {disabled && (
+          <div className="mb-4 rounded-md bg-red-50 p-3 text-center text-sm text-red-600">
+            账号已被禁用，请联系管理员
+          </div>
+        )}
 
         {mode === "code" ? (
           <CodeLoginForm onSubmit={handleCodeLogin} onSendCode={handleSendCode} />

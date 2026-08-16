@@ -29,7 +29,16 @@ export async function authenticateUser(req: Request): Promise<AuthUserContext> {
   if (!token) throw new AppError(ERROR_CODES.UNAUTHORIZED, "请先登录");
   const user = await authService.verifyAccessToken(token);
   if (!user) throw new AppError(ERROR_CODES.TOKEN_EXPIRED, "登录已过期");
-  return user;
+
+  // 禁用/角色变更须立即生效：Access Token 是无状态 JWT，载荷可能已过期。
+  // 用 DB 实时值校准 role + status（一次主键查询），管理员禁用/降级后该用户的下一次
+  // 请求即被拒绝，而非等到 token 15min 自然过期（回归护栏：禁用门禁下沉到写入口）。
+  const current = await authService.getUserAuthContext(user.userId);
+  if (!current) throw new AppError(ERROR_CODES.UNAUTHORIZED, "用户不存在");
+  if (current.status === "DISABLED") {
+    throw new AppError(ERROR_CODES.USER_DISABLED, "账号已被禁用，请联系管理员");
+  }
+  return { userId: current.id, role: current.role as AuthUserContext["role"] };
 }
 
 /**

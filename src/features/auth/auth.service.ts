@@ -58,14 +58,16 @@ async function verifyAndConsumeCode(
   if (!record) return false;
 
   // 验证码错误 → 尝试计数；达到上限立即销毁（杜绝 6 位验证码在线爆破）
+  // 并发安全：用 updateMany 条件（attempts < MAX-1）把「计数上限」并入原子更新，
+  // 杜绝并发错误请求各自读到同一旧值、绕过上限的竞态（回归护栏：并发下也不可超 MAX 次尝试）。
   if (record.code !== code) {
-    if (record.attempts + 1 >= MAX_CODE_ATTEMPTS) {
-      await prisma.verificationCode.delete({ where: { id: record.id } });
-    } else {
-      await prisma.verificationCode.update({
-        where: { id: record.id },
-        data: { attempts: { increment: 1 } },
-      });
+    const updated = await prisma.verificationCode.updateMany({
+      where: { id: record.id, used: false, attempts: { lt: MAX_CODE_ATTEMPTS - 1 } },
+      data: { attempts: { increment: 1 } },
+    });
+    // 未命中（attempts 已触顶 MAX-1）→ 本次为第 MAX 次错误，销毁验证码
+    if (updated.count === 0) {
+      await prisma.verificationCode.deleteMany({ where: { id: record.id, used: false } });
     }
     return false;
   }
@@ -200,7 +202,11 @@ export async function sendVerificationCode(
     }
   }
 
-  // 演示模式回显：短信未实际送达时把验证码交还调用方（前端展示），保证线上验收可登录
+  // 演示模式回显：短信未实际送达时把验证码交还调用方（前端展示），保证线上验收可登录。
+  // ⚠️ 安全门禁：生产环境绝不回显 —— 短信未接通时响应回显验证码，等于把任意手机号账号的
+  // 控制权交给任何人（POST send-code → 响应拿验证码 → verify-code 即接管/注册该手机号）。
+  // 生产环境要启用短信登录，必须完成真实短信集成（actuallySent=true），否则一律返回 null。
+  if (process.env.NODE_ENV === "production") return null;
   return actuallySent ? null : code;
 }
 
@@ -306,10 +312,8 @@ export async function loginWithPassword(
   const user = await prisma.user.findUnique({ where: { phoneHash } });
 
   if (!user || !user.passwordHash) {
-    throw new AppError(
-      ERROR_CODES.INVALID_CREDENTIALS,
-      "该手机号未注册密码登录，请使用验证码登录",
-    );
+    // 统一文案：不区分「未注册」与「密码错误」，防手机号枚举（探测号码是否注册）
+    throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "手机号或密码错误");
   }
 
   // 被管理员禁用的用户不可登录
@@ -317,12 +321,9 @@ export async function loginWithPassword(
     throw new AppError(ERROR_CODES.USER_DISABLED, "账号已被禁用，请联系管理员");
   }
 
-  // 锁定检查：锁定期间统一 INVALID_CREDENTIALS（不泄露账号状态）
+  // 锁定检查：文案与普通失败一致（锁定状态本身也是「账号存在」信号，统一防枚举）
   if (user.lockUntil && user.lockUntil > new Date()) {
-    throw new AppError(
-      ERROR_CODES.INVALID_CREDENTIALS,
-      "尝试次数过多，账号已锁定 15 分钟，请稍后再试",
-    );
+    throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "手机号或密码错误");
   }
 
   const passwordOk = await verifyPassword(password, user.passwordHash);
@@ -341,7 +342,7 @@ export async function loginWithPassword(
         });
       }
     });
-    throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "密码错误");
+    throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "手机号或密码错误");
   }
 
   // 登录成功 → 重置失败计数/锁定；旧 SHA-256 密码顺带升级为 scrypt
@@ -388,7 +389,13 @@ export async function setAgeVerified(userId: string): Promise<void> {
   });
 }
 
-/** Refresh Token 轮换 */
+/**
+ * Refresh Token 轮换（含被盗重用检测）
+ *
+ * Rotation 语义：软吊销旧 token（revokedAt 置位，非物理删除），保留「历史已用」痕迹，
+ * 使失窃可被发现 —— 攻击者重放已被轮换的 token 时，能命中已吊销记录 → 吊销该用户
+ * 全部会话 + 告警，受害者重新登录即可夺回，而不是被攻击者抢占轮换后静默踢下线。
+ */
 export async function refreshAccessToken(
   rawRefreshToken: string,
 ): Promise<AuthTokens> {
@@ -403,23 +410,42 @@ export async function refreshAccessToken(
     where: {
       userId: decoded.userId,
       tokenHash: expectedHash,
+      revokedAt: null, // 仅未吊销的有效 token 可续期
       expiresAt: { gt: new Date() },
     },
   });
 
   if (!token) {
+    // 未命中 → 区分「已轮换/被吊销（被盗重用信号）」与「过期/不存在」：
+    // 令牌失窃的判定窗口是「已吊销但仍未过期」——此时重放即为攻击。
+    const prior = await prisma.refreshToken.findFirst({
+      where: { userId: decoded.userId, tokenHash: expectedHash },
+    });
+    if (prior?.revokedAt) {
+      await prisma.refreshToken.deleteMany({ where: { userId: decoded.userId } });
+      console.error(`[auth] Refresh token 重用检测: userId=${decoded.userId}`);
+      try {
+        captureMessage(`[auth] Refresh token 重用检测 userId=${decoded.userId}`, {
+          level: "warning",
+        });
+      } catch {
+        // Sentry 未初始化时静默（console.error 已兜底）
+      }
+      throw new AppError(ERROR_CODES.TOKEN_EXPIRED, "登录已过期，请重新登录");
+    }
     throw new AppError(ERROR_CODES.TOKEN_EXPIRED, "登录已过期，请重新登录");
   }
 
-  // Rotation：删除旧 Token + 签发新 Token 在同一事务中
-  // 必须在事务开头立即 atomic delete，防止其他并发 Refresh 重用同一 Token
+  // Rotation：软吊销旧 Token + 签发新 Token 在同一事务中
+  // 必须在事务开头立即 atomic revoke，防止其他并发 Refresh 重用同一 Token
   try {
     const result = await prisma.$transaction(async (tx) => {
-      // Atomic delete：other concurrent Refresh on the same token will get 0 rows
-      const deleted = await tx.refreshToken.deleteMany({
-        where: { id: token.id, userId: decoded.userId },
+      // Atomic revoke：other concurrent Refresh on the same token will get 0 rows
+      const revoked = await tx.refreshToken.updateMany({
+        where: { id: token.id, userId: decoded.userId, revokedAt: null },
+        data: { revokedAt: new Date() },
       });
-      if (deleted.count === 0) {
+      if (revoked.count === 0) {
         throw new AppError(ERROR_CODES.TOKEN_EXPIRED, "登录已过期，请重新登录");
       }
 
@@ -445,6 +471,11 @@ export async function refreshAccessToken(
         },
       });
 
+      // 顺手清理该用户已过期的 token（轮换历史 + 软删记录，防止软删表只增不减）
+      await tx.refreshToken.deleteMany({
+        where: { userId: u.id, expiresAt: { lt: new Date() } },
+      });
+
       return { user: u, newRefreshToken: newRawToken };
     });
 
@@ -456,7 +487,7 @@ export async function refreshAccessToken(
     return { accessToken, refreshToken: result.newRefreshToken };
   } catch (err) {
     if (err instanceof AppError) throw err;
-    // 事务冲突时（P2025 RecordNotFound 或 deleteMany count=0）→ TOKEN_EXPIRED
+    // 事务冲突时（P2025 RecordNotFound 或 updateMany count=0）→ TOKEN_EXPIRED
     throw new AppError(ERROR_CODES.TOKEN_EXPIRED, "登录已过期，请重新登录");
   }
 }
@@ -464,6 +495,34 @@ export async function refreshAccessToken(
 /** 退出登录 — 吊销所有 Refresh Token */
 export async function logout(userId: string): Promise<void> {
   await prisma.refreshToken.deleteMany({ where: { userId } });
+}
+
+/**
+ * 依据 refresh token 吊销会话（access token 过期/缺失时也能登出）。
+ * refresh token 内嵌 userId（base64url(userId:random)），解码可得会话归属；
+ * 解码失败（畸形 token）→ 退化为按 tokenHash 删除单条。
+ */
+export async function logoutByRefreshToken(rawToken: string): Promise<void> {
+  const decoded = decodeRefreshToken(rawToken);
+  if (decoded) {
+    await logout(decoded.userId);
+    return;
+  }
+  await prisma.refreshToken.deleteMany({ where: { tokenHash: sha256(rawToken) } });
+}
+
+/**
+ * 从 DB 读取用户当前身份上下文（role + status）。
+ * Access Token 是无状态 JWT，载荷中的 role/status 在签发后可能已变更——
+ * 每次鉴权用 DB 实时值校准，让「禁用 / 角色变更」立即生效（15min 窗口归零）。
+ */
+export async function getUserAuthContext(
+  userId: string,
+): Promise<{ id: string; role: string; status: string } | null> {
+  return prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true, status: true },
+  });
 }
 
 /** 验证 Access Token，返回当前用户 */

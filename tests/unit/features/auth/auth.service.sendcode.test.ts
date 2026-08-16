@@ -78,6 +78,23 @@ describe("sendVerificationCode — 演示模式回显", () => {
     expect(code).toBeNull();
   });
 
+  it("生产环境且短信未送达（dev-fallback）→ 返回 null，绝不回显验证码（枚举门禁）", async () => {
+    // C1 修复回归：生产环境即使短信未送达也不回显验证码——
+    // 否则任意手机号可借 demoCode 接管他人账号（短信网关停摆时演示回显即高危后门）。
+    const env = process.env as { NODE_ENV?: string };
+    const original = env.NODE_ENV;
+    env.NODE_ENV = "production";
+    try {
+      smsMock.mockResolvedValue({ success: true, messageId: "dev-fallback" });
+
+      const code = await sendVerificationCode("13800138000");
+
+      expect(code).toBeNull();
+    } finally {
+      env.NODE_ENV = original;
+    }
+  });
+
   it("60 秒内重复发送 → 抛 VALIDATION_ERROR（频率限制，不写库）", async () => {
     vi.mocked(prisma.verificationCode.findFirst).mockResolvedValue({
       id: "vc-old",
