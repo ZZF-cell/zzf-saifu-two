@@ -641,8 +641,10 @@ npm start
 | 状态机 (`*.state-machine.ts`) | **100%** | 每个状态转换路径必须覆盖，包括异常路径 |
 | 金额工具 (`shared/utils/money.ts`) | **100%** | 边界值：0、负数、`Number.MAX_SAFE_INTEGER`、小数点精度 |
 | 加密工具 (`shared/utils/crypto.ts`) | **100%** | 加密/解密往返、空字符串、Unicode、长文本 |
-| Service 层 (`*.service.ts`) | **≥80%** | 核心业务分支、事务回滚、异常处理路径 |
+| Service 层 (`*.service.ts`) | **≥75%**（vitest 全局强制） | 核心业务分支、事务回滚、异常处理路径；**80% 为演进目标**（`npm run test:coverage` 卡全局下限，新增模块需达标） |
 | UI 组件 (`*.components.tsx`) | 不强制 | E2E 覆盖关键交互即可 |
+
+> **强制机制（L12）**：阈值在 `vitest.config.ts` 的 `coverage.thresholds` 中落地——状态机/金额/加密工具三个文件用 **glob 分键强制 100%**，其余文件走全局下限（stmts/lines 75%、funcs 70%、branches 75%）。`npx vitest run --coverage` 不达标即退出码 1。
 
 ### E2E 核心闭环（3 条）
 

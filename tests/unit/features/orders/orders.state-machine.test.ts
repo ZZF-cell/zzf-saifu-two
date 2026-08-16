@@ -196,4 +196,9 @@ describe("getAllowedTransitions", () => {
   it("CANCELLED 终态返回空数组", () => {
     expect(getAllowedTransitions("CANCELLED")).toEqual([]);
   });
+
+  it("未知状态（不在映射表）→ 空数组（`|| []` 兜底分支）", () => {
+    // 覆盖 ALLOWED_TRANSITIONS[current] || [] 的右侧分支（L12 覆盖率 100%）
+    expect(getAllowedTransitions("UNKNOWN" as never)).toEqual([]);
+  });
 });
