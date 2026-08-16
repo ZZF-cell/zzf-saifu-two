@@ -389,6 +389,7 @@ describe("updateProduct — 管理端编辑商品（状态机：基本信息→�
     certificates: [],
     specs: {},
     status: "APPROVED",
+    version: 1,
   };
 
   it("APPROVED 改基本信息（name）→ 回 PENDING + 审计 PRODUCT_UPDATE_REVIEW + snapshot 留痕", async () => {
@@ -399,7 +400,7 @@ describe("updateProduct — 管理端编辑商品（状态机：基本信息→�
 
     expect(result).toEqual({ id: "product-1", status: "PENDING" });
     expect(tx.product.updateMany).toHaveBeenCalledWith({
-      where: { id: "product-1", status: "APPROVED" },
+      where: { id: "product-1", status: "APPROVED", version: 1 },
       data: {
         name: "静音震动器 Pro",
         status: "PENDING",
@@ -441,7 +442,7 @@ describe("updateProduct — 管理端编辑商品（状态机：基本信息→�
 
     expect(result).toEqual({ id: "product-1", status: "PENDING" });
     expect(tx.product.updateMany).toHaveBeenCalledWith({
-      where: { id: "product-1", status: "APPROVED" },
+      where: { id: "product-1", status: "APPROVED", version: 1 },
       data: expect.objectContaining({
         certificates: [
           { url: "https://img.example.com/cert/new.pdf", name: "新质检报告.pdf", mime: "application/pdf" },
@@ -463,7 +464,7 @@ describe("updateProduct — 管理端编辑商品（状态机：基本信息→�
 
     expect(result).toEqual({ id: "product-1", status: "APPROVED" });
     expect(tx.product.updateMany).toHaveBeenCalledWith({
-      where: { id: "product-1", status: "APPROVED" },
+      where: { id: "product-1", status: "APPROVED", version: 1 },
       data: {
         price: 9900,
         version: { increment: 1 },
@@ -502,7 +503,7 @@ describe("updateProduct — 管理端编辑商品（状态机：基本信息→�
     await updateProduct("product-1", { description: "" }, "admin-1");
 
     expect(tx.product.updateMany).toHaveBeenCalledWith({
-      where: { id: "product-1", status: "APPROVED" },
+      where: { id: "product-1", status: "APPROVED", version: 1 },
       data: { description: null, version: { increment: 1 } },
     });
   });
@@ -522,6 +523,23 @@ describe("updateProduct — 管理端编辑商品（状态机：基本信息→�
 
     await expect(updateProduct("product-1", { name: "并发改动" }, "admin-1")).rejects.toMatchObject({
       code: ERROR_CODES.PRODUCT_STATUS_INVALID.code,
+    });
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("L13：version 已被他处编辑（乐观锁 0 行）→ 409，绝不静默覆盖他人编辑", async () => {
+    // 场景：管理员 A 与 B 同时打开同一商品编辑页，A 先保存（version 1→2），
+    // B 保存时 where 带旧 version:1 → 命中 0 行 → 拒绝，防 last-write-wins 丢 A 的改动
+    tx.product.findUnique.mockResolvedValue(baseOld); // 读到 version:1
+    tx.product.updateMany.mockResolvedValue({ count: 0 }); // 实际 DB 已 version:2
+
+    await expect(updateProduct("product-1", { price: 50 }, "admin-1")).rejects.toMatchObject({
+      code: ERROR_CODES.PRODUCT_STATUS_INVALID.code,
+    });
+    // 守卫必须携带 version（L13 核心断言）：status 未变但 version 变也拒绝
+    expect(tx.product.updateMany).toHaveBeenCalledWith({
+      where: { id: "product-1", status: "APPROVED", version: 1 },
+      data: expect.objectContaining({ price: 5000, version: { increment: 1 } }),
     });
     expect(tx.auditLog.create).not.toHaveBeenCalled();
   });

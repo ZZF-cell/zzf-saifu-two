@@ -206,6 +206,7 @@ export async function updateProduct(
         certificates: true,
         specs: true,
         status: true,
+        version: true,
       },
     });
     if (!old) throw new AppError(ERROR_CODES.PRODUCT_NOT_FOUND, "商品不存在");
@@ -239,13 +240,15 @@ export async function updateProduct(
       version: { increment: 1 },
     };
 
-    // 守卫 status: old.status：读后如有并发状态变更，本次写入整体失败，不覆盖他人决策
+    // L13 乐观锁守卫 status+version：读后如有并发状态变更或他处编辑（version 已 +1），
+    // 本次写入命中 0 行 → 整体失败，绝不静默覆盖他人决策（防双管理员 last-write-wins 丢编辑）。
+    // 与品牌方 updateProduct / 下单扣库存同一套 version 语义。
     const updated = await tx.product.updateMany({
-      where: { id: productId, status: old.status },
+      where: { id: productId, status: old.status, version: old.version },
       data,
     });
     if (updated.count === 0) {
-      throw new AppError(ERROR_CODES.PRODUCT_STATUS_INVALID, "商品状态已变更，请刷新后重试");
+      throw new AppError(ERROR_CODES.PRODUCT_STATUS_INVALID, "商品已被其他操作修改，请刷新后重试");
     }
 
     await writeAuditLog(tx, "Product", productId, action, operatorId, {
