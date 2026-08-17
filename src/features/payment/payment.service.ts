@@ -31,7 +31,8 @@ export async function createPayment(
   });
 
   if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
-  if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_OWNED, "无权操作该订单");
+  // F2 归属失败统一 404（防订单号枚举，与订单操作端点语义一致）
+  if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
   if (order.status !== ORDER_STATUS.PENDING) {
     throw new AppError(
       ERROR_CODES.ORDER_STATUS_INVALID,

@@ -94,11 +94,12 @@ describe("createPayment — 订单校验与支付创建", () => {
     expect(adapterCreateMock).not.toHaveBeenCalled();
   });
 
-  it("订单不属于当前用户 → 抛 ORDER_NOT_OWNED", async () => {
+  it("订单不属于当前用户 → 统一 404 ORDER_NOT_FOUND（防订单号枚举，F2）", async () => {
     findUniqueMock.mockResolvedValue(pendingOrder({ userId: "user-other" }));
 
     await expect(createPayment("user-1", "order-1")).rejects.toMatchObject({
-      code: "ORDER_NOT_OWNED",
+      code: "ORDER_NOT_FOUND",
+      statusCode: 404,
     });
     expect(adapterCreateMock).not.toHaveBeenCalled();
   });

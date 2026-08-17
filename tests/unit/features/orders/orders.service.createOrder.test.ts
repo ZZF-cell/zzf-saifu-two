@@ -34,6 +34,9 @@ import { createOrder } from "@/features/orders/orders.service";
 
 type TxCartItem = {
   findMany: ReturnType<typeof vi.fn>;
+  findUnique: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
+  update: ReturnType<typeof vi.fn>;
   deleteMany: ReturnType<typeof vi.fn>;
 };
 type TxProduct = {
@@ -56,10 +59,21 @@ const baseInput = {
   privacy: { anonymousPackaging: true, hideProductName: true },
 };
 
+/** 按 productId 返回购物车行（F4 差额扣减 findUnique 用） */
+function mockCartRows(rows: { productId: string; qty: number }[]) {
+  const map = new Map(rows.map((r) => [r.productId, r]));
+  tx.cartItem.findUnique.mockImplementation(
+    ({ where }: { where: { userId_productId: { userId: string; productId: string } } }) => {
+      const row = map.get(where.userId_productId.productId);
+      return Promise.resolve(row ? { id: `cart-${row.productId}`, qty: row.qty } : null);
+    },
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   tx = {
-    cartItem: { findMany: vi.fn(), deleteMany: vi.fn() },
+    cartItem: { findMany: vi.fn(), findUnique: vi.fn(), delete: vi.fn(), update: vi.fn(), deleteMany: vi.fn() },
     product: { findUnique: vi.fn(), updateMany: vi.fn() },
     order: { create: vi.fn() },
   };
@@ -84,8 +98,10 @@ describe("createOrder — 购物车子集校验（防回退全量误删）", () 
     expect(tx.cartItem.deleteMany).not.toHaveBeenCalled();
   });
 
-  it("提交项全在购物车 → 正常下单，Step 4 只删本次提交的商品", async () => {
+  it("提交项全在购物车 → 正常下单，Step 4 按购买数量扣减购物车", async () => {
     tx.cartItem.findMany.mockResolvedValue([{ productId: "p1" }, { productId: "p2" }]);
+    // 购物车 p1×1、p2×1，下单各 1 → 购满 → 整行删除
+    mockCartRows([{ productId: "p1", qty: 1 }, { productId: "p2", qty: 1 }]);
     tx.product.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
       Promise.resolve({
         id: where.id, name: `商品${where.id}`, price: 19900, stock: 100, version: 1, status: "APPROVED",
@@ -106,10 +122,52 @@ describe("createOrder — 购物车子集校验（防回退全量误删）", () 
     expect(r.orderId).toBe("order1");
     // Step 0 校验通过后才走到扣库存
     expect(tx.product.updateMany).toHaveBeenCalled();
-    // Step 4 删除范围 = 本次提交的购物车商品（不含未提交的）
-    expect(tx.cartItem.deleteMany).toHaveBeenCalledWith({
-      where: { userId: "u1", productId: { in: ["p1", "p2"] } },
+    // F4 差额扣减：购满 1=1 → 删除整行（delete），而非 deleteMany 全量
+    expect(tx.cartItem.delete).toHaveBeenCalledWith({ where: { id: "cart-p1" } });
+    expect(tx.cartItem.delete).toHaveBeenCalledWith({ where: { id: "cart-p2" } });
+    expect(tx.cartItem.update).not.toHaveBeenCalled();
+  });
+
+  it("F4 差额扣减：购物车 A×5 只买 A×2 → 保留剩余 3（update 而非整行删除）", async () => {
+    tx.cartItem.findMany.mockResolvedValue([{ productId: "p1" }]);
+    mockCartRows([{ productId: "p1", qty: 5 }]);
+    tx.product.findUnique.mockResolvedValue({
+      id: "p1", name: "商品1", price: 19900, stock: 100, version: 1, status: "APPROVED",
     });
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+    tx.order.create.mockResolvedValue({ id: "order1", total: 39800, status: "PENDING", items: [] });
+
+    await createOrder("u1", { ...baseInput, items: [{ productId: "p1", qty: 2 }] });
+
+    // 5-2=3 留在购物车（update qty），不删除
+    expect(tx.cartItem.update).toHaveBeenCalledWith({
+      where: { id: "cart-p1" },
+      data: { qty: 3 },
+    });
+    expect(tx.cartItem.delete).not.toHaveBeenCalled();
+  });
+
+  it("F5 privacy 白名单：input 注入额外字段（destroyed）→ 落库仅 anonymousPackaging/hideProductName", async () => {
+    tx.cartItem.findMany.mockResolvedValue([{ productId: "p1" }]);
+    mockCartRows([{ productId: "p1", qty: 5 }]);
+    tx.product.findUnique.mockResolvedValue({
+      id: "p1", name: "商品1", price: 19900, stock: 100, version: 1, status: "APPROVED",
+    });
+    tx.product.updateMany.mockResolvedValue({ count: 1 });
+    tx.order.create.mockResolvedValue({ id: "order1", total: 19900, status: "PENDING", items: [] });
+
+    await createOrder("u1", {
+      ...baseInput,
+      privacy: {
+        anonymousPackaging: true,
+        hideProductName: false,
+        destroyed: true, // 恶意注入字段，不得落库
+        destroyedAt: "2026-01-01T00:00:00.000Z",
+      } as unknown as { anonymousPackaging: boolean; hideProductName: boolean },
+    });
+
+    const createCall = tx.order.create.mock.calls[0][0] as { data: { privacy: object } };
+    expect(createCall.data.privacy).toEqual({ anonymousPackaging: true, hideProductName: false });
   });
 
   it("空 items → VALIDATION_ERROR（原有守卫回归）", async () => {

@@ -50,8 +50,9 @@ const createOrderSchema = z.object({
     province: z.string().min(1, "请选择省份"),
     city: z.string().min(1, "请选择城市"),
     district: z.string().min(1, "请选择区县"),
-    detail: z.string().min(1, "请输入详细地址"),
-    zipCode: z.string().optional(),
+    // F7 地址字段长度上限：防超大 detail/zipCode 撑爆 AES-GCM 密文与 DB 列
+    detail: z.string().min(1, "请输入详细地址").max(200, "详细地址最多 200 字"),
+    zipCode: z.string().max(10, "邮编最多 10 位").optional(),
   }),
   privacy: z.object({
     anonymousPackaging: z.boolean().default(true),

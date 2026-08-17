@@ -7,14 +7,18 @@ import * as cartService from "./cart.service";
 
 // ── Schemas ──
 
+// F6 qty 上限：与下单 MAX_ORDER_ITEM_QTY(999) 对齐，防无界数量累加造成
+// stock/sales Int4 溢出（add 为 best-effort，展示时 getCart 按实时库存钳制）。
+const CART_ITEM_QTY_MAX = 999;
+
 const addSchema = z.object({
   productId: z.string().min(1),
-  qty: z.number().int().min(1).optional(),
+  qty: z.number().int().min(1).max(CART_ITEM_QTY_MAX).optional(),
 });
 
 const updateSchema = z.object({
   productId: z.string().min(1),
-  qty: z.number().int().min(1),
+  qty: z.number().int().min(1).max(CART_ITEM_QTY_MAX),
 });
 
 const removeSchema = z.object({

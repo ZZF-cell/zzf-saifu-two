@@ -37,6 +37,7 @@ const findUniqueMock = vi.mocked(prisma.order.findUnique) as unknown as {
     status: string;
     total: number;
     createdAt: Date;
+    destroyedAt?: Date | null;
   } | null) => unknown;
 };
 const queryTradeMock = vi.mocked(paymentService.queryAlipayTrade);
@@ -76,6 +77,7 @@ function snapshot(
     status: string;
     total: number;
     createdAt: Date;
+    destroyedAt?: Date | null;
     items?: { productId: string | null; qty: number }[];
   }> = {},
 ) {
@@ -98,11 +100,23 @@ describe("checkPaymentStatus — 查询支付状态（真正查支付宝）", ()
     expect(queryTradeMock).not.toHaveBeenCalled();
   });
 
-  it("订单不属于当前用户 → 抛 ORDER_NOT_OWNED", async () => {
+  it("订单不属于当前用户 → 统一 404 ORDER_NOT_FOUND（防订单号枚举，F2）", async () => {
     findUniqueMock.mockResolvedValue(snapshot({ userId: "user-other" }));
 
     await expect(checkPaymentStatus("user-1", "order-1")).rejects.toMatchObject({
-      code: "ORDER_NOT_OWNED",
+      code: "ORDER_NOT_FOUND",
+      statusCode: 404,
+    });
+    expect(queryTradeMock).not.toHaveBeenCalled();
+  });
+
+  it("已销毁订单（destroyedAt 非空）→ 对用户侧视为不存在，抛 ORDER_NOT_FOUND（F3）", async () => {
+    findUniqueMock.mockResolvedValue(
+      snapshot({ destroyedAt: new Date("2026-08-01T00:00:00Z") }),
+    );
+
+    await expect(checkPaymentStatus("user-1", "order-1")).rejects.toMatchObject({
+      code: "ORDER_NOT_FOUND",
     });
     expect(queryTradeMock).not.toHaveBeenCalled();
   });

@@ -59,11 +59,12 @@ describe("confirmReceipt — 用户确认收货", () => {
     expect(tx.order.updateMany).not.toHaveBeenCalled();
   });
 
-  it("订单不属于当前用户 → 抛 ORDER_NOT_OWNED", async () => {
+  it("订单不属于当前用户 → 统一 404 ORDER_NOT_FOUND（防订单号枚举，F2）", async () => {
     findUniqueMock.mockResolvedValue({ id: "order-1", userId: "user-other", status: "DELIVERED" });
 
     await expect(confirmReceipt("user-1", "order-1")).rejects.toMatchObject({
-      code: "ORDER_NOT_OWNED",
+      code: "ORDER_NOT_FOUND",
+      statusCode: 404,
     });
     expect(tx.order.updateMany).not.toHaveBeenCalled();
   });

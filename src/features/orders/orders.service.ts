@@ -255,6 +255,13 @@ export async function createOrder(
 
     const total = sumFen(calculatedItems.map((ci) => ci.price));
 
+    // F5 privacy 白名单化：只落 anonymousPackaging / hideProductName 两个业务字段，
+    // 丢弃前端可能注入的任意额外字段（如伪造 destroyed 标记干扰管理后台审计显示）。
+    const sanitizedPrivacy = {
+      anonymousPackaging: Boolean(input.privacy.anonymousPackaging),
+      hideProductName: Boolean(input.privacy.hideProductName),
+    };
+
     // Step 3: 创建订单
     const order = await tx.order.create({
       data: {
@@ -262,7 +269,7 @@ export async function createOrder(
         total,
         status: ORDER_STATUS.PENDING,
         shippingAddress: serializeAddress(input.shippingAddress),
-        privacy: input.privacy as unknown as object,
+        privacy: sanitizedPrivacy as unknown as object,
         items: {
           create: calculatedItems.map((ci) => ({
             productName: ci.productName,
@@ -275,11 +282,26 @@ export async function createOrder(
       include: { items: true },
     });
 
-    // Step 4: 清空购物车（仅删除本次下单的商品，保留部分结算时未购买的商品）
-    const purchasedProductIds = calculatedItems.map((ci) => ci.productId);
-    await tx.cartItem.deleteMany({
-      where: { userId, productId: { in: purchasedProductIds } },
-    });
+    // Step 4: 购物车差额扣减 —— 部分结算（购物车 A×5 只买 A×2）时按购买数量扣减，
+    // 剩余数量保留在购物车；购买数量 ≥ 购物车数量才整行删除。
+    // 修复前 deleteMany 整行删除：前端「购物车勾选部分 → 结算 → 回到购物车」时
+    // 未被购买的剩余数量一并消失，体验断层且易被误解为丢单。
+    for (const ci of calculatedItems) {
+      const cart = await tx.cartItem.findUnique({
+        where: { userId_productId: { userId, productId: ci.productId } },
+        select: { id: true, qty: true },
+      });
+      // Step 0 已保证购物车存在，此处防御并发移除（另一终端删除该商品）
+      if (!cart) continue;
+      if (cart.qty <= ci.qty) {
+        await tx.cartItem.delete({ where: { id: cart.id } });
+      } else {
+        await tx.cartItem.update({
+          where: { id: cart.id },
+          data: { qty: cart.qty - ci.qty },
+        });
+      }
+    }
 
     return order;
   });
@@ -343,7 +365,8 @@ export async function cancelOrder(
   });
 
   if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
-  if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_OWNED, "无权操作该订单");
+  // F2 归属失败统一 404（防订单号枚举，与 checkPaymentStatus/orders.queries 语义一致）
+  if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
 
   const currentStatus = order.status as OrderStatus;
   if (!isCancellable(currentStatus)) {
@@ -484,7 +507,8 @@ export async function requestRefund(
   });
 
   if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
-  if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_OWNED, "无权操作该订单");
+  // F2 归属失败统一 404（防订单号枚举）
+  if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
 
   const currentStatus = order.status as OrderStatus;
   if (!isRefundable(currentStatus)) {
@@ -530,7 +554,8 @@ export async function confirmReceipt(userId: string, orderId: string): Promise<v
   });
 
   if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
-  if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_OWNED, "无权操作该订单");
+  // F2 归属失败统一 404（防订单号枚举）
+  if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
 
   const currentStatus = order.status as OrderStatus;
   if (!isConfirmable(currentStatus)) {
@@ -727,11 +752,16 @@ export async function checkPaymentStatus(
 ): Promise<{ status: string }> {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
-    select: { userId: true, status: true, total: true, createdAt: true },
+    select: { userId: true, status: true, total: true, createdAt: true, destroyedAt: true },
   });
 
   if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
-  if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_OWNED, "无权操作该订单");
+  // F3：已销毁订单对用户侧视为不存在（用户列表已消失、详情 404），查询支付一并过滤，
+  // 否则销毁后仍可通过 check-paid 探测到订单存在痕迹。
+  if (order.destroyedAt) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
+  // F2 归属失败统一 404：非本人订单对当前用户「不可见」——403 会泄露订单存在性，
+  // 攻击者可逐 id 探测（与 orders.queries 的 404 语义一致，防订单号枚举）。
+  if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
 
   // 超时兜底：Inngest 事件丢失/未配置时，这里在用户每次查看支付状态时惰性取消过期订单
   // （过期时间 = 下单 createdAt + ORDER_PAYMENT_TIMEOUT_MS，不落库列；cancelExpiredOrder
@@ -806,7 +836,8 @@ export async function destroyOrder(
   });
 
   if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
-  if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_OWNED, "无权操作该订单");
+  // F2 归属失败统一 404（防订单号枚举）
+  if (order.userId !== userId) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
 
   const currentStatus = order.status as OrderStatus;
   if (!isDestroyable(currentStatus)) {
@@ -817,12 +848,14 @@ export async function destroyOrder(
   }
 
   await prisma.$transaction(async (tx) => {
+    // F1 幂等守卫：updateMany where destroyedAt:null —— 并发重复销毁（双击/重试）时
+    // 已销毁订单命中 0 行 → 静默 no-op（幂等，不重复写审计、不覆盖已擦除状态）。
     // E3 保留原隐私选项：合并而非整体覆盖 —— 后台仍能读到
     // anonymousPackaging/hideProductName 等原值（丢失会让后台无法识别
     // 「曾匿名包装」的订单），只追加 destroyed 标记。
     const originalPrivacy = (order.privacy as Record<string, unknown> | null) ?? {};
-    await tx.order.update({
-      where: { id: orderId },
+    const result = await tx.order.updateMany({
+      where: { id: orderId, destroyedAt: null },
       data: {
         shippingAddress: "[DESTROYED]",
         privacy: {
@@ -835,6 +868,7 @@ export async function destroyOrder(
         destroyedAt: new Date(),
       },
     });
+    if (result.count === 0) return;
 
     // 审计快照（E3）：记录销毁前订单元数据（状态/金额/商品行），不含配送地址
     // （隐私承诺：地址随销毁一并擦除，审计不得回存 PII）。后台可据此核验
