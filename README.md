@@ -59,7 +59,7 @@ npm run dev                       # 启动开发服务器 → http://localhost:3
 | 普通用户 | 13800138000 | 123456 | 浏览商品、购物车、下单、支付、退款、销毁订单 |
 | 品牌方 | 13888888888 | — | 品牌后台（提交商品/查看订单/品牌资料/数据看板） |
 
-> **获取验证码：** 短信模块尚未接入真实 SDK，当前为**演示模式回显** —— 需在本地 `.env.local` 显式配置 `DEMO_SMS_ECHO=true` 后，`POST /api/auth/send-code` 响应才携带 `demoCode`（登录/注册表单页面直接提示显示验证码）。**默认任何环境绝不回显**（短信未接通时回显验证码等于把任意手机号账号控制权交给任何人），配好真实短信后即使开启开关也自动停止回显。本地另可从 `grep "\[SMS\]" .next/dev/logs/next-development.log` 查看终端日志回退
+> **获取验证码：** 短信已接入阿里云 SendSms（`shared/adapters/sms.adapter.ts`，RPC 签名 HMAC-SHA1）。配齐 `SMS_ACCESS_KEY_ID`/`SMS_ACCESS_KEY_SECRET`/`SMS_SIGN_NAME`/`SMS_TEMPLATE_CODE` 后真实短信送达手机（模板需含 `${code}` 变量，变量名可用 `SMS_TEMPLATE_PARAM` 覆盖）；任一缺失 → 回退终端日志（`grep "\[SMS\]"` 获取验证码，仅本地/验收）。**演示模式回显**：显式配置 `DEMO_SMS_ECHO=true` 且短信未实际送达时，`POST /api/auth/send-code` 响应携带 `demoCode`（表单直接显示验证码）。**默认任何环境绝不回显**（短信未接通时回显验证码等于把任意手机号账号控制权交给任何人）；真实送达后即使开启开关也自动停止回显
 
 ## 本地开发工作流
 
@@ -85,7 +85,7 @@ npx prisma db seed                 # 重新填充种子数据
 ### Mock 数据策略
 
 - **开发环境**：使用 `prisma/seed.ts` 生成的种子数据（含三个角色测试账号 + 示例商品 + 种子邀请码 `INVITE-BRAND-101/102` + **8 笔覆盖全部状态的演示订单** + **5 个大类质检模板**，可直接用于入驻演示与后台验收）
-- **短信 Mock**：未配置阿里云短信时，验证码输出到终端日志（`grep "\[SMS\]"` 获取）
+- **短信**：已接入阿里云 SendSms（`shared/adapters/sms.adapter.ts`）；配齐密钥/签名/模板后真实送达手机，任一缺失则回退终端日志（`grep "\[SMS\]"` 获取，仅本地/验收）
 - **支付 Mock**：使用支付宝沙箱环境，测试用买家账号付款不会产生真实资金流转
 - **Inngest 本地**：`npx inngest-cli dev` 提供完整的本地函数执行环境，无需连接 Inngest Cloud
 
@@ -235,7 +235,7 @@ src/
 │   ├── validation/
 │   │   └── schemas.ts              #   Zod schemas（全局共享）
 │   ├── adapters/
-│   │   ├── sms.adapter.ts          #   阿里云短信（未配置回退日志）
+│   │   ├── sms.adapter.ts          #   阿里云短信 SendSms（RPC HMAC-SHA1 签名；未配置回退日志）
 │   │   ├── payment.adapter.ts      #   支付宝沙箱封装
 │   │   └── oss.adapter.ts          #   阿里云 OSS（懒初始化，未配置返回失败标记）
 │   └── ui/                         #   自定义 UI（非 shadcn 源，可改）
@@ -605,8 +605,9 @@ npm start
 | `JWT_SECRET` | 是 | JWT 签名密钥（生产环境更换为 32+ 字符随机值；显式配置时启动强制校验长度 ≥32 字符，防弱密钥伪造 Token） |
 | `SMS_ACCESS_KEY_ID` | 否 | 阿里云短信 AccessKey |
 | `SMS_ACCESS_KEY_SECRET` | 否 | 阿里云短信 Secret |
-| `SMS_SIGN_NAME` | 否 | 短信签名名称 |
-| `SMS_TEMPLATE_CODE` | 否 | 短信模板 CODE |
+| `SMS_SIGN_NAME` | 否 | 短信签名名称（需已审核） |
+| `SMS_TEMPLATE_CODE` | 否 | 短信模板 CODE（需含 `${code}` 变量，已审核） |
+| `SMS_TEMPLATE_PARAM` | 否 | 模板变量名，默认 `code` |
 | `ALIPAY_APP_ID` | 否 | 支付宝应用 ID |
 | `ALIPAY_PRIVATE_KEY` | 否 | 支付宝应用私钥（PEM 格式） |
 | `ALIPAY_PUBLIC_KEY` | 否 | 支付宝公钥（PEM 格式） |
