@@ -111,6 +111,49 @@ export function isOssUrl(url: string): boolean {
   return isOssUrlForHosts(url, getOssHostsFromEnv(process.env));
 }
 
+// ── G4 OSS key 结构 / 归属校验（纯函数，供消费侧 schema 与 service 复用） ──
+
+/** 本站上传目录白名单（= 上传 purpose 枚举，buildObjectKey 的 folder 段） */
+export const OSS_KEY_FOLDERS = ["product", "brand", "cert"] as const;
+
+/**
+ * 从 OSS URL 提取对象 key（host 白名单校验 + 去协议/去 host/去首斜杠）。
+ * 非本站 OSS URL（host 不在白名单 / 无路径）返回 null。
+ */
+export function extractOssKeyFromUrl(url: string): string | null {
+  if (!isOssUrl(url)) return null;
+  const rest = url.split("://")[1] ?? "";
+  const slashIndex = rest.indexOf("/");
+  if (slashIndex < 0) return null;
+  return rest.slice(slashIndex + 1);
+}
+
+/**
+ * 校验 OSS key 符合本站上传结构：`<folder>/<userId>/<yyyymmdd>/<文件名>.<扩展名>`
+ * （buildObjectKey 生成的格式）。folder 白名单 + userId 非空 + 日期 8 位 + 文件名带扩展名。
+ * 目的：消费侧只收「经本站 /api/upload 生成的 URL」，拒绝任意外部/伪造 key
+ * （如 img.example.com/other/fake.jpg 的 key=other/fake.jpg 只有 2 段，被拒）。
+ */
+export function isValidOssKeyStructure(key: string): boolean {
+  const segments = key.split("/");
+  if (segments.length !== 4) return false;
+  const [folder, userId, ymd, fileName] = segments;
+  if (!(OSS_KEY_FOLDERS as readonly string[]).includes(folder)) return false;
+  if (!userId) return false;
+  if (!/^\d{8}$/.test(ymd)) return false;
+  return Boolean(fileName) && fileName!.includes(".");
+}
+
+/**
+ * 校验 OSS URL 归属当前用户：key 的 userId 段（buildObjectKey 内嵌上传者 userId）等于给定用户。
+ * 防「提交他人上传的 OSS URL」——品牌方入驻/商品/logo 只能使用本人上传的资源。
+ */
+export function isOssUrlOwnedBy(url: string, userId: string): boolean {
+  const key = extractOssKeyFromUrl(url);
+  if (!key || !isValidOssKeyStructure(key)) return false;
+  return key.split("/")[1] === userId;
+}
+
 // ── 接口 ──
 
 export interface PutObjectInput {
@@ -177,7 +220,13 @@ export function createOssAdapter(): OssAdapter {
           mime: input.mime,
           randomId: randomUUID(),
         });
-        await client.put(key, input.buffer);
+        // G3 证书 PDF 以下载方式输出（Content-Disposition: attachment）：
+        // 浏览器不内联渲染 PDF，即使文件被魔数校验漏网为多态/带脚本，也不在浏览器页面上下文执行
+        const isCertPdf = input.folder === "cert" && input.mime === "application/pdf";
+        const headers = isCertPdf
+          ? { "Content-Disposition": 'attachment; filename="certificate.pdf"' }
+          : {};
+        await client.put(key, input.buffer, { headers });
         const url = getOssPublicUrl({
           bucket: process.env.OSS_BUCKET!,
           region: process.env.OSS_REGION!,

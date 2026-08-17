@@ -36,6 +36,10 @@ const transactionMock = prisma.$transaction as unknown as Mock<TransactionImpl>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // G4 归属校验经 oss.adapter.isOssUrl 读取 OSS host 白名单（process.env），
+  // 测试态配齐 bucket/region 使合法 OSS URL 通过 host 校验
+  process.env.OSS_BUCKET = "saife-images";
+  process.env.OSS_REGION = "oss-cn-beijing";
   tx = {
     brand: { findUnique: vi.fn(), create: vi.fn() },
     user: { findUnique: vi.fn() },
@@ -52,7 +56,11 @@ describe("activateInviteCode — 品牌入驻激活", () => {
     tx.brand.create.mockResolvedValue({ id: "brand-1" });
 
     const result = await activateInviteCode(
-      { code: "invite-brand-101 ", name: "  测试品牌  ", logo: "https://x/logo.png" },
+      {
+        code: "invite-brand-101 ",
+        name: "  测试品牌  ",
+        logo: "https://saife-images.oss-cn-beijing.aliyuncs.com/brand/user-1/20260815/logo.png",
+      },
       "user-1",
     );
 
@@ -69,7 +77,7 @@ describe("activateInviteCode — 品牌入驻激活", () => {
     expect(tx.brand.create).toHaveBeenCalledWith({
       data: {
         name: "测试品牌",
-        logo: "https://x/logo.png",
+        logo: "https://saife-images.oss-cn-beijing.aliyuncs.com/brand/user-1/20260815/logo.png",
         status: "PENDING",
         inviteCode: "INVITE-BRAND-101",
         ownerId: "user-1",
@@ -216,5 +224,57 @@ describe("activateInviteCode — 品牌入驻激活", () => {
     await expect(
       activateInviteCode({ code: "INVITE-BRAND-101", name: "测试品牌" }, "user-1"),
     ).rejects.toThrow("DB down");
+  });
+
+  it("G4：logo 为他人上传的 OSS URL（key 段 userId ≠ 当前用户）→ VALIDATION_ERROR，不消耗邀请码", async () => {
+    tx.brand.findUnique.mockResolvedValue(null);
+    tx.user.findUnique.mockResolvedValue({ role: "USER" });
+
+    await expect(
+      activateInviteCode(
+        {
+          code: "INVITE-BRAND-101",
+          name: "测试品牌",
+          logo: "https://saife-images.oss-cn-beijing.aliyuncs.com/brand/user-other/20260815/logo.png",
+        },
+        "user-1",
+      ),
+    ).rejects.toMatchObject({
+      code: ERROR_CODES.VALIDATION_ERROR.code,
+      statusCode: 422,
+      message: "品牌 logo 必须是您上传的图片",
+    });
+    expect(tx.inviteCode.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("G4：logo 为本站 host 但非标准 key 结构（伪造 key）→ VALIDATION_ERROR", async () => {
+    tx.brand.findUnique.mockResolvedValue(null);
+    tx.user.findUnique.mockResolvedValue({ role: "USER" });
+
+    await expect(
+      activateInviteCode(
+        {
+          code: "INVITE-BRAND-101",
+          name: "测试品牌",
+          // key 只有 2 段（缺日期/文件名），不符合 buildObjectKey 生成结构
+          logo: "https://saife-images.oss-cn-beijing.aliyuncs.com/brand/user-1/fake.png",
+        },
+        "user-1",
+      ),
+    ).rejects.toMatchObject({ code: ERROR_CODES.VALIDATION_ERROR.code });
+    expect(tx.inviteCode.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("G4：logo 为站外任意 URL（非白名单 host）→ VALIDATION_ERROR", async () => {
+    tx.brand.findUnique.mockResolvedValue(null);
+    tx.user.findUnique.mockResolvedValue({ role: "USER" });
+
+    await expect(
+      activateInviteCode(
+        { code: "INVITE-BRAND-101", name: "测试品牌", logo: "https://evil.com/x.png" },
+        "user-1",
+      ),
+    ).rejects.toMatchObject({ code: ERROR_CODES.VALIDATION_ERROR.code });
+    expect(tx.inviteCode.updateMany).not.toHaveBeenCalled();
   });
 });

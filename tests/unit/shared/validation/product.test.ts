@@ -6,8 +6,9 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { updateProductSchema } from "@/shared/validation/product";
 
-// ossImageUrlSchema 依赖 OSS host 白名单（isOssUrl 运行时读 env），测试内 stub 固定桶域名
-const BUCKET_URL = "https://mybucket.oss-cn-hangzhou.aliyuncs.com/cert/a.pdf";
+// ossImageUrlSchema 依赖 OSS host 白名单（isOssUrl 运行时读 env），测试内 stub 固定桶域名。
+// G4 后 key 须为上传结构 `<folder>/<userId>/<yyyymmdd>/<文件名>.<扩展名>`（4 段）
+const BUCKET_URL = "https://mybucket.oss-cn-hangzhou.aliyuncs.com/cert/user-1/20260815/a.pdf";
 
 function stubOssEnv() {
   vi.stubEnv("OSS_BUCKET", "mybucket");
@@ -71,8 +72,8 @@ describe("updateProductSchema — 部分更新校验", () => {
     stubOssEnv();
     const res = updateProductSchema.safeParse({
       certificates: [
-        { url: "https://mybucket.oss-cn-hangzhou.aliyuncs.com/cert/report.pdf", name: "质检报告.pdf", mime: "application/pdf" },
-        { url: "https://mybucket.oss-cn-hangzhou.aliyuncs.com/cert/ccc.jpg", name: "3C 认证.jpg", mime: "image/jpeg" },
+        { url: "https://mybucket.oss-cn-hangzhou.aliyuncs.com/cert/user-1/20260815/report.pdf", name: "质检报告.pdf", mime: "application/pdf" },
+        { url: "https://mybucket.oss-cn-hangzhou.aliyuncs.com/cert/user-1/20260815/ccc.jpg", name: "3C 认证.jpg", mime: "image/jpeg" },
       ],
     });
     expect(res.success).toBe(true);

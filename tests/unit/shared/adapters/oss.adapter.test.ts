@@ -14,6 +14,9 @@ import {
   getExtensionForMime,
   buildObjectKey,
   isOssUrlForHosts,
+  extractOssKeyFromUrl,
+  isValidOssKeyStructure,
+  isOssUrlOwnedBy,
 } from "@/shared/adapters/oss.adapter";
 
 describe("getMissingOssEnvKeys — 缺失必填变量推导", () => {
@@ -202,5 +205,74 @@ describe("isOssUrlForHosts — host 白名单判定", () => {
     expect(isOssUrlForHosts("data:image/png;base64,AAAA", hosts)).toBe(false);
     expect(isOssUrlForHosts("/images/a.jpg", hosts)).toBe(false);
     expect(isOssUrlForHosts("", hosts)).toBe(false);
+  });
+});
+
+describe("G4 — extractOssKeyFromUrl / isValidOssKeyStructure / isOssUrlOwnedBy", () => {
+  // 同 getOssHostsFromEnv：bucket+region → mybucket.oss-cn-hangzhou.aliyuncs.com
+  const env = {
+    OSS_ACCESS_KEY_ID: "id",
+    OSS_ACCESS_KEY_SECRET: "secret",
+    OSS_BUCKET: "mybucket",
+    OSS_REGION: "oss-cn-hangzhou",
+  };
+  const base = "https://mybucket.oss-cn-hangzhou.aliyuncs.com";
+
+  describe("extractOssKeyFromUrl — 从 URL 提取对象 key", () => {
+    it("本站 OSS URL → 返回 host 之后的 key 路径", () => {
+      const prev = process.env;
+      process.env = { ...env } as unknown as NodeJS.ProcessEnv;
+      try {
+        expect(extractOssKeyFromUrl(`${base}/product/user-1/20260814/a.jpg`)).toBe(
+          "product/user-1/20260814/a.jpg",
+        );
+      } finally {
+        process.env = prev;
+      }
+    });
+
+    it("站外 host / 无路径 → null", () => {
+      expect(extractOssKeyFromUrl("https://evil.com/product/a.jpg")).toBeNull();
+      expect(extractOssKeyFromUrl(`${base}`)).toBeNull();
+    });
+  });
+
+  describe("isValidOssKeyStructure — 上传 key 结构白名单", () => {
+    it("标准 4 段 key（folder/userId/yyyymmdd/file.ext）→ true", () => {
+      expect(isValidOssKeyStructure("product/user-1/20260814/a.jpg")).toBe(true);
+      expect(isValidOssKeyStructure("cert/user-1/20260815/report.pdf")).toBe(true);
+      expect(isValidOssKeyStructure("brand/user-9/20260101/logo.png")).toBe(true);
+    });
+
+    it("folder 非白名单 / 段数不足 / 日期非 8 位 / 无扩展名 → false", () => {
+      expect(isValidOssKeyStructure("banner/user-1/20260814/a.jpg")).toBe(false);
+      expect(isValidOssKeyStructure("product/user-1/a.jpg")).toBe(false);
+      expect(isValidOssKeyStructure("product/user-1/2026081/a.jpg")).toBe(false);
+      expect(isValidOssKeyStructure("product/user-1/20260814/noext")).toBe(false);
+    });
+  });
+
+  describe("isOssUrlOwnedBy — key 归属当前用户", () => {
+    it("key 的 userId 段 = 当前用户 → true", () => {
+      const prev = process.env;
+      process.env = { ...env } as unknown as NodeJS.ProcessEnv;
+      try {
+        expect(isOssUrlOwnedBy(`${base}/brand/user-1/20260814/logo.png`, "user-1")).toBe(true);
+      } finally {
+        process.env = prev;
+      }
+    });
+
+    it("key 的 userId 段 = 他人 / 站外 URL / 非标准结构 → false", () => {
+      const prev = process.env;
+      process.env = { ...env } as unknown as NodeJS.ProcessEnv;
+      try {
+        expect(isOssUrlOwnedBy(`${base}/brand/user-other/20260814/logo.png`, "user-1")).toBe(false);
+        expect(isOssUrlOwnedBy("https://evil.com/brand/user-1/20260814/logo.png", "user-1")).toBe(false);
+        expect(isOssUrlOwnedBy(`${base}/brand/user-1/fake.png`, "user-1")).toBe(false);
+      } finally {
+        process.env = prev;
+      }
+    });
   });
 });

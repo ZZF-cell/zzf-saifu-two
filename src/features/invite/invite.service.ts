@@ -9,6 +9,7 @@
 
 import { prisma } from "@/shared/db/client";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
+import { isOssUrlOwnedBy } from "@/shared/adapters/oss.adapter";
 
 export interface ActivateInviteInput {
   code: string;
@@ -35,6 +36,13 @@ export async function activateInviteCode(
 ): Promise<ActivateInviteResult> {
   const code = input.code.trim().toUpperCase();
   const name = input.name.trim();
+
+  // G4 归属校验：logo 必须是本人经 /api/upload 上传的 OSS URL（key 内嵌 userId）。
+  // 品牌 logo 对外展示、代表品牌形象，来源须可归属 —— 拒绝贴他人上传的 URL
+  // （isOssUrlOwnedBy 同时校验 host 白名单 + key 结构 + userId 段，非法直接 VALIDATION_ERROR）
+  if (input.logo && !isOssUrlOwnedBy(input.logo.trim(), userId)) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "品牌 logo 必须是您上传的图片");
+  }
 
   return prisma.$transaction(async (tx) => {
     // a. 一人一品牌 + 角色守卫（激活面向普通用户，ADMIN 与已有品牌者拦截）

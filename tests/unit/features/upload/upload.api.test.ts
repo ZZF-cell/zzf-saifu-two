@@ -16,13 +16,21 @@ vi.mock("@/features/upload/upload.service", () => ({
   uploadImage: vi.fn(),
 }));
 
+// G1 配额走 RateLimitBucket 原子桶，mock 掉 DB 边界（默认放行，配额用例单独覆盖）
+vi.mock("@/shared/utils/rate-limit", () => ({
+  hitRateLimit: vi.fn(),
+  hashKey: (v: string) => `h-${v}`,
+}));
+
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import { authenticateUser } from "@/shared/api/auth";
 import { uploadImage } from "@/features/upload/upload.service";
+import { hitRateLimit } from "@/shared/utils/rate-limit";
 import { uploadFile } from "@/features/upload/upload.api";
 
 const authMock = vi.mocked(authenticateUser);
 const uploadMock = vi.mocked(uploadImage);
+const rateLimitMock = vi.mocked(hitRateLimit);
 
 const MAX = 4 * 1024 * 1024;
 
@@ -40,6 +48,8 @@ function imageForm(mime = "image/jpeg", size = 3, purpose = "product"): FormData
 beforeEach(() => {
   vi.clearAllMocks();
   authMock.mockResolvedValue({ userId: "user-1", role: "USER" });
+  // 默认配额放行（count=1 ≤ max）
+  rateLimitMock.mockResolvedValue({ count: 1, allowed: true, retryAfterMs: 0 });
 });
 
 describe("POST /api/upload", () => {
@@ -86,6 +96,8 @@ describe("POST /api/upload", () => {
       url: "https://img.example.com/cert/user-1/20260815/cert001.pdf",
       key: "cert/user-1/20260815/cert001.pdf",
     });
+    // G3 cert 仅 BRAND 角色可传
+    authMock.mockResolvedValue({ userId: "user-1", role: "BRAND" });
 
     const res = await uploadFile(makeRequest(imageForm("application/pdf", 5 * 1024 * 1024, "cert")));
 
@@ -123,6 +135,7 @@ describe("POST /api/upload", () => {
       url: "https://img.example.com/cert/user-1/20260815/a.png",
       key: "cert/user-1/20260815/a.png",
     });
+    authMock.mockResolvedValue({ userId: "user-1", role: "BRAND" });
 
     const res = await uploadFile(makeRequest(imageForm("image/png", 3, "cert")));
 
@@ -163,6 +176,30 @@ describe("POST /api/upload", () => {
         folder: "product",
         mime: "image/jpeg",
       }),
+    );
+  });
+
+  it("G3：cert 用途 + 非 BRAND 角色（USER）→ 403 FORBIDDEN，不调 service", async () => {
+    const res = await uploadFile(makeRequest(imageForm("image/jpeg", 3, "cert")));
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: "FORBIDDEN" });
+    expect(uploadMock).not.toHaveBeenCalled();
+  });
+
+  it("G1：今日配额超限（allowed=false）→ 429 RATE_LIMITED，不调 service", async () => {
+    rateLimitMock.mockResolvedValue({ count: 101, allowed: false, retryAfterMs: 60_000 });
+
+    const res = await uploadFile(makeRequest(imageForm("image/jpeg", 3, "product")));
+
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({ error: "RATE_LIMITED" });
+    expect(uploadMock).not.toHaveBeenCalled();
+    // 配额键按 userId 哈希隔离
+    expect(rateLimitMock).toHaveBeenCalledWith(
+      "upload:daily",
+      "h-user-1",
+      expect.objectContaining({ windowMs: 24 * 60 * 60 * 1000, max: 100 }),
     );
   });
 });

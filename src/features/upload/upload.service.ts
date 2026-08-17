@@ -8,9 +8,31 @@ import { ossAdapter, type PutObjectInput, type AllowedUploadMime } from "@/share
 // （MIME 伪造），OSS 以公开 URL 直出 → 存储型 XSS/钓鱼。上传前必须按白名单 MIME
 // 核对文件头魔数，内容与声明不符即拒绝（422），绝不把不可信内容以图片名义公开。
 
+// G2 魔数加强（对抗验证）：
+// - JPEG：仅 FF D8 FF 开头可被 HTML/JS 伪装（polyglot 开头塞三个字节即可），
+//   追加 SOF 段标记扫描（FF C0-CF，排除 DHT=C4 / JPG=C8 / DAC=CC）——
+//   真正的 JPEG 文件必然在文件头附近声明图像帧结构，这是「真 JPEG」而非伪装的证据。
+// - PDF：非多态 —— 要求 %PDF- 严格出现在字节 0-4（HTML polyglot 无法同时以 %PDF- 和 < 开头）、
+//   且含对象结构关键字 obj（头部 1KB）+ 结束标记 %%EOF（尾部 2KB）。
+//   纯 HTML/JS 伪装或截断的伪 PDF 因缺 %%EOF/obj 被拒。
 const MAGIC_BY_MIME: Record<AllowedUploadMime, (b: Buffer) => boolean> = {
-  // JPEG: FF D8 FF
-  "image/jpeg": (b) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  "image/jpeg": (b) => {
+    if (!(b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff)) return false;
+    // SOF 紧随文件头（APP 段之后），扫描前 4KB 足够
+    const scanEnd = Math.min(b.length, 4096);
+    for (let i = 2; i < scanEnd - 1; i++) {
+      if (b[i] === 0xff) {
+        const marker = b[i + 1];
+        if (
+          marker >= 0xc0 && marker <= 0xcf &&
+          marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc
+        ) {
+          return true;
+        }
+      }
+    }
+    return false;
+  },
   // PNG: 89 50 4E 47 0D 0A 1A 0A
   "image/png": (b) =>
     b.length >= 8 &&
@@ -21,8 +43,14 @@ const MAGIC_BY_MIME: Record<AllowedUploadMime, (b: Buffer) => boolean> = {
     b.length >= 12 &&
     b.toString("ascii", 0, 4) === "RIFF" &&
     b.toString("ascii", 8, 12) === "WEBP",
-  // PDF: "%PDF-"
-  "application/pdf": (b) => b.length >= 5 && b.toString("ascii", 0, 5) === "%PDF-",
+  "application/pdf": (b) => {
+    if (!(b.length >= 5 && b.toString("ascii", 0, 5) === "%PDF-")) return false;
+    // latin1 逐字节映射不损坏二进制，可用 includes 搜索 ASCII 关键字
+    const head = b.toString("latin1", 0, Math.min(b.length, 1024));
+    if (!head.includes("obj")) return false;
+    const tail = b.toString("latin1", Math.max(0, b.length - 2048));
+    return tail.includes("%%EOF");
+  },
 };
 
 /** 校验文件头魔数与声明 MIME 一致，不符抛 VALIDATION_ERROR（拒绝上传） */

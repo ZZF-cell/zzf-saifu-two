@@ -127,7 +127,7 @@ npx prisma db seed                 # 重新填充种子数据
 | **订单超时自动取消** | ✅ 已完成 | 下单 30 分钟未支付自动取消并回补库存 | `inngest/functions/order-timeout-cancel.ts`：`order/created` 事件 → `step.sleep(30min)` → `cancelExpiredOrder`（**updateMany 状态守卫先于回补库存**，防并发双重回补）；下单时用 `next/server` 的 `after()` 保证 serverless 中事件投递完成 |
 | **确认收货 + 7 天自动确认** | ✅ 已完成 | 用户确认收货（DELIVERED→COMPLETED）后订单可一键销毁；送达 7 天未确认由系统自动完成 | `confirmReceipt`（归属校验 + `updateMany` 带 `status=DELIVERED` 守卫，与后台 `completeOrder`/自动确认并发只命中一次）+ `inngest/functions/order-delivery-complete-sweep.ts`（每天 3 点 cron 扫 `deliveredAt < now-7d` 的 DELIVERED 订单，`autoCompleteDeliveredOrder` 非 DELIVERED 静默 no-op）；三入口共用 `AUTO_CONFIRM_RECEIPT_MS`=7 天窗口 |
 | **品牌入驻** | ✅ 已完成 | 管理员生成邀请码 → 品牌方激活 → 提交资料 → 审核 | `features/invite/`：激活=单事务原子消耗邀请码（`updateMany` 状态守卫含过期判断）+ 创建 PENDING 品牌；管理员审核通过时同事务将负责人升级为 BRAND 角色（品牌已过但角色未升是笔错账）；邀请码列表 EXPIRED 由 `expiresAt` 即时推导不落库；**管理端可作废邀请码**（`POST /api/admin/invite-codes/[code]/revoke`，置 DISABLED，仅 UNUSED 码可作废，已使用/已作废 409；作废码激活时报「已作废」409）。**REJECTED 非死胡同**：品牌审核状态筛选含「已拒绝」，管理员可**重审通过**（改判错杀，`reviewBrand` 守卫放行 `PENDING`/`REJECTED` 的 APPROVED，但 REJECTED 不可再拒 409）或**删除品牌**（`DELETE /api/admin/brands/[id]`，仅 REJECTED 可删，其余状态 409 `BRAND_NOT_DELETABLE`）；删除后商家可用新邀请码重新入驻 |
-| **OSS 图片上传** | ✅ 已完成 | 商品/品牌图片 + 检测证书上传至阿里云 OSS（后端中转） | `features/upload/`：POST `/api/upload`（multipart + MIME 白名单，`purpose` 枚举 `product`/`brand`/`cert`；图片 ≤4MB、证书 PDF 代码阈值 10MB；未配置 OSS 返回 503）。`purpose=product`/`brand` 只收图片，`purpose=cert` 收图片 + PDF；`shared/adapters/oss.adapter.ts` 仿 payment 懒初始化 + 纯函数；`shared/ui/Image` 双源（OSS URL + base64）+ 统一占位图。**平台实际请求体上限约 4.5MB**（Vercel Node Serverless）：PDF 代码阈值 10MB 属预留，超 4.5MB 的证书会被平台层 413 拦截——大文件直传依赖三期 OSS 预签名方案 |
+| **OSS 图片上传** | ✅ 已完成 | 商品/品牌图片 + 检测证书上传至阿里云 OSS（后端中转） | `features/upload/`：POST `/api/upload`（multipart + MIME 白名单 + **魔数校验**，`purpose` 枚举 `product`/`brand`/`cert`；图片 ≤4MB、证书 PDF 代码阈值 10MB；未配置 OSS 返回 503）。`purpose=product`/`brand` 只收图片，`purpose=cert` 收图片 + PDF 且**仅 BRAND 角色**（USER 传证 403）。**每日配额**：单用户 24h 窗口 100 次（复用 RateLimitBucket 原子桶 `upload:daily`，超限 429）。**魔数加强**：JPEG 除 `FF D8 FF` 头外校验 SOF 帧段标记（`FF C0-CF`），PDF 要求 `%PDF-` 严格开头 + `obj` 结构 + `%%EOF` 结束标记（拒 HTML/JS 伪装与截断伪 PDF）。**证书 PDF 以 `Content-Disposition: attachment` 输出**（浏览器不内联渲染）。**消费侧 URL 白名单**：`ossImageUrlSchema` 校验 key 须为本站上传结构 `<folder>/<userId>/<yyyymmdd>/<文件>.<扩展名>`，入驻 logo 额外校验归属当前用户。`shared/adapters/oss.adapter.ts` 仿 payment 懒初始化 + 纯函数；`shared/ui/Image` 双源（OSS URL + base64）+ 统一占位图。**平台实际请求体上限约 4.5MB**（Vercel Node Serverless）：PDF 代码阈值 10MB 属预留，超 4.5MB 的证书会被平台层 413 拦截——大文件直传依赖三期 OSS 预签名方案 |
 | **商品两级类目** | ✅ 已完成 | 大类+子类两级选择与筛选 | `shared/constants/product-categories.ts` 预设清单为唯一来源（改常量即可调整）；Product 增加 `subCategory` 字段（可空兼容旧数据）；品牌提交商品改为大类→子类级联下拉；首页两级筛选；详情/品牌后台/管理后台展示「大类/子类」 |
 | **商品生命周期** | ✅ 已完成 | 撤回待审 / 下架 / 重新上架 / 编辑（双方同状态机）+ 管理员完整审核详情 | `features/brand` 与 `features/admin` 同一套状态机（status 为 String 无需迁移）：`PENDING`→`WITHDRAWN`（品牌撤回）；`APPROVED`⇄`DELISTED`（品牌/管理员可做，重新上架不重质检）；编辑商品「基本信息变更→回 `PENDING` 重审、仅改运营信息（价格/库存）→直改」。**检测证书（`certificates`）属基本信息，仅改证书也会触发重审**。所有变更用 `updateMany` 状态守卫（含品牌侧 `brandId` 归属守卫，越权 403）+ `version:{increment:1}` + AuditLog（snapshot 存 before/after）；守卫 0 行二次 `findUnique` 区分 404/403/409。公开商品详情仅放行 `APPROVED`（DB 层过滤，下架/待审深链 404）。管理端 `GET /api/admin/products/[id]` 返回完整信息 + 品类质检清单 + 已提交证书，审核决策信息闭环 |
 | **微信支付** | ⏳ 待开发 | 接入微信支付 SDK | `shared/adapters/payment.adapter.ts` 定义 `PaymentAdapter` 接口，微信支付实现同一接口；回调幂等逻辑直接复用 `payment.callback.ts` 的 `updateMany` 模式 |
@@ -464,7 +464,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 ### 图片上传（任意登录用户）
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| POST | `/api/upload` | 上传文件到 OSS，返回公开 URL（multipart；`purpose` 枚举 `product`/`brand`/`cert`；`product`/`brand` 只收图片 JPG/PNG/WebP ≤4MB，`cert` 收图片 + PDF（代码阈值 10MB，**平台实际 4.5MB**）；未配置 OSS 返回 503 STORAGE_NOT_CONFIGURED；key 内嵌 userId 按人归属） |
+| POST | `/api/upload` | 上传文件到 OSS，返回公开 URL（multipart；`purpose` 枚举 `product`/`brand`/`cert`；`product`/`brand` 只收图片 JPG/PNG/WebP ≤4MB，`cert` 收图片 + PDF（代码阈值 10MB，**平台实际 4.5MB**）且**仅 BRAND 角色**；**每日配额 100 次/用户**（超限 429）；魔数校验（JPEG SOF + PDF `%%EOF`）；证书 PDF `Content-Disposition: attachment`；未配置 OSS 返回 503 STORAGE_NOT_CONFIGURED；key 内嵌 userId 按人归属） |
 
 ### 品牌方（BRAND）
 | 方法 | 路由 | 说明 |
@@ -633,8 +633,8 @@ npm start
         │ 3 条 │     （Playwright）
         └──────┘
   ┌─────────────────┐
-  │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证（登录/验证码/补设密码/禁用门禁/Refresh Rotation 吊销/原子限流）/管理（用户操作/退款回补库存/品牌重审与删除/看板在售口径）/品牌（证书）/邀请码/上传（PDF）/OSS 适配器服务层
-  │  448 条          │     （Vitest，mock Prisma 与 $transaction）
+  │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证（登录/验证码/补设密码/禁用门禁/Refresh Rotation 吊销/原子限流）/管理（用户操作/退款回补库存/品牌重审与删除/看板在售口径）/品牌（证书）/邀请码/上传（配额/角色/魔数加强/PDF）/OSS key 结构与归属校验
+  │  488 条          │     （Vitest，mock Prisma 与 $transaction）
   └─────────────────┘
 ```
 

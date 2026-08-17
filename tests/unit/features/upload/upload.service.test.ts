@@ -21,11 +21,19 @@ import { uploadImage, assertValidMagicBytes } from "@/features/upload/upload.ser
 const reasonMock = vi.mocked(ossAdapter.getUnavailableReason);
 const putMock = vi.mocked(ossAdapter.putObject);
 
-/** 合法 JPEG 文件头（FF D8 FF）：L14 魔数校验通过的最小字节 */
-const JPEG_HEAD = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+/** 合法 JPEG 文件头：FF D8 FF 起始 + SOF0 段标记（FF C0）—— G2 加强后必须含 SOF */
+const JPEG_HEAD = Buffer.from([
+  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00,
+  0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+  0xff, 0xc0, 0x00, 0x11, // SOF0：仅 FF D8 FF 头不再通过，必须声明图像帧结构
+]);
 const PNG_HEAD = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]);
 const WEBP_HEAD = Buffer.from("RIFFxxxxWEBP", "ascii");
-const PDF_HEAD = Buffer.from("%PDF-1.4\n", "ascii");
+/** 合法 PDF：%PDF- 严格开头 + 对象结构 obj + %%EOF 结束标记（G2 非多态校验） */
+const PDF_HEAD = Buffer.from(
+  "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF",
+  "ascii",
+);
 
 const INPUT = {
   folder: "product",
@@ -125,5 +133,21 @@ describe("assertValidMagicBytes — 文件头魔数核对", () => {
   it("字节数不足 → 拒绝（空文件/截断头）", () => {
     expect(() => assertValidMagicBytes("image/jpeg", Buffer.from([0xff, 0xd8]))).toThrow();
     expect(() => assertValidMagicBytes("image/png", Buffer.alloc(0))).toThrow();
+  });
+
+  it("G2：JPEG 仅 FF D8 FF 头但无 SOF 段标记 → 拒绝（HTML/JS 可伪装 3 字节头）", () => {
+    // 攻击者把 HTML 内容前置 FF D8 FF 三个字节：旧魔数校验放行，OSS 直出公开 URL → 存储型 XSS
+    const polyglot = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.from("<html><script>alert(1)</script>", "ascii")]);
+    expect(() => assertValidMagicBytes("image/jpeg", polyglot)).toThrow();
+  });
+
+  it("G2：PDF 有 %PDF- 头但缺 %%EOF 结束标记 → 拒绝（截断/伪 PDF）", () => {
+    const truncated = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n", "ascii");
+    expect(() => assertValidMagicBytes("application/pdf", truncated)).toThrow();
+  });
+
+  it("G2：PDF 缺 obj 对象结构 → 拒绝（HTML 声明为 PDF）", () => {
+    const htmlAsPdf = Buffer.from("%PDF-1.4\n<html><script>alert(1)</script>", "ascii");
+    expect(() => assertValidMagicBytes("application/pdf", htmlAsPdf)).toThrow();
   });
 });
