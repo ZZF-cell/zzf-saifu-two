@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs";
 
 // 图片域名白名单（M15）：仅来自 OSS 配置的可信域名可经 /_next/image 被服务端拉取优化。
 // 来源 = OSS_PUBLIC_DOMAIN（可逗号分隔，去协议/路径）+ OSS 桶默认域名。
@@ -58,4 +59,10 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// I1：@sentry/nextjs 必须用 withSentryConfig 包装才有真实效果——
+// webpack 插件负责把 sentry.client.config.ts 注入客户端 bundle、服务端自动埋点，
+// 并支持生产构建 source map 上传。此前仅靠 instrumentation.ts 手动 import，
+// 客户端 SDK 实际从未初始化（sentry.client.config.ts 无人引入）。
+// silent: true — 本地/CI 无 SENTRY_AUTH_TOKEN 时静默跳过 source map 上传，不刷屏。
+// 三个 config（server/client/edge）均以 DSN 守卫：无 DSN 不 init，build/run 不依赖 Sentry env。
+export default withSentryConfig(nextConfig, { silent: true });

@@ -724,5 +724,5 @@ npm run build --webpack           # Webpack 回退构建
 
 1. **`shared/ui/` 下 shadcn 组件只读**，通过组合/包装扩展业务组件；所有源码修改记录在 `shared/ui/README.md`（组件名/原因/日期）
 2. **`features/*/index.ts` 是模块唯一 Public API**，禁止跨模块直接 import 内部文件或数据表
-3. **PWA 缓存策略**：`/api/*` 严格 Network Only，静态资源 Stale-While-Revalidate，构建版本 `build-id.json` 校验，检测到新版本主动弹条提示刷新
+3. **PWA 缓存策略**（实现于 `public/sw.js`，运行时缓存不预缓存壳）：`/api/*` 严格 Network Only（绝不入缓存，且只缓存 200、跳过带 `Set-Cookie` 的响应防离线回放）；`/_next/static`、`/icons`、`/manifest.webmanifest` Stale-While-Revalidate（文件名带内容哈希，SWR 安全省流量）；HTML 导航 Network First + 离线回退最近访问页；`build-id.json` Network First。构建版本校验：`prebuild` 脚本生成 `public/build-id.json`（唯一版本号），客户端 `PwaInstaller`（`src/shared/pwa/pwa.tsx`，挂根布局）回到前台时轮询比对，发现新版本弹条提示刷新。SW 仅生产环境注册（dev 热更新与缓存冲突）。
 4. **版本管理**：Next.js / React / React DOM 精确版本锁定（不用 `^`），每次升级前跑全量 Playwright E2E

@@ -28,6 +28,9 @@ export const orderDeliveryCompleteSweep = inngest.createFunction(
           deliveredAt: { lt: cutoff },
         },
         select: { id: true },
+        // I4：按送达时间升序——最旧先处理，避免批次取满时（take=50）总被新送达的
+        // 订单插队、老订单被无限推后（饥饿）。
+        orderBy: { deliveredAt: "asc" },
         take: SWEEP_BATCH,
       });
 

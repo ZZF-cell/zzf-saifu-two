@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "dev:webpack": "next dev --webpack",
+    "prebuild": "node scripts/generate-build-id.mjs",
     "build": "next build",
     "build:webpack": "next build --webpack",
     "start": "next start",

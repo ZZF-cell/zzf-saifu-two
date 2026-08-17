@@ -58,4 +58,7 @@ next-env.d.ts
 # backup files
 *.bak
 
+# PWA 构建版本（prebuild 每次生成，不纳入版本控制）
+public/build-id.json
+
 .vercel

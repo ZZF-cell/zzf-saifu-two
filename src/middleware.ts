@@ -13,13 +13,15 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // 静态资源和 PWA 不拦截
+  // 静态资源和 PWA 不拦截（build-id.json 为 PWA 版本轮询的静态产物，
+  // 未年龄验证时也不该被拦到 age-gate——PwaInstaller 静默读取）
   if (
     path.startsWith("/_next") ||
     path.startsWith("/icons") ||
     path === "/favicon.ico" ||
-    path === "/manifest.json" ||
-    path === "/sw.js"
+    path === "/manifest.webmanifest" ||
+    path === "/sw.js" ||
+    path === "/build-id.json"
   ) {
     return NextResponse.next();
   }
@@ -35,7 +37,10 @@ export async function middleware(req: NextRequest) {
     const ageVerified = req.cookies.get("age_verified")?.value;
     const verified = ageVerified ? await verifyAgeVerified(ageVerified) : false;
     if (!verified) {
-      return NextResponse.redirect(new URL("/age-gate?redirect=" + encodeURIComponent(path), req.url));
+      // I3：回跳参数带完整 URL（pathname + search），否则 /orders?status=paid 这类
+      // 带查询串的页面年龄验证通过后丢失 query，落回默认 tab。
+      const original = path + req.nextUrl.search;
+      return NextResponse.redirect(new URL("/age-gate?redirect=" + encodeURIComponent(original), req.url));
     }
   }
 
@@ -49,6 +54,6 @@ export async function middleware(req: NextRequest) {
 export const config = {
   matcher: [
     // 排除 Next.js 内部资源、静态文件、API 路由（API 层自行校验 JWT）
-    "/((?!_next/static|_next/image|api/|icons/|favicon\\.ico|manifest\\.json|sw\\.js).*)",
+    "/((?!_next/static|_next/image|api/|icons/|favicon\\.ico|manifest\\.webmanifest|sw\\.js|build-id\\.json).*)",
   ],
 };
