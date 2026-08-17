@@ -25,6 +25,11 @@ const jwtSecretStr = process.env.JWT_SECRET;
 if (!jwtSecretStr && process.env.NODE_ENV === "production") {
   throw new Error("JWT_SECRET 未配置：生产环境禁止使用默认密钥");
 }
+// E5 密钥最小长度：显式配置的密钥必须 ≥32 字符（256-bit），防弱密钥被暴力猜解伪造 Token。
+// 未配置时（本地开发用默认 dev 密钥）不触发，保证开箱即用。
+if (jwtSecretStr && jwtSecretStr.length < 32) {
+  throw new Error("JWT_SECRET 过短：至少 32 字符，请用随机生成的长密钥");
+}
 const JWT_SECRET = new TextEncoder().encode(
   jwtSecretStr || "dev-secret-change-in-production",
 );
@@ -35,6 +40,12 @@ const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 天
 const MAX_CODE_ATTEMPTS = 5; // 验证码错误次数上限，超过即销毁验证码
 const MAX_LOGIN_ATTEMPTS = 5; // 密码登录失败上限，达到后锁定账号
 const LOGIN_LOCK_MS = 15 * 60 * 1000; // 密码锁定 15 分钟
+
+// E2 手机号枚举时序防护：用户不存在/无密码时也执行一次真实成本的 scrypt 校验（对固定 dummy 哈希），
+// 抹平「已注册账号」（校验 ~50-100ms）与「未注册」（0ms 直接返回）的响应时间差 ——
+// 否则攻击者凭时间差即可枚举已注册手机号。verifyPassword 结果恒 false（或恒真），仅消耗时钟，不产生副作用。
+const DUMMY_PASSWORD_HASH =
+  "scrypt.ab49f8f7aa465230daf51a370f6fc2e4.6jOv8Hj86u1rJZGO0jVx2vpbXDNSI3RxDJ7InSyKID8";
 
 // ── 短信验证码（DB 存储，Serverless 多实例共享）──
 
@@ -68,7 +79,8 @@ async function verifyAndConsumeCode(
   // 验证码错误 → 尝试计数；达到上限立即销毁（杜绝 6 位验证码在线爆破）
   // 并发安全：用 updateMany 条件（attempts < MAX-1）把「计数上限」并入原子更新，
   // 杜绝并发错误请求各自读到同一旧值、绕过上限的竞态（回归护栏：并发下也不可超 MAX 次尝试）。
-  if (record.code !== code) {
+  // E4 哈希存储：DB 存 SHA-256(code)，比对对输入同样哈希后进行 —— 防 DB 泄露直接接管账号。
+  if (record.codeHash !== sha256(code)) {
     const updated = await prisma.verificationCode.updateMany({
       where: { id: record.id, used: false, attempts: { lt: MAX_CODE_ATTEMPTS - 1 } },
       data: { attempts: { increment: 1 } },
@@ -208,7 +220,7 @@ export async function sendVerificationCode(
     await tx.verificationCode.create({
       data: {
         phoneHash,
-        code,
+        codeHash: sha256(code),
         expiresAt: new Date(Date.now() + 5 * 60 * 1000),
       },
     });
@@ -237,10 +249,13 @@ export async function sendVerificationCode(
   }
 
   // 演示模式回显：短信未实际送达时把验证码交还调用方（前端展示），保证线上验收可登录。
-  // ⚠️ 安全门禁：生产环境绝不回显 —— 短信未接通时响应回显验证码，等于把任意手机号账号的
+  // ⚠️ 安全门禁：默认任何环境绝不回显 —— 短信未接通时响应回显验证码，等于把任意手机号账号的
   // 控制权交给任何人（POST send-code → 响应拿验证码 → verify-code 即接管/注册该手机号）。
+  // 回显必须显式开启（DEMO_SMS_ECHO=true），不再依赖 NODE_ENV 单闸门：原「NODE_ENV !== production」
+  // 判断在 Vercel preview/staging 等同样 NODE_ENV=production 的沙盒环境无法区分，而人为把本地
+  // NODE_ENV 设成 production 又会误伤开发 —— 显式开关保证只有明确配置的环境才开启演示回显。
   // 生产环境要启用短信登录，必须完成真实短信集成（actuallySent=true），否则一律返回 null。
-  if (process.env.NODE_ENV === "production") return null;
+  if (process.env.DEMO_SMS_ECHO !== "true") return null;
   return actuallySent ? null : code;
 }
 
@@ -346,7 +361,10 @@ export async function loginWithPassword(
   const user = await prisma.user.findUnique({ where: { phoneHash } });
 
   if (!user || !user.passwordHash) {
-    // 统一文案：不区分「未注册」与「密码错误」，防手机号枚举（探测号码是否注册）
+    // E2 时序防护：未注册/无密码路径也执行一次真实 scrypt 校验（固定 dummy 哈希），
+    // 使响应时间与真实密码校验一致 —— 否则攻击者凭时间差枚举已注册手机号。
+    // 统一文案：不区分「未注册」与「密码错误」，防文案枚举（探测号码是否注册）。
+    await verifyPassword(password, DUMMY_PASSWORD_HASH);
     throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "手机号或密码错误");
   }
 

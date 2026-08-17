@@ -22,12 +22,45 @@ const sentryConfigured = Boolean(
  *   return NextResponse.json(order, { status: 201 });
  * });
  */
+/**
+ * E3 CSRF Origin 校验：请求带 Origin 头时必须属于本站，无 Origin 放行。
+ *
+ * 原理：浏览器跨站表单提交/CSRF 攻击必然带 Origin 且指向攻击站点；同源请求（fetch 同域）、
+ * curl、服务端到服务端调用（如支付宝回调）通常不带 Origin —— 只对「存在的 Origin」做比对，
+ * 避免误伤无浏览器上下文的合法调用。
+ *
+ * 允许集合：NEXT_PUBLIC_BASE_URL 的 origin + 非生产环境 localhost:3000（本地联调）。
+ */
+export function isAllowedOrigin(req: Request): boolean {
+  const origin = req.headers.get("origin");
+  if (!origin) return true;
+
+  const allowed = new Set<string>();
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
+  if (baseUrl) {
+    try {
+      allowed.add(new URL(baseUrl).origin);
+    } catch {
+      // 非法配置忽略（后续 URL 校验会另行告警）
+    }
+  }
+  if (process.env.NODE_ENV !== "production") {
+    allowed.add("http://localhost:3000");
+  }
+  return allowed.has(origin);
+}
+
 export function withValidation<T>(
   schema: ZodSchema<T>,
   handler: (data: T, req: Request) => Promise<NextResponse>,
 ): (req: Request) => Promise<NextResponse> {
   return async (req: Request) => {
     try {
+      // E3：所有经 withValidation 的 POST 统一套 CSRF Origin 校验（无 Origin 放行）。
+      // 放行条件已考虑支付宝回调等服务端调用（无 Origin）；浏览器跨站请求在此拒绝。
+      if (!isAllowedOrigin(req)) {
+        throw new AppError(ERROR_CODES.CSRF_INVALID, "跨站请求被拒绝");
+      }
       const body = await req.json().catch(() => null);
       const parsed = schema.safeParse(body);
       if (!parsed.success) {

@@ -1,7 +1,7 @@
 // 认证 API Route Handlers
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { withValidation, apiError } from "@/shared/utils/api";
+import { withValidation, apiError, isAllowedOrigin } from "@/shared/utils/api";
 import { clientIp } from "@/shared/utils/rate-limit";
 import { ERROR_CODES, AppError } from "@/shared/errors/errors";
 import * as authService from "./auth.service";
@@ -77,6 +77,10 @@ function extractRefreshToken(req: Request): string | null {
 // ── Auth guard — 从请求中校验用户身份，代码复用 ──
 
 async function requireAuthFromRequest(req: Request): Promise<AuthUser> {
+  // E3 CSRF Origin 校验（有 Origin 才比对，无 Origin 放行）——set-password 等非 withValidation 认证入口同样受保护
+  if (!isAllowedOrigin(req)) {
+    throw new AppError(ERROR_CODES.CSRF_INVALID, "跨站请求被拒绝");
+  }
   const token = extractAccessToken(req);
   if (!token) throw new AppError(ERROR_CODES.UNAUTHORIZED, "请先登录");
   const user = await authService.verifyAccessToken(token);

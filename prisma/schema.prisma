@@ -195,7 +195,7 @@ model CategoryAuditTemplate {
 model VerificationCode {
   id        String   @id @default(cuid())
   phoneHash String                            // 手机号哈希 SHA-256(pepper+phone)，不存明文
-  code      String
+  codeHash  String                            // SHA-256(验证码)，不存明文（E4：防 DB 泄露直接接管账号）
   attempts  Int      @default(0)              // 验证尝试次数（≥5 自动销毁，防在线爆破）
   expiresAt DateTime
   used      Boolean  @default(false)

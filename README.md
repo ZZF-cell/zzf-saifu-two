@@ -59,7 +59,7 @@ npm run dev                       # 启动开发服务器 → http://localhost:3
 | 普通用户 | 13800138000 | 123456 | 浏览商品、购物车、下单、支付、退款、销毁订单 |
 | 品牌方 | 13888888888 | — | 品牌后台（提交商品/查看订单/品牌资料/数据看板） |
 
-> **获取验证码：** 短信模块尚未接入真实 SDK，当前为**演示模式回显** —— 未配置短信时，`POST /api/auth/send-code` 响应携带 `demoCode`，登录/注册表单页面直接提示显示验证码（配好真实短信后自动停止回显）。本地另可从 `grep "\[SMS\]" .next/dev/logs/next-development.log` 查看终端日志回退
+> **获取验证码：** 短信模块尚未接入真实 SDK，当前为**演示模式回显** —— 需在本地 `.env.local` 显式配置 `DEMO_SMS_ECHO=true` 后，`POST /api/auth/send-code` 响应才携带 `demoCode`（登录/注册表单页面直接提示显示验证码）。**默认任何环境绝不回显**（短信未接通时回显验证码等于把任意手机号账号控制权交给任何人），配好真实短信后即使开启开关也自动停止回显。本地另可从 `grep "\[SMS\]" .next/dev/logs/next-development.log` 查看终端日志回退
 
 ## 本地开发工作流
 
@@ -279,7 +279,7 @@ features/orders/                   features/orders/
 |------|---------|------|---------------|
 | User | phoneHash, passwordHash, role, **status**, ageVerified, **failedLoginAttempts, lockUntil** | 用户（角色: USER/BRAND/ADMIN）| 手机号不存明文，仅存 `pepper + SHA-256` 哈希；密码存 **scrypt 慢哈希**（格式 `scrypt.salt.hash`，旧 SHA-256 兼容并在登录成功时自动升级）；`failedLoginAttempts`/`lockUntil` 实现密码爆破防护（连续失败 ≥5 次锁定 15 分钟）；`status`（`ACTIVE`/`DISABLED`）供管理员禁用/启用，**禁用用户登录直接 403**，不逐请求查库（access token 15min 内仍有效，可接受）；角色用枚举约束避免权限越界 |
 | RefreshToken | userId, tokenHash, expiresAt, revokedAt | JWT Refresh Token Rotation | 存 SHA-256 Hash 而非原文——即使 DB 泄露也无法伪造 Token；清理为**惰性**：refresh 轮换事务内顺带删除该用户已过期 token（无独立定时任务）；`revokedAt` 软吊销留痕供重放检测 |
-| VerificationCode | phoneHash, code, expiresAt, **attempts** | 短信验证码（手机号哈希关联）| 不存明文手机号（同 User.phoneHash 规则）；`attempts` 验证码错误尝试计数，≥5 次删除记录（防爆破）；索引 `(phoneHash, createdAt)` 支持滑动窗口查询 |
+| VerificationCode | phoneHash, **codeHash**, expiresAt, **attempts** | 短信验证码（手机号哈希关联）| 不存明文手机号（同 User.phoneHash 规则）；**验证码只存 SHA-256 哈希（codeHash）**，比对在服务端对输入同样哈希后进行——防 DB 泄露/备份泄露时验证码明文被直接用于接管账号；`attempts` 验证码错误尝试计数，≥5 次删除记录（防在线爆破）；索引 `(phoneHash, createdAt)` 支持滑动窗口查询 |
 | Brand | name, status, inviteCode, ownerId | 品牌（归属用户 + 邀请码）| ownerId 指向 User，一个用户只能拥有一个品牌，防止品牌方多账号绕审核 |
 | InviteCode | code(unique), status, createdBy, usedBy, expiresAt | 品牌入驻邀请码 | `code` 为自然键（大写，剔除 0/O/1/I 混淆字符）；`EXPIRED` 为推导态（UNUSED + 过期）不落库，读取时即时推导；消耗用 `updateMany` 状态守卫（含过期判断）防并发重复激活；激活侧对无效码一律返回 400，防枚举探测码存在性 |
 | Product | brandId, category, **subCategory**, status, images, **certificates**, specs, **version, stock** | 商品（两级类目 + version 乐观锁防超卖 + 生命周期状态 + 检测证书）| `version` 字段配合 `updateMany` 实现乐观锁；specs 用 JSONB 存储灵活扩展；`subCategory` 可空（兼容旧数据），新提交商品必填且需与大类组合合法（`isValidCategoryPair`）；`certificates`（JSON 数组 `[{url, name, mime}]`）随商品提交的检测证书（图片/PDF），schema 层校验 OSS host + MIME 白名单；**status** 为 String 枚举：`PENDING`（待质检）→ `APPROVED`（已上架）/ `REJECTED`（已拒绝）；品牌可 `WITHDRAWN`（撤回待审）；双方可 `DELISTED`（下架）→ `APPROVED`（重新上架，不重质检）。改基本信息/证书→回 `PENDING` 重审，仅改价格/库存→直改不重审。所有状态变更均 `version:{increment:1}` + AuditLog 留痕 |
@@ -313,6 +313,12 @@ const result = await prisma.order.updateMany({
 });
 // result.count === 0 → 已处理（幂等），检查是否异常状态
 ```
+
+**CSRF Origin 校验**：所有 `withValidation` 包装的 POST + 认证入口（`requireAuthFromRequest`）+ `age-verify` 路由统一校验 `Origin` —— 带 Origin 的请求必须属于本站（`NEXT_PUBLIC_BASE_URL` origin + 非生产 localhost），跨站请求拒绝（403 `CSRF_INVALID`）；无 Origin 的请求（curl、服务端调用如支付宝回调）放行，不误伤无浏览器上下文的合法调用。
+
+**手机号枚举时序防护**：密码登录对「未注册手机号」也执行一次真实成本的 scrypt 校验（对固定 dummy 哈希），抹平已注册（~50-100ms）与未注册（0ms）的响应时间差；配合统一错误文案「手机号或密码错误」，杜绝按文案/时序枚举已注册手机号。
+
+**验证码哈希存储**：验证码只存 `SHA-256(code)`，比对在服务端对输入同样哈希后进行——DB/备份泄露时明文验证码不可直接用于接管账号（6 位码离线爆破成本高且窗口仅 5min）。
 
 ### 密钥管理生命周期
 
@@ -595,7 +601,7 @@ npm start
 |------|------|------|
 | `DATABASE_URL` | 是 | PostgreSQL 连接串（本地 Docker 或 Neon） |
 | `DIRECT_URL` | 否 | Prisma 迁移用直连 URL（Neon 需要） |
-| `JWT_SECRET` | 是 | JWT 签名密钥（生产环境更换为 32+ 字符随机值） |
+| `JWT_SECRET` | 是 | JWT 签名密钥（生产环境更换为 32+ 字符随机值；显式配置时启动强制校验长度 ≥32 字符，防弱密钥伪造 Token） |
 | `SMS_ACCESS_KEY_ID` | 否 | 阿里云短信 AccessKey |
 | `SMS_ACCESS_KEY_SECRET` | 否 | 阿里云短信 Secret |
 | `SMS_SIGN_NAME` | 否 | 短信签名名称 |

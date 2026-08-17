@@ -6,6 +6,7 @@ export const ERROR_CODES = {
   UNAUTHORIZED: { status: 401, code: "UNAUTHORIZED" },
   AGE_VERIFICATION_REQUIRED: { status: 403, code: "AGE_VERIFICATION_REQUIRED" },
   FORBIDDEN: { status: 403, code: "FORBIDDEN" },
+  CSRF_INVALID: { status: 403, code: "CSRF_INVALID" }, // E3：跨站请求 Origin 校验拒绝
   TOKEN_EXPIRED: { status: 401, code: "TOKEN_EXPIRED" },
   INVALID_CREDENTIALS: { status: 401, code: "INVALID_CREDENTIALS" },
   PHONE_ALREADY_EXISTS: { status: 409, code: "PHONE_ALREADY_EXISTS" },

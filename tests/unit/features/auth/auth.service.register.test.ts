@@ -15,7 +15,7 @@ vi.mock("@/shared/db/client", () => ({
 import { prisma } from "@/shared/db/client";
 import { registerWithPassword } from "@/features/auth/auth.service";
 import { ERROR_CODES } from "@/shared/errors/errors";
-import { hashPhone } from "@/shared/utils/crypto";
+import { hashPhone, sha256 } from "@/shared/utils/crypto";
 
 const PHONE = "13800138000";
 const CODE = "123456";
@@ -36,7 +36,7 @@ function mockValidCode() {
   vi.mocked(prisma.verificationCode.findFirst).mockResolvedValue({
     id: "vc-1",
     phoneHash: hashPhone(PHONE),
-    code: CODE,
+    codeHash: sha256(CODE),
     attempts: 0,
   } as never);
   vi.mocked(prisma.verificationCode.deleteMany).mockResolvedValue({ count: 1 });

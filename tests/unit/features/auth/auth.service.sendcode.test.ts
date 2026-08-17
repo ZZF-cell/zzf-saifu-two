@@ -22,6 +22,7 @@ vi.mock("@/shared/adapters/sms.adapter", () => ({
 import { prisma } from "@/shared/db/client";
 import { sendSms } from "@/shared/adapters/sms.adapter";
 import { sendVerificationCode } from "@/features/auth/auth.service";
+import { sha256 } from "@/shared/utils/crypto";
 import { ERROR_CODES } from "@/shared/errors/errors";
 
 const smsMock = vi.mocked(sendSms);
@@ -39,6 +40,8 @@ const transactionMock = prisma.$transaction as unknown as Mock<TransactionImpl>;
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.PEPPER = "test-pepper";
+  // E2 显式开关：默认开启演示回显（模拟本地验收），各用例按需覆盖
+  process.env.DEMO_SMS_ECHO = "true";
   // 默认：首次请求（count=1）放行 —— 每个测试只需关心自己 mock 的限流路径
   rateLimitUpsertMock.mockResolvedValue({ count: 1 } as never);
   tx = {
@@ -51,18 +54,23 @@ beforeEach(() => {
 });
 
 describe("sendVerificationCode — 演示模式回显", () => {
-  it("未配置短信（dev-fallback）→ 返回 6 位验证码，且验证码已写入 DB 事务", async () => {
+  it("未配置短信（dev-fallback）→ 返回 6 位验证码，且 DB 只存 SHA-256 哈希（codeHash），不存明文", async () => {
     smsMock.mockResolvedValue({ success: true, messageId: "dev-fallback" });
 
     const code = await sendVerificationCode("13800138000");
 
     expect(code).toMatch(/^\d{6}$/);
     expect(tx.verificationCode.deleteMany).toHaveBeenCalled();
+    // E4 哈希存储：create 的 data 含 codeHash=SHA-256(code)，绝不含明文 code 字段
     expect(tx.verificationCode.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ code }),
+        data: expect.objectContaining({ codeHash: sha256(code as string) }),
       }),
     );
+    const createCall = tx.verificationCode.create.mock.calls[0][0] as {
+      data: Record<string, unknown>;
+    };
+    expect(createCall.data.code).toBeUndefined();
   });
 
   it("已配置密钥但未接入 SDK（placeholder）→ 仍回显验证码", async () => {
@@ -81,21 +89,24 @@ describe("sendVerificationCode — 演示模式回显", () => {
     expect(code).toBeNull();
   });
 
-  it("生产环境且短信未送达（dev-fallback）→ 返回 null，绝不回显验证码（枚举门禁）", async () => {
-    // C1 修复回归：生产环境即使短信未送达也不回显验证码——
-    // 否则任意手机号可借 demoCode 接管他人账号（短信网关停摆时演示回显即高危后门）。
-    const env = process.env as { NODE_ENV?: string };
-    const original = env.NODE_ENV;
-    env.NODE_ENV = "production";
-    try {
-      smsMock.mockResolvedValue({ success: true, messageId: "dev-fallback" });
+  it("DEMO_SMS_ECHO 未开启（默认）→ 返回 null，绝不回显验证码（枚举门禁）", async () => {
+    // E2 修复回归：回显由显式开关控制（DEMO_SMS_ECHO=true），不再依赖 NODE_ENV 单闸门——
+    // 默认任何环境都不回显，否则短信网关停摆/误配置时演示回显即高危后门（任意手机号可接管）。
+    delete process.env.DEMO_SMS_ECHO;
+    smsMock.mockResolvedValue({ success: true, messageId: "dev-fallback" });
 
-      const code = await sendVerificationCode("13800138000");
+    const code = await sendVerificationCode("13800138000");
 
-      expect(code).toBeNull();
-    } finally {
-      env.NODE_ENV = original;
-    }
+    expect(code).toBeNull();
+  });
+
+  it("DEMO_SMS_ECHO=false（显式关闭）→ 同样返回 null", async () => {
+    process.env.DEMO_SMS_ECHO = "false";
+    smsMock.mockResolvedValue({ success: true, messageId: "dev-fallback" });
+
+    const code = await sendVerificationCode("13800138000");
+
+    expect(code).toBeNull();
   });
 
   it("同一手机号 60s 窗口第 2 次 → 抛 RATE_LIMITED（原子桶计数>1，不写库）", async () => {
