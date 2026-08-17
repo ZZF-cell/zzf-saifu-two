@@ -16,11 +16,12 @@ vi.mock("@/shared/db/client", () => ({
   },
 }));
 
-// 阻断订单 service 对真实 payment 模块的调用（支付宝网关不可测）；queryAlipayTrade 由各用例 mock
+// 阻断订单 service 对真实 payment 模块的调用（支付宝网关不可测）；queryAlipayTrade / isPaymentConfigured 由各用例 mock
 vi.mock("@/features/payment", () => ({
   paymentService: {
     createPayment: vi.fn(),
     queryAlipayTrade: vi.fn(),
+    isPaymentConfigured: vi.fn(),
   },
 }));
 
@@ -58,6 +59,8 @@ const transactionMock = prisma.$transaction as unknown as Mock<TransactionImpl>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 默认视为支付宝已配置（cancelExpiredOrder 据此走真实查询分支，而非跳过查询直接取消）
+  vi.mocked(paymentService.isPaymentConfigured).mockReturnValue(true);
   tx = {
     order: { findUnique: vi.fn(), updateMany: vi.fn() },
     product: { updateMany: vi.fn() },
@@ -208,8 +211,12 @@ describe("checkPaymentStatus — 查询支付状态（真正查支付宝）", ()
         items: [{ productId: "p1", qty: 1 }],
       }),
     );
-    // M1 回归：超时取消前必须向支付宝核对终态；未支付(success:false)才允许取消
-    queryTradeMock.mockResolvedValue({ success: false });
+    // M1/D2 回归：超时取消前必须向支付宝核对终态；网关 code=10000 且明确未支付才允许取消
+    queryTradeMock.mockResolvedValue({
+      success: true,
+      code: "10000",
+      tradeStatus: "TRADE_NOT_EXIST",
+    });
     tx.order.updateMany.mockResolvedValue({ count: 1 });
     tx.product.updateMany.mockResolvedValue({ count: 1 });
 
@@ -231,6 +238,7 @@ describe("checkPaymentStatus — 查询支付状态（真正查支付宝）", ()
     );
     queryTradeMock.mockResolvedValue({
       success: true,
+      code: "10000",
       tradeStatus: "TRADE_SUCCESS",
       outTradeNo: "order-1",
       totalAmountFen: 100,

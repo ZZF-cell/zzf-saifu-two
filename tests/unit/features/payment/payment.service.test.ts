@@ -59,7 +59,7 @@ const adapterVerifyMock = vi.mocked(paymentAdapter.verifyCallback);
 const adapterQueryMock = vi.mocked(paymentAdapter.queryPayment);
 const cancelExpiredMock = vi.mocked(cancelExpiredOrder);
 
-/** 未过期订单快照（createdAt = 现在，expiresAt ≈ 30min 后 → remaining ∈ (29min,30min] → timeoutExpress "30m"） */
+/** 未过期订单快照（createdAt = 现在；需断言 timeoutExpress 的用例应显式锚定 createdAt 以免疫时钟抖动） */
 function pendingOrder(
   overrides: Partial<{ id: string; userId: string; status: string; total: number; createdAt: Date }> = {},
 ) {
@@ -75,6 +75,10 @@ function pendingOrder(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 默认视为支付宝已配置（isPaymentConfigured() 读 ALIPAY_* env）——成功路径/超时路径均可达 adapter
+  process.env.ALIPAY_APP_ID = "test-app";
+  process.env.ALIPAY_PRIVATE_KEY = "test-private";
+  process.env.ALIPAY_PUBLIC_KEY = "test-public";
   cancelExpiredMock.mockResolvedValue({ cancelled: true, status: "CANCELLED" });
 });
 
@@ -137,7 +141,8 @@ describe("createPayment — 订单校验与支付创建", () => {
   });
 
   it("成功路径 → 以订单快照金额/通用主题 + 剩余时间钳制的 timeoutExpress 调用 adapter，返回 qrCode", async () => {
-    findUniqueMock.mockResolvedValue(pendingOrder());
+    // createdAt 锚定 5min 前 → remaining 精确 25min（floor 对亚毫秒抖动免疫，杜绝时钟竞态 flake）
+    findUniqueMock.mockResolvedValue(pendingOrder({ createdAt: new Date(Date.now() - 5 * 60 * 1000) }));
     adapterCreateMock.mockResolvedValue({ success: true, qrCode: "https://qr.alipay.com/bax0451xyz", tradeNo: "t-1" });
 
     const result = await createPayment("user-1", "order-1");
@@ -147,22 +152,47 @@ describe("createPayment — 订单校验与支付创建", () => {
       orderId: "order-1",
       total: 29900,
       subject: "赛夫严选",
-      timeoutExpress: "30m", // 剩余充足时钳制到上限 30m（≤ 订单剩余时间，杜绝支付后到落空窗）
+      timeoutExpress: "25m", // floor：remaining=25min → 25m（≤ 订单剩余时间，杜绝支付后到落空窗）
     });
     expect(result).toEqual({ qrCode: "https://qr.alipay.com/bax0451xyz" });
   });
 
-  it("支付宝未配置（adapter 失败）→ 抛 PAYMENT_FAILED，透传错误信息", async () => {
+  it("D5：支付宝未配置 → 抛 PAYMENT_NOT_CONFIGURED(503)，不调 adapter", async () => {
+    // 语义：未配置 = 「功能不可用」应 503（独立 GET /api/pay/[orderId] 直连此路径），而非 402「需付款」
+    delete process.env.ALIPAY_APP_ID;
+    findUniqueMock.mockResolvedValue(pendingOrder());
+
+    await expect(createPayment("user-1", "order-1")).rejects.toMatchObject({
+      code: "PAYMENT_NOT_CONFIGURED",
+    });
+    expect(adapterCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("已配置但 adapter 创建失败 → 抛 PAYMENT_FAILED(402)，透传错误信息", async () => {
     findUniqueMock.mockResolvedValue(pendingOrder());
     adapterCreateMock.mockResolvedValue({
       success: false,
-      error: "支付宝未配置，缺少环境变量: ALIPAY_APP_ID, ALIPAY_PRIVATE_KEY, ALIPAY_PUBLIC_KEY",
+      error: "支付宝网关拒绝: 风控拦截",
     });
 
     await expect(createPayment("user-1", "order-1")).rejects.toMatchObject({
       code: "PAYMENT_FAILED",
-      message: expect.stringContaining("支付宝未配置"),
+      message: expect.stringContaining("支付宝网关拒绝"),
     });
+  });
+
+  it("D1：剩余 90s（floor→1m）→ timeoutExpress 为 1m，绝不向上取整制造落空窗", async () => {
+    // ceil 修复回归：remaining∈(60s,120s] 时 ceil(remaining/60s)=2 → "2m" > 订单剩余时间，
+    // 支付宝仍允许支付到订单自动取消之后 → 支付后到落空窗资损。floor 保证窗口 ≤ 剩余时间。
+    const order = pendingOrder({ createdAt: new Date(Date.now() - 28.5 * 60 * 1000) });
+    findUniqueMock.mockResolvedValue(order);
+    adapterCreateMock.mockResolvedValue({ success: true, qrCode: "https://qr.alipay.com/x" });
+
+    await createPayment("user-1", "order-1");
+
+    expect(adapterCreateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutExpress: "1m" }),
+    );
   });
 
   it("adapter 成功但无 qrCode → 返回 { qrCode: null }（不抛错，下游降级）", async () => {

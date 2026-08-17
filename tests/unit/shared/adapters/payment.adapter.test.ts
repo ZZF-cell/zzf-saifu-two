@@ -206,3 +206,39 @@ describe("paymentAdapter.createPayment — alipay.trade.precreate 当面付", ()
     expect(result.error).toContain("支付宝未配置");
   });
 });
+
+// ── verifyCallback：验签前 app_id 归属强校验（D4）──
+
+describe("paymentAdapter.verifyCallback — app_id 归属核验", () => {
+  it("app_id 匹配自身配置 → 走 checkNotifySign 验签（返回 true）", async () => {
+    const adapter = await loadAdapter();
+    const checkSpy = vi.spyOn(AlipaySdk.prototype, "checkNotifySign").mockResolvedValue(true);
+
+    const result = await adapter.verifyCallback({ app_id: "2021000000000000", sign: "abc" });
+
+    expect(result).toBe(true);
+    expect(checkSpy).toHaveBeenCalled();
+  });
+
+  it("app_id 与自身配置不符（跨应用伪造）→ 直接拒绝，不调 checkNotifySign", async () => {
+    const adapter = await loadAdapter();
+    const checkSpy = vi.spyOn(AlipaySdk.prototype, "checkNotifySign");
+
+    const result = await adapter.verifyCallback({ app_id: "9999999999", sign: "abc" });
+
+    expect(result).toBe(false);
+    expect(checkSpy).not.toHaveBeenCalled();
+  });
+
+  it("D4：app_id 缺失 → 直接拒绝（无条件强校验，不再跳过归属核验）", async () => {
+    // 修复前 `body.app_id &&` 条件判断在缺失时整体跳过，依赖 checkNotifySign 的签名覆盖兜底；
+    // 修复后无条件强校验，缺失一律拒绝（支付宝通知必带 app_id）。
+    const adapter = await loadAdapter();
+    const checkSpy = vi.spyOn(AlipaySdk.prototype, "checkNotifySign");
+
+    const result = await adapter.verifyCallback({ sign: "abc" });
+
+    expect(result).toBe(false);
+    expect(checkSpy).not.toHaveBeenCalled();
+  });
+});

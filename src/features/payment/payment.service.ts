@@ -55,7 +55,19 @@ export async function createPayment(
   if (remaining < 60_000) {
     throw new AppError(ERROR_CODES.ORDER_STATUS_INVALID, "订单即将超时，请重新下单");
   }
-  const timeoutExpress = `${Math.min(30, Math.ceil(remaining / 60_000))}m`;
+  // D1 修复：ceil → floor。ceil 会把窗口向上取整（remaining=90s → ceil=2m=120s > 90s），
+  // 支付宝允许支付到 +120s 而订单在 +90s 自动取消 → 「支付后到落空窗」资损。
+  // floor 保证窗口 ≤ 订单剩余时间（remaining=90s → floor=1m=60s < 90s，安全）。
+  // max(1,) 钳制下限（remaining≥60s 已被上方守卫，此处防御未来守卫变更）。
+  const minutes = Math.max(1, Math.min(30, Math.floor(remaining / 60_000)));
+  const timeoutExpress = `${minutes}m`;
+
+  // D5 修复：未配置支付宝 → PAYMENT_NOT_CONFIGURED(503)，而非 PAYMENT_FAILED(402)。
+  // 语义：未配置 = 「功能不可用」应 503；配置后创建失败 = 「交易需重新尝试」才 402。
+  // 独立 GET /api/pay/[orderId] 直接调 createPayment，此前未配置时 402 语义误导前端。
+  if (!isPaymentConfigured()) {
+    throw new AppError(ERROR_CODES.PAYMENT_NOT_CONFIGURED, "支付功能暂未配置");
+  }
 
   const result = await paymentAdapter.createPayment({
     orderId: order.id,

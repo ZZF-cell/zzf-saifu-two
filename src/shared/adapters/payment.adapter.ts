@@ -198,7 +198,10 @@ export function createAlipayAdapter(): PaymentAdapter {
 
       // 二次核验 app_id：必须等于自身配置，防止跨应用伪造回调
       // （appId 属 adapter 配置域，统一在此读取 env，feature 层不再直读 process.env）
-      if (body.app_id && body.app_id !== process.env.ALIPAY_APP_ID) {
+      // D4 修复：无条件强校验——缺失 app_id 的回调一并拒绝（支付宝通知必带 app_id）。
+      // 原条件判断 `body.app_id &&` 在缺失时整体跳过归属核验（签名内容覆盖 app_id，
+      // 缺 app_id 会使 checkNotifySign 验签失败，当前不可利用，属纵深防御收紧）。
+      if (body.app_id !== process.env.ALIPAY_APP_ID) {
         return false;
       }
       try {

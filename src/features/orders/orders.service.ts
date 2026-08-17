@@ -418,29 +418,41 @@ export async function cancelExpiredOrder(
   // M1 超时先查支付：取消前必须向支付宝确认交易未完成。
   // 用户可能已真实付款但异步通知丢失（notifyUrl 未到/沙箱环境），直接取消
   // = 「钱已扣、订单已取消」资损。先 query 终态：
-  // - 已支付(TRADE_SUCCESS/FINISHED) 且金额与快照一致 → 幂等标记 PAID，绝不取消
-  // - 已支付但金额不符 → 资损风险，保持 PENDING 交人工介入，不取消
-  // - 未支付 / 查询失败(网关异常/未配置) → 允许进入取消（事务内状态守卫兜底并发支付）
-  const query = await paymentService.queryAlipayTrade(orderId);
-  const terminalSuccess =
-    query.success &&
-    (query.tradeStatus === "TRADE_SUCCESS" || query.tradeStatus === "TRADE_FINISHED");
-  if (terminalSuccess) {
-    const paidFen = query.totalAmountFen;
-    if (paidFen !== null && paidFen === order.total) {
-      const result = await markOrderPaid(
-        orderId,
-        query.outTradeNo ?? orderId,
-        paidFen,
-        query.alipayTradeNo,
+  // - 未配置支付宝（开发环境）→ 无支付可能，直接进入取消（无资损风险）
+  // - 已配置 → 仅当网关 code=10000 且交易明确未支付时才取消：
+  //   * 已支付(TRADE_SUCCESS/FINISHED) 且金额与快照一致 → 幂等标记 PAID，绝不取消
+  //   * 已支付但金额不符 → 资损风险，保持 PENDING 交人工介入，不取消
+  //   * 查询失败（success=false 或网关非 10000，含网络抖动/限流）→ 支付状态未知，
+  //     绝不静默取消——用户可能已付款但通知丢失，取消即资损；保持 PENDING 留待下次 sweep 重查
+  // D2 修复：此前「未配置」与「网关瞬时失败」被同等对待都进入取消，成批取消已支付订单。
+  if (paymentService.isPaymentConfigured()) {
+    const query = await paymentService.queryAlipayTrade(orderId);
+    if (!query.success || query.code !== "10000") {
+      console.error(
+        `[orders] 超时取消前支付宝查询失败: 订单=${orderId} ${query.error ?? `code=${query.code ?? "?"}`} — 保持 PENDING 留待下次 sweep`,
       );
-      if (result.success) return { cancelled: false, status: ORDER_STATUS.PAID };
+      return { cancelled: false, status: order.status };
     }
-    // 金额不符 / 标记冲突：不取消，保持 PENDING（人工介入）
-    return { cancelled: false, status: order.status };
+    const terminalSuccess =
+      query.tradeStatus === "TRADE_SUCCESS" || query.tradeStatus === "TRADE_FINISHED";
+    if (terminalSuccess) {
+      const paidFen = query.totalAmountFen;
+      if (paidFen !== null && paidFen === order.total) {
+        const result = await markOrderPaid(
+          orderId,
+          query.outTradeNo ?? orderId,
+          paidFen,
+          query.alipayTradeNo,
+        );
+        if (result.success) return { cancelled: false, status: ORDER_STATUS.PAID };
+      }
+      // 金额不符 / 标记冲突：不取消，保持 PENDING（人工介入）
+      return { cancelled: false, status: order.status };
+    }
+    // code=10000 且非终态（TRADE_NOT_EXIST/WAIT_BUYER_PAY/TRADE_CLOSED）→ 确认未支付，进入取消
   }
 
-  // 未支付 → 事务内取消（状态守卫必须先于库存回补：
+  // 未支付 / 未配置 → 事务内取消（状态守卫必须先于库存回补：
   // updateMany 带 status=PENDING，与支付回调并发时若回调抢先置 PAID，
   // 命中 0 行 → 提前 return（事务无写入提交），绝不回补已支付订单的库存（防资损））
   return prisma.$transaction(async (tx) => {
@@ -666,7 +678,15 @@ export async function markOrderPaid(
     }
 
     if (current.status === ORDER_STATUS.PAID) {
-      // 已支付，幂等返回成功
+      // 已支付，幂等返回成功。D3 修复：幂等重放分支补金额复验 + 告警（纵深防御）——
+      // 事务开头的金额校验（order.total !== paidAmountFen）已覆盖所有路径，此处再显式
+      // 复验并留痕，绝不静默吞掉不一致的重复通知（如未来出现部分退款/金额修正通知）。
+      if (order.total !== paidAmountFen) {
+        console.error(
+          `[orders] 幂等回调金额异常: 订单=${orderId} 快照=${order.total} 回调=${paidAmountFen}`,
+        );
+        alertPaymentConflict("幂等回调金额不一致", { orderId, paidAmountFen });
+      }
       return { success: true, conflict: false };
     }
 
