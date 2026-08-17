@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Image from "next/image";
 import Link from "next/link";
 import { CodeLoginForm, PasswordLoginForm } from "./auth.components";
 
@@ -47,9 +48,17 @@ function LoginPageContent() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center px-6">
       <div className="w-full max-w-sm">
-        <h1 className="mb-8 text-center text-2xl font-bold tracking-tight">
-          赛夫严选
-        </h1>
+        <div className="mb-6 flex flex-col items-center gap-3">
+          <Image
+            src="/icons/icon-192x192.png"
+            alt="赛夫严选"
+            width={64}
+            height={64}
+            className="h-16 w-16 rounded-xl"
+            priority
+          />
+          <h1 className="text-2xl font-bold tracking-tight">赛夫严选</h1>
+        </div>
 
         <div className="mb-6 flex rounded-lg bg-gray-100 p-1">
           <button
@@ -118,9 +127,17 @@ export function RegisterPage() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center px-6">
       <div className="w-full max-w-sm">
-        <h1 className="mb-2 text-center text-2xl font-bold tracking-tight">
-          注册
-        </h1>
+        <div className="mb-2 flex flex-col items-center gap-3">
+          <Image
+            src="/icons/icon-192x192.png"
+            alt="赛夫严选"
+            width={48}
+            height={48}
+            className="h-12 w-12 rounded-xl"
+            priority
+          />
+          <h1 className="text-2xl font-bold tracking-tight">注册</h1>
+        </div>
         <p className="mb-8 text-center text-sm text-gray-500">
           验证手机号并设置密码
         </p>

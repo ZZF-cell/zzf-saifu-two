@@ -246,6 +246,7 @@ src/
 ├── app/                             # Next.js App Router 入口
 │   ├── layout.tsx                   #   根布局（PWA Manifest）
 │   ├── manifest.ts                  #   Web App Manifest（图标 public/icons/）
+│   ├── icon.png / apple-icon.png    #   favicon + iOS 主屏图标（由 scripts/generate-icons.mjs 生成）
 │   ├── page.tsx                     #   首页 = 商品列表
 │   ├── age-gate/                    #   年龄验证门禁（拒绝 → 硬性阻止页）
 │   ├── (auth)/                      #   登录/注册
@@ -725,4 +726,5 @@ npm run build --webpack           # Webpack 回退构建
 1. **`shared/ui/` 下 shadcn 组件只读**，通过组合/包装扩展业务组件；所有源码修改记录在 `shared/ui/README.md`（组件名/原因/日期）
 2. **`features/*/index.ts` 是模块唯一 Public API**，禁止跨模块直接 import 内部文件或数据表
 3. **PWA 缓存策略**（实现于 `public/sw.js`，运行时缓存不预缓存壳）：`/api/*` 严格 Network Only（绝不入缓存，且只缓存 200、跳过带 `Set-Cookie` 的响应防离线回放）；`/_next/static`、`/icons`、`/manifest.webmanifest` Stale-While-Revalidate（文件名带内容哈希，SWR 安全省流量）；HTML 导航 Network First + 离线回退最近访问页；`build-id.json` Network First。构建版本校验：`prebuild` 脚本生成 `public/build-id.json`（唯一版本号），客户端 `PwaInstaller`（`src/shared/pwa/pwa.tsx`，挂根布局）回到前台时轮询比对，发现新版本弹条提示刷新。SW 仅生产环境注册（dev 热更新与缓存冲突）。
+4. **品牌 LOGO / 图标**：源 LOGO 存 `public/logo.png`（品牌资产入库）；`scripts/generate-icons.mjs` 由它生成 `src/app/icon.png`（favicon）、`src/app/apple-icon.png`（iOS 主屏）、`public/icons/icon-192x192.png` / `icon-512x512.png`（PWA manifest）。换 LOGO 后跑 `node scripts/generate-icons.mjs` 再提交。站点显示位置：顶部导航（`SiteHeader`）、登录/注册页（`auth.routes.tsx`）、首页运营横幅（`products.routes.tsx`，白底圆章）。
 4. **版本管理**：Next.js / React / React DOM 精确版本锁定（不用 `^`），每次升级前跑全量 Playwright E2E
