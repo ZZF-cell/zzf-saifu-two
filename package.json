@@ -8,7 +8,7 @@
     "build": "next build",
     "build:webpack": "next build --webpack",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "inngest:dev": "inngest-cli dev --env-file .env.local",
     "openapi": "tsx scripts/generate-openapi.ts",
     "db:push": "prisma db push",

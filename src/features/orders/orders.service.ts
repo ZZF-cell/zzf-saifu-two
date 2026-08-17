@@ -17,6 +17,7 @@ import { writeAuditLog } from "@/shared/utils/audit";
 import { paymentService } from "@/features/payment";
 import { captureMessage } from "@sentry/nextjs";
 import type { Prisma } from "@prisma/client";
+import type { CreateOrderInput, CreateOrderResult } from "./orders.types";
 
 /** 支付超时时间（30 分钟）— 下单 expiresAt 与 Inngest 超时取消共用，防止展示倒计时与实际取消时机不一致 */
 export const ORDER_PAYMENT_TIMEOUT_MS = 30 * 60 * 1000;
@@ -40,45 +41,6 @@ export const MAX_ORDER_ITEM_QTY = 999;
 export const MAX_ORDER_ITEMS = 100;
 
 // ── 类型 ──
-
-export interface CreateOrderItem {
-  productId: string;
-  qty: number;
-}
-
-export interface CreateOrderInput {
-  items: CreateOrderItem[];
-  shippingAddress: {
-    name: string;
-    phone: string;
-    province: string;
-    city: string;
-    district: string;
-    detail: string;
-    zipCode?: string;
-  };
-  privacy: {
-    anonymousPackaging: boolean;
-    hideProductName: boolean;
-  };
-}
-
-export interface CreateOrderResult {
-  orderId: string;
-  total: number;
-  currency: string;
-  status: string;
-  /** 当面付二维码内容（支付宝 App 扫码支付）；未配置/失败时 null（订单已创建，可稍后到详情页续付） */
-  qrCode: string | null;
-  /**
-   * 支付单创建状态（E1：支付失败对前端可见）：
-   * - ok          二维码已生成，可直接拉起扫码
-   * - unavailable 支付宝未配置（开发环境降级，前端提示「稍后继续支付」）
-   * - failed      已配置但创建失败（真实异常，前端应给「去详情重试」入口）
-   */
-  paymentState: "ok" | "unavailable" | "failed";
-  expiresAt: string;
-}
 
 // ── 优惠分摊 — 核心计算逻辑 ──
 

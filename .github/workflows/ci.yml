@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    name: typecheck · lint · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        # postinstall 自动执行 `prisma generate`，为 @prisma/client 生成类型
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Lint
+        # eslint 9 flat config（eslint.config.mjs）；boundaries 插件随 lint 生效，
+        # 把「index.ts 唯一 Public API」（M14 seam）变成 CI 硬门槛
+        run: npx eslint .
+
+      - name: Unit tests
+        run: npx vitest run

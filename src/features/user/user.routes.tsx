@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import type { UserProfile } from "./user.queries";
+import type { UserProfile } from "./user.types";
 import { apiFetch } from "@/shared/api/client";
 import { SiteHeader } from "@/shared/ui/SiteHeader";
 

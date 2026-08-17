@@ -652,7 +652,7 @@ npm start
 
 > **强制机制（L12）**：阈值在 `vitest.config.ts` 的 `coverage.thresholds` 中落地——状态机/金额/加密工具三个文件用 **glob 分键强制 100%**，其余文件走全局聚合下限（stmts/lines 75%、funcs 70%、branches 75%）。`npx vitest run --coverage` 不达标即退出码 1。
 >
-> **口径声明**：阈值按**全局聚合**（所有文件合并统计）而非逐文件强制。个别模块覆盖率可能低于下限而未被暴露——例如 `cart`/`products` 模块覆盖率明显偏低（约 33%/38%），被高覆盖模块（订单/认证/支付）聚合稀释。计划将逐文件门槛纳入后续迭代（见模块 H CI workflow）。
+> **口径声明**：阈值按**全局聚合**（所有文件合并统计）而非逐文件强制。个别模块覆盖率可能低于下限而未被暴露——例如 `cart`/`products` 模块覆盖率明显偏低（约 33%/38%），被高覆盖模块（订单/认证/支付）聚合稀释。计划将逐文件门槛纳入后续迭代。
 
 ### E2E 核心闭环（3 条）
 
@@ -676,12 +676,16 @@ npm start
 3. **构建失败** → 对比 Turbopack 和 Webpack 两个构建日志，定位是否 Turbopack 特有 bug → 如果是，临时切 `--webpack` 回退
 
 ```bash
+npx tsc --noEmit                  # 类型检查
+npm run lint                      # ESLint（含 boundaries 模块边界硬门槛）
 npx vitest run                    # 单元测试（CI 模式，无 watch）
 npx vitest run --coverage         # 带覆盖率报告
 npx playwright test               # E2E 核心链路
 npm run build                     # Turbopack 生产构建
 npm run build --webpack           # Webpack 回退构建
 ```
+
+> **CI 门槛（`.github/workflows/ci.yml`）**：push/PR 到 main 时跑 ① `npx tsc --noEmit` ② `npx eslint .` ③ `npx vitest run`，全绿才允许合并。boundaries 模块边界规则随 eslint 在 CI 强制，使「index.ts 唯一 Public API」（M14 seam）成为硬约束（此前 L10 降级为 warn 且无 CI 门槛，跨模块违规永不阻断发布）。
 
 ## 运维与监控
 

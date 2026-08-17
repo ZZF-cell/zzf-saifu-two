@@ -139,3 +139,11 @@ export function AddressForm({ value, onChange }: AddressFormProps) {
     </div>
   );
 }
+
+// ── H：订单状态常量经 client seam 再导出 ──
+// client 组件需要 ORDER_STATUS / ORDER_STATUS_GROUPS 时从本文件（*.components.tsx，client seam）
+// import，而不是从 index.ts —— index 重导出 orders.service（→ payment → alipay-sdk，Node fs），
+// 经 barrel 会把 server 依赖编进 client 包。state-machine 零依赖，re-export 到 client 安全。
+// server 侧（user.queries / admin 等）仍从 index.ts 导入。
+export { ORDER_STATUS, ORDER_STATUS_GROUPS } from "./orders.state-machine";
+export type { OrderStatus } from "./orders.state-machine";

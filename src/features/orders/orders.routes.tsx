@@ -4,9 +4,10 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
 import { OrderCard, OrderStatusBadge, OrderTimeline, AddressForm } from "./orders.components";
-import type { OrderSummary, OrderDetail } from "./orders.queries";
-import { ORDER_STATUS_GROUPS } from "./orders.state-machine";
-import type { OrderStatus } from "./orders.state-machine";
+// H：DTO 类型收拢到 orders.types（client-safe，零 server 依赖）；常量经 components seam 再导出
+import type { OrderSummary, OrderDetail } from "./orders.types";
+import { ORDER_STATUS_GROUPS } from "./orders.components";
+import type { OrderStatus } from "./orders.components";
 import { fenToYuan, sumFen } from "@/shared/utils/money";
 import { apiFetch } from "@/shared/api/client";
 import { SiteHeader } from "@/shared/ui/SiteHeader";

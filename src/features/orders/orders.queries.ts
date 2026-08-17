@@ -3,6 +3,7 @@ import { prisma } from "@/shared/db/client";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import { decrypt } from "@/shared/utils/crypto";
 import type { Prisma } from "@prisma/client";
+import type { OrderListResult, OrderDetail, BrandOrderListResult } from "./orders.types";
 
 function decryptAddress(shippingAddress: string): string {
   if (!process.env.ENCRYPTION_KEYS) return shippingAddress; // 开发环境明文
@@ -22,48 +23,6 @@ const MASKED_PRODUCT_NAME = "私密商品";
 function maskProductName(privacy: unknown, name: string): string {
   const p = privacy as { hideProductName?: boolean } | null | undefined;
   return p?.hideProductName ? MASKED_PRODUCT_NAME : name;
-}
-
-// ── 类型 ──
-
-export interface OrderListResult {
-  orders: OrderSummary[];
-  total: number;
-  page: number;
-  pageSize: number;
-}
-
-export interface OrderSummary {
-  id: string;
-  total: number;
-  status: string;
-  itemCount: number;
-  firstItemName: string;
-  createdAt: Date;
-  paidAt: Date | null;
-}
-
-export interface OrderDetail {
-  id: string;
-  total: number;
-  status: string;
-  shippingAddress: string;
-  privacy: unknown;
-  outTradeNo: string | null;
-  paidAt: Date | null;
-  shippedAt: Date | null;
-  deliveredAt: Date | null;
-  completedAt: Date | null;
-  cancelledAt: Date | null;
-  refundedAt: Date | null;
-  createdAt: Date;
-  items: {
-    id: string;
-    productName: string;
-    price: number;
-    qty: number;
-    productId: string | null;
-  }[];
 }
 
 // ── 订单摘要查询（用户列表 / 品牌方订单列表共用） ──
@@ -142,22 +101,6 @@ export async function getOrderList(
  * brandSubtotal（本品牌行 price 之和，price 为行总额）与本品牌首个商品名，
  * 不返回 Order.total（含其他品牌金额）也不返回其他品牌的 firstItemName。
  */
-export interface BrandOrderRow {
-  id: string;
-  status: string;
-  createdAt: Date;
-  paidAt: Date | null;
-  brandSubtotal: number; // 本品牌商品行小计（分）= 各行 price 之和（price 已含 qty）
-  firstItemName: string; // 本品牌首个商品名
-}
-
-export interface BrandOrderListResult {
-  orders: BrandOrderRow[];
-  total: number;
-  page: number;
-  pageSize: number;
-}
-
 export async function getOrderListByBrand(
   brandProductIds: string[],
   page = 1,

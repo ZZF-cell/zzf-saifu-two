@@ -2,23 +2,7 @@
 import { prisma } from "@/shared/db/client";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import { ORDER_STATUS, ORDER_STATUS_GROUPS } from "@/features/orders";
-
-// ── 类型 ──
-
-export interface OrderStats {
-  totalOrders: number; // 全部订单
-  pendingPayment: number; // 待付款
-  paidOrders: number; // 已支付（含发货中/已完成）
-  cancelledOrders: number; // 已取消/已退款
-}
-
-export interface UserProfile {
-  nickname: string | null;
-  role: string;
-  ageVerified: boolean;
-  createdAt: Date;
-  stats: OrderStats;
-}
+import type { UserProfile } from "./user.types";
 
 // ── 个人信息 + 订单统计 ──
 

@@ -19,12 +19,6 @@ const baseConfig = [
       "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
       "prefer-const": "error",
     },
-    ignores: [
-      "node_modules/**",
-      ".next/**",
-      "postgres-data/**",
-      "*.bak",
-    ],
   },
 ];
 
@@ -92,12 +86,12 @@ const boundariesConfig = {
             disallow: ["feature-internal"],
           },
           {
-            // ② feature 内部文件（含 api / client 两个 seam）不得跨模块引用其他 feature 的内部文件
+            // ② feature 内部文件（含 api / client / public 三个 seam）不得跨模块引用其他 feature 的内部文件
             //    同模块引用二者 captured featureName 相同 → "!{{from.featureName}}" 不匹配 → 放行
             //    注1：模板必须是 Handlebars 双大括号 `{{from.x}}`——单大括号 `{from.x}` 会被当字面 glob，
             //         `micromatch.isMatch(name, "!{from.x}")` 恒真 → 把所有同模块引用误判为跨模块
             //    注2：ESLint schema 只接受 tuple 形式 ["type", {captured}]，对象形式会被插件 runtime 支持但被 ESLint 校验拒绝
-            from: ["feature-internal", "feature-api", "feature-client"],
+            from: ["feature-internal", "feature-api", "feature-client", "feature-public"],
             disallow: [["feature-internal", { featureName: "!{{from.featureName}}" }]],
           },
           {
@@ -118,18 +112,32 @@ const boundariesConfig = {
 };
 
 const config = [
+  // 全局忽略：eslint 9 flat config 中只有「无 files/rules 键的独立配置对象」才作为全局 ignores；
+  // 此前放在带 rules 的 baseConfig 里，导致 .next/**、coverage/** 未被忽略，`eslint .` 扫出 9000+ 产物问题。
+  {
+    ignores: [
+      "node_modules/**",
+      ".next/**",
+      "coverage/**",
+      "postgres-data/**",
+      "*.bak",
+      "next-env.d.ts",
+    ],
+  },
   ...baseConfig,
   // boundaries 仅在 lint 时启用，不阻断 build
   // 注意：src/shared、src/app 必须纳入检查（rules ①③ 分别依赖 shared/app 被处理）；
   // app 层走 "@/features/<m>"（rule ③ 强制 feature-public），composition root 模式由该入口承载
+  // 用 files 负向模式（!pattern）排除不适用 boundaries 的文件；scripts/tests/prisma 不在 src，
+  // 本就不匹配任何 element（no-unknown-files: off），保留负向仅作防御
   {
     ...boundariesConfig,
-    ignores: [
-      "src/middleware.ts",
-      "src/inngest/**",
-      "scripts/**",
-      "tests/**",
-      "prisma/**",
+    files: [
+      "!src/middleware.ts",
+      "!src/inngest/**",
+      "!scripts/**",
+      "!tests/**",
+      "!prisma/**",
     ],
   },
 ];

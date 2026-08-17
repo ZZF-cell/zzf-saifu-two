@@ -6,10 +6,17 @@ export * as ordersService from "./orders.service";
 export * as ordersQueries from "./orders.queries";
 export { CheckoutPage, OrderListPage, OrderDetailPage } from "./orders.routes";
 export { OrderCard, OrderStatusBadge, OrderTimeline, AddressForm } from "./orders.components";
-export type { OrderSummary, OrderDetail, OrderListResult } from "./orders.queries";
+// H：DTO 类型收拢到 orders.types（client-safe），server 侧从 index 导入，client 侧直接 import types
+export type {
+  OrderSummary,
+  OrderDetail,
+  OrderListResult,
+  BrandOrderRow,
+  BrandOrderListResult,
+  CreateOrderInput,
+  CreateOrderResult,
+} from "./orders.types";
 export { getOrderListByBrand } from "./orders.queries";
-export type { BrandOrderRow, BrandOrderListResult } from "./orders.queries";
-export type { CreateOrderInput, CreateOrderResult } from "./orders.service";
 export { cancelExpiredOrder, restoreStock, ORDER_PAYMENT_TIMEOUT_MS } from "./orders.service";
 export {
   confirmReceipt,

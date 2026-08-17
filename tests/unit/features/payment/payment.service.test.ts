@@ -142,8 +142,10 @@ describe("createPayment — 订单校验与支付创建", () => {
   });
 
   it("成功路径 → 以订单快照金额/通用主题 + 剩余时间钳制的 timeoutExpress 调用 adapter，返回 qrCode", async () => {
-    // createdAt 锚定 5min 前 → remaining 精确 25min（floor 对亚毫秒抖动免疫，杜绝时钟竞态 flake）
-    findUniqueMock.mockResolvedValue(pendingOrder({ createdAt: new Date(Date.now() - 5 * 60 * 1000) }));
+    // createdAt 锚定 4.5min 前 → remaining 25.5min → floor 稳定 25m。
+    // 注意不能锚 5min 整：remaining = 25min - δ（δ=两次 Date.now() 毫秒差），
+    // δ≥1ms 时 floor(24.99…) = 24m，恰在分钟边界被亚毫秒抖动击穿（曾致 flake）。
+    findUniqueMock.mockResolvedValue(pendingOrder({ createdAt: new Date(Date.now() - 4.5 * 60 * 1000) }));
     adapterCreateMock.mockResolvedValue({ success: true, qrCode: "https://qr.alipay.com/bax0451xyz", tradeNo: "t-1" });
 
     const result = await createPayment("user-1", "order-1");
