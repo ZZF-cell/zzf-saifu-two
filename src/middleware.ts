@@ -19,6 +19,9 @@ export async function middleware(req: NextRequest) {
     path.startsWith("/_next") ||
     path.startsWith("/icons") ||
     path === "/favicon.ico" ||
+    path === "/icon.png" ||
+    path === "/apple-icon.png" ||
+    path === "/logo.png" ||
     path === "/manifest.webmanifest" ||
     path === "/sw.js" ||
     path === "/build-id.json"
@@ -54,6 +57,6 @@ export async function middleware(req: NextRequest) {
 export const config = {
   matcher: [
     // 排除 Next.js 内部资源、静态文件、API 路由（API 层自行校验 JWT）
-    "/((?!_next/static|_next/image|api/|icons/|favicon\\.ico|manifest\\.webmanifest|sw\\.js|build-id\\.json).*)",
+    "/((?!_next/static|_next/image|api/|icons/|favicon\\.ico|icon\\.png|apple-icon\\.png|logo\\.png|manifest\\.webmanifest|sw\\.js|build-id\\.json).*)",
   ],
 };
