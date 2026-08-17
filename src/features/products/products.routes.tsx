@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import NextImage from "next/image";
 import Image from "@/shared/ui/Image";
 import { SiteHeader } from "@/shared/ui/SiteHeader";
 import { useRouter } from "next/navigation";
@@ -123,12 +124,15 @@ export function HomePage() {
         {/* 运营横幅：彩色渐变商城风（from-primary 深蓝黑 → accent 玫红）+ 品牌 LOGO 白底圆章 */}
         <div className="mb-4 flex items-center gap-4 overflow-hidden rounded-2xl bg-linear-to-r from-primary via-primary-light to-accent px-6 py-6 text-white shadow-lg">
           <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white shadow-inner">
-            <Image
+            {/* ⚠️ 品牌 LOGO 必须用 next/image 直连，不能走共享 Image（image-source 只认
+                data:/https:，本地 /icons 路径会被替换成「暂无图片」占位图） */}
+            <NextImage
               src="/icons/icon-192x192.png"
               alt="赛夫严选"
               width={64}
               height={64}
               className="h-14 w-14"
+              priority
             />
           </div>
           <div>
