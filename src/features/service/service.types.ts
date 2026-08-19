@@ -26,6 +26,8 @@ export interface TicketSummary {
   productId: string | null;
   userName: string | null; // 提交人昵称（用户列表 = 自己昵称；客服列表 = 工单作者）
   lastMessage: TicketMessage | null;
+  /** 客服视角：用户发来、客服尚未读的消息数；用户侧恒 0（isRead 只标记客服已读） */
+  unreadCount: number;
   createdAt: Date;
   updatedAt: Date;
 }

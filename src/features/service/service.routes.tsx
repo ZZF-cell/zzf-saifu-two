@@ -5,12 +5,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type {
   TicketCategory,
+  TicketDetail,
   TicketListResult,
   TicketMessage,
+  TicketStatus,
+  TicketSummary,
 } from "./service.types";
 import { TICKET_CATEGORIES } from "./service.types";
 import { apiFetch } from "@/shared/api/client";
 import { SiteHeader } from "@/shared/ui/SiteHeader";
+import { fenToYuan } from "@/shared/utils/money";
+import { StatusBadge, STATUS_LABEL } from "@/shared/ui/StatusBadge";
 
 // ── helpers ──
 
@@ -356,5 +361,475 @@ export function TicketDetailPage({ id }: { id: string }) {
         )}
       </div>
     </main>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// 客服工作台（/service，仅 CUSTOMER_SERVICE | SUPER 可达，中间件守卫）
+// ─────────────────────────────────────────────────────────────
+
+/** 各状态下可执行的客服操作（改状态按钮） */
+const STATUS_ACTIONS: Record<string, { status: TicketStatus; label: string }[]> = {
+  OPEN: [
+    { status: "PROCESSING", label: "开始处理" },
+    { status: "RESOLVED", label: "标记解决" },
+    { status: "CLOSED", label: "关闭工单" },
+  ],
+  PROCESSING: [
+    { status: "RESOLVED", label: "标记解决" },
+    { status: "CLOSED", label: "关闭工单" },
+  ],
+  RESOLVED: [
+    { status: "PROCESSING", label: "重开处理" },
+    { status: "CLOSED", label: "关闭工单" },
+  ],
+  CLOSED: [
+    { status: "OPEN", label: "重新打开" },
+    { status: "PROCESSING", label: "重新处理" },
+  ],
+};
+
+export function ServiceCenterPage() {
+  const [tab, setTab] = useState<"tickets" | "orders">("tickets");
+
+  return (
+    <main className="mx-auto min-h-screen max-w-6xl bg-white pb-24">
+      <SiteHeader />
+      <div className="mx-auto w-full max-w-5xl px-4 pt-4">
+        <h1 className="text-center text-xl font-bold text-gray-900">客服工作台</h1>
+      </div>
+
+      <div className="mx-auto w-full max-w-5xl px-4 pt-3">
+        <div className="flex gap-1 rounded-xl bg-gray-100 p-1">
+          {[
+            { key: "tickets", label: "咨询工单" },
+            { key: "orders", label: "订单售后" },
+          ].map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key as "tickets" | "orders")}
+              className={`flex-1 rounded-lg py-2 text-sm font-medium transition ${
+                tab === t.key
+                  ? "bg-white text-primary shadow-sm"
+                  : "text-gray-500 hover:text-gray-900"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mx-auto w-full max-w-5xl p-4">
+        {tab === "tickets" ? <TicketsWorkbench /> : <OrdersWorkbench />}
+      </div>
+    </main>
+  );
+}
+
+// ── Tab1 咨询工单 ──
+
+function TicketsWorkbench() {
+  const [items, setItems] = useState<TicketSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [keyword, setKeyword] = useState("");
+
+  // 详情视图（选中工单后替换列表）
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<TicketDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [reply, setReply] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState("");
+
+  const fetchList = useCallback(async () => {
+    setLoading(true);
+    try {
+      const qs = new URLSearchParams();
+      if (statusFilter) qs.set("status", statusFilter);
+      if (categoryFilter) qs.set("category", categoryFilter);
+      if (keyword.trim()) qs.set("keyword", keyword.trim());
+      const data = await apiCall("GET", `/api/service/tickets?${qs.toString()}`);
+      setItems(data.items ?? []);
+    } catch { /* 筛选失败静默，保留上次列表 */ } finally {
+      setLoading(false);
+    }
+  }, [statusFilter, categoryFilter, keyword]);
+
+  useEffect(() => { fetchList(); }, [fetchList]);
+
+  const openDetail = useCallback(async (id: string) => {
+    setSelectedId(id);
+    setDetailLoading(true);
+    setActionError("");
+    setReply("");
+    try {
+      const data = await apiCall("GET", `/api/service/tickets/${id}`);
+      setDetail(data);
+      await fetchList(); // 打开即已读 → 刷新列表未读角标
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : "工单加载失败");
+      setSelectedId(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [fetchList]);
+
+  const handleReply = async () => {
+    const trimmed = reply.trim();
+    if (!trimmed || !selectedId) { setActionError("回复内容不能为空"); return; }
+    setBusy(true);
+    setActionError("");
+    try {
+      await apiCall("POST", `/api/service/tickets/${selectedId}/messages`, { content: trimmed });
+      setReply("");
+      await openDetail(selectedId);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : "回复失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleStatus = async (next: TicketStatus) => {
+    if (!selectedId) return;
+    setBusy(true);
+    setActionError("");
+    try {
+      await apiCall("PATCH", `/api/service/tickets/${selectedId}`, { status: next });
+      await openDetail(selectedId);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : "操作失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ── 详情视图 ──
+  if (selectedId) {
+    return (
+      <div className="space-y-4">
+        <button
+          onClick={() => { setSelectedId(null); setDetail(null); fetchList(); }}
+          className="inline-block text-sm text-gray-400 hover:text-gray-600"
+        >
+          ‹ 返回工单列表
+        </button>
+
+        {detailLoading || !detail ? (
+          <div className="h-32 animate-pulse rounded-xl bg-gray-100" />
+        ) : (
+          <>
+            <section className="rounded-xl border border-gray-100 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="min-w-0 truncate text-base font-bold text-gray-900">{detail.title}</h2>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${STATUS_BADGE[detail.status]?.cls ?? "bg-gray-100 text-gray-500"}`}>
+                  {STATUS_BADGE[detail.status]?.label ?? detail.status}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-gray-400">
+                {CATEGORY_LABEL[detail.category] ?? detail.category}
+                {detail.userName && ` · 提交人：${detail.userName}`}
+                {detail.orderId && ` · 订单 ${detail.orderId}`}
+                <span className="mx-1">·</span>
+                提交于 {fmt(detail.createdAt)}
+              </p>
+            </section>
+
+            {/* 对话线程 */}
+            <section className="space-y-3">
+              {detail.messages.map((m) => {
+                const staff = isStaffMessage(m.senderRole);
+                return (
+                  <div key={m.id} className={`flex ${staff ? "justify-start" : "justify-end"}`}>
+                    <div
+                      className={`max-w-[80%] rounded-xl px-3 py-2 text-sm ${
+                        staff ? "bg-gray-100 text-gray-800" : "bg-primary text-white"
+                      }`}
+                    >
+                      <p className="whitespace-pre-wrap break-words">{m.content}</p>
+                      <p className={`mt-1 text-[10px] ${staff ? "text-gray-400" : "text-white/70"}`}>
+                        {staff ? "客服" : "客户"} · {fmt(m.createdAt)}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </section>
+
+            {actionError && (
+              <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{actionError}</div>
+            )}
+
+            {/* 状态操作 + 回复 */}
+            <section className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                {(STATUS_ACTIONS[detail.status] ?? []).map((a) => (
+                  <button
+                    key={a.status}
+                    onClick={() => handleStatus(a.status)}
+                    disabled={busy}
+                    className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                value={reply}
+                onChange={(e) => setReply(e.target.value)}
+                maxLength={2000}
+                rows={3}
+                placeholder="回复客户..."
+                className="w-full resize-none rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              />
+              <button
+                onClick={handleReply}
+                disabled={busy}
+                className="w-full rounded-xl bg-primary py-2.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+              >
+                {busy ? "提交中..." : "回复客户"}
+              </button>
+            </section>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // ── 列表视图 ──
+  return (
+    <div className="space-y-3">
+      {/* 筛选栏 */}
+      <div className="flex flex-wrap gap-2">
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary"
+        >
+          <option value="">全部状态</option>
+          {Object.entries(STATUS_BADGE).map(([key, v]) => (
+            <option key={key} value={key}>{v.label}</option>
+          ))}
+        </select>
+        <select
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value)}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary"
+        >
+          <option value="">全部类别</option>
+          {TICKET_CATEGORIES.map((c) => (
+            <option key={c} value={c}>{CATEGORY_LABEL[c]}</option>
+          ))}
+        </select>
+        <input
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          placeholder="搜索主题或工单号"
+          className="flex-1 min-w-[160px] rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary"
+        />
+      </div>
+
+      {loading ? (
+        <div className="space-y-3">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-16 animate-pulse rounded-xl bg-gray-100" />
+          ))}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="py-16 text-center text-gray-400">暂无匹配工单</div>
+      ) : (
+        items.map((t) => {
+          const badge = STATUS_BADGE[t.status] ?? STATUS_BADGE.OPEN;
+          return (
+            <button
+              key={t.id}
+              onClick={() => openDetail(t.id)}
+              className="block w-full rounded-xl border border-gray-100 p-4 text-left transition hover:shadow-sm"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <p className="flex min-w-0 items-center gap-2">
+                  {t.unreadCount > 0 && (
+                    <span className="shrink-0 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                      {t.unreadCount}
+                    </span>
+                  )}
+                  <span className="truncate text-sm font-medium text-gray-900">{t.title}</span>
+                </p>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${badge.cls}`}>
+                  {badge.label}
+                </span>
+              </div>
+              <div className="mt-1 flex items-center gap-2 text-xs text-gray-400">
+                <span>{t.userName || "匿名用户"}</span>
+                <span>·</span>
+                <span>{CATEGORY_LABEL[t.category] ?? t.category}</span>
+                <span>·</span>
+                <span>{fmt(t.updatedAt)}</span>
+              </div>
+              {t.lastMessage && (
+                <p className="mt-2 truncate text-sm text-gray-500">
+                  {isStaffMessage(t.lastMessage.senderRole) ? "客服：" : "客户："}
+                  {t.lastMessage.content}
+                </p>
+              )}
+            </button>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
+// ── Tab2 订单售后（复用 /api/admin/orders + 发货/送达/完成/退款） ──
+
+interface ServiceOrder {
+  id: string;
+  buyerNickname: string | null;
+  recipient: { name: string; phone: string; city: string } | null;
+  total: number;
+  status: string;
+  createdAt: string;
+  firstItemName: string;
+  itemCount: number;
+  isDestroyed: boolean;
+}
+
+function OrdersWorkbench() {
+  const [orders, setOrders] = useState<ServiceOrder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [acting, setActing] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+
+  const fetchOrders = useCallback(async () => {
+    setLoading(true);
+    try {
+      const url = `/api/admin/orders?pageSize=50${statusFilter ? `&status=${statusFilter}` : ""}`;
+      const data = await apiCall("GET", url);
+      setOrders(data.orders || []);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "订单加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }, [statusFilter]);
+
+  useEffect(() => { fetchOrders(); }, [fetchOrders]);
+
+  const handleAction = async (orderId: string, action: string) => {
+    setActing(orderId);
+    setError("");
+    try {
+      await apiCall("POST", `/api/admin/orders/${orderId}/${action}`);
+      await fetchOrders();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "操作失败");
+    } finally {
+      setActing(null);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {["", "TO_SHIP", "PENDING", "PAID", "SHIPPED", "DELIVERED", "REFUND_REQUESTED", "REFUNDED", "COMPLETED", "CANCELLED"].map((s) => (
+          <button
+            key={s}
+            onClick={() => setStatusFilter(s)}
+            className={`shrink-0 rounded-full px-4 py-2 text-sm transition ${
+              statusFilter === s
+                ? "bg-primary text-white"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            }`}
+          >
+            {STATUS_LABEL[s] || "全部"}
+          </button>
+        ))}
+      </div>
+      {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
+      {loading ? (
+        <div className="h-32 animate-pulse rounded-xl bg-gray-100" />
+      ) : orders.length === 0 ? (
+        <div className="py-12 text-center text-gray-400">
+          {statusFilter ? "该状态下暂无订单" : "暂无订单"}
+        </div>
+      ) : (
+        orders.map((o) => (
+          <div key={o.id} className="rounded-2xl border border-gray-100 p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-base font-semibold text-gray-900">
+                  {o.firstItemName}
+                  {o.itemCount > 1 && (
+                    <span className="ml-1.5 text-sm font-normal text-gray-400">
+                      等 {o.itemCount} 件
+                    </span>
+                  )}
+                </p>
+                <p className="mt-1 text-sm text-gray-400">
+                  <StatusBadge status={o.status} /> · ¥{fenToYuan(o.total)}
+                  {o.isDestroyed && <span className="ml-1 text-red-400">已销毁</span>}
+                </p>
+              </div>
+              <div className="shrink-0 text-right text-sm text-gray-400">
+                <p>{fmt(o.createdAt)}</p>
+                <p className="mt-0.5 truncate font-mono text-xs">{o.id}</p>
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-gray-50 pt-2 text-sm text-gray-500">
+              <span>买家：{o.buyerNickname || "—"}</span>
+              {o.recipient && (
+                <>
+                  <span>收货人：{o.recipient.name}</span>
+                  <span>{o.recipient.phone}</span>
+                  {o.recipient.city && <span>{o.recipient.city}</span>}
+                </>
+              )}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {o.status === "PAID" && (
+                <button
+                  onClick={() => handleAction(o.id, "ship")}
+                  disabled={acting === o.id}
+                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                >
+                  发货
+                </button>
+              )}
+              {o.status === "SHIPPED" && (
+                <button
+                  onClick={() => handleAction(o.id, "deliver")}
+                  disabled={acting === o.id}
+                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                >
+                  标记送达
+                </button>
+              )}
+              {o.status === "DELIVERED" && (
+                <button
+                  onClick={() => handleAction(o.id, "complete")}
+                  disabled={acting === o.id}
+                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                >
+                  完成
+                </button>
+              )}
+              {o.status === "REFUND_REQUESTED" && (
+                <button
+                  onClick={() => handleAction(o.id, "refund-confirm")}
+                  disabled={acting === o.id}
+                  className="rounded-lg border border-orange-200 px-4 py-2 text-sm font-medium text-orange-600 transition hover:bg-orange-50 disabled:opacity-50"
+                >
+                  确认退款
+                </button>
+              )}
+            </div>
+          </div>
+        ))
+      )}
+    </div>
   );
 }

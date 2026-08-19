@@ -11,4 +11,4 @@ export type {
   TicketListResult,
 } from "./service.types";
 export { TICKET_CATEGORIES, TICKET_STATUSES } from "./service.types";
-export { TicketsPage, TicketDetailPage } from "./service.routes";
+export { TicketsPage, TicketDetailPage, ServiceCenterPage } from "./service.routes";

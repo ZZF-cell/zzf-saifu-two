@@ -1,4 +1,5 @@
 // 咨询工单查询（只读）
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/shared/db/client";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import type {
@@ -86,6 +87,102 @@ export async function getTicketDetail(
     userName: user?.nickname ?? null,
     lastMessage: msgs[msgs.length - 1] ?? null,
     messages: msgs,
+    // 用户侧不跟踪自己未读（isRead 只标记客服已读），恒 0
+    unreadCount: 0,
+  };
+}
+
+// ── 全部工单列表（客服工作台） ──
+
+export async function listAllTickets(params: {
+  status?: string;
+  category?: string;
+  keyword?: string;
+  page: number;
+  pageSize: number;
+}): Promise<TicketListResult> {
+  const { status, category, keyword, page, pageSize } = params;
+
+  const where: Prisma.ServiceTicketWhereInput = {
+    ...(status ? { status } : {}),
+    ...(category ? { category } : {}),
+    ...(keyword
+      ? {
+          OR: [
+            { title: { contains: keyword, mode: "insensitive" } },
+            { id: { contains: keyword } }, // 支持直接粘贴工单号
+          ],
+        }
+      : {}),
+  };
+
+  // unreadCount 单独 groupBy 统计（isRead=false 且来自用户），
+  // 与 lastMessage 子查询互斥，拆两条查询避免 N+1
+  const [rows, total, unreadRows] = await Promise.all([
+    prisma.serviceTicket.findMany({
+      where,
+      orderBy: { updatedAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      select: {
+        ...ticketScalars,
+        messages: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { id: true, senderRole: true, content: true, createdAt: true },
+        },
+      },
+    }),
+    prisma.serviceTicket.count({ where }),
+    prisma.serviceTicketMessage.groupBy({
+      by: ["ticketId"],
+      where: { isRead: false, senderRole: "USER" },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const unreadMap = new Map(unreadRows.map((g) => [g.ticketId, g._count._all]));
+
+  return {
+    items: rows.map((row) => toSummary(row, unreadMap.get(row.id) ?? 0)),
+    total,
+    page,
+    pageSize,
+  };
+}
+
+// ── 工单详情（客服，无归属校验） ──
+
+export async function getTicketDetailAdmin(ticketId: string): Promise<TicketDetail> {
+  const ticket = await prisma.serviceTicket.findUnique({
+    where: { id: ticketId },
+    select: {
+      ...ticketScalars,
+      messages: {
+        orderBy: { createdAt: "asc" },
+        select: { id: true, senderRole: true, content: true, createdAt: true },
+      },
+    },
+  });
+
+  if (!ticket) {
+    throw new AppError(ERROR_CODES.TICKET_NOT_FOUND, "工单不存在");
+  }
+
+  const unreadCount = await prisma.serviceTicketMessage.count({
+    where: { ticketId, senderRole: "USER", isRead: false },
+  });
+
+  const { messages, user, ...rest } = ticket;
+  const msgs = messages as TicketDetail["messages"];
+  return {
+    ...rest,
+    category: rest.category as TicketDetail["category"],
+    status: rest.status as TicketDetail["status"],
+    userName: user?.nickname ?? null,
+    lastMessage: msgs[msgs.length - 1] ?? null,
+    unreadCount,
+    messages: msgs,
   };
 }
 
@@ -104,7 +201,7 @@ type TicketRow = {
   messages: Array<{ id: string; senderRole: string; content: string; createdAt: Date }>;
 };
 
-function toSummary(row: TicketRow): TicketSummary {
+function toSummary(row: TicketRow, unreadCount = 0): TicketSummary {
   const { user, messages, ...rest } = row;
   return {
     ...rest,
@@ -112,5 +209,6 @@ function toSummary(row: TicketRow): TicketSummary {
     status: row.status as TicketSummary["status"],
     userName: user?.nickname ?? null,
     lastMessage: messages[0] ?? null,
+    unreadCount,
   };
 }

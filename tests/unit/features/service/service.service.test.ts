@@ -12,29 +12,37 @@ import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
 vi.mock("@/shared/db/client", () => ({
   prisma: {
     order: { findUnique: vi.fn() },
-    serviceTicket: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-    serviceTicketMessage: { create: vi.fn() },
+    serviceTicket: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    serviceTicketMessage: { create: vi.fn(), updateMany: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
 
 import { prisma } from "@/shared/db/client";
 import { ERROR_CODES } from "@/shared/errors/errors";
-import { createTicket, addUserMessage } from "@/features/service/service.service";
+import {
+  createTicket,
+  addUserMessage,
+  addCsMessage,
+  markTicketRead,
+  updateTicketStatus,
+} from "@/features/service/service.service";
 
 type Tx = {
-  serviceTicketMessage: { create: ReturnType<typeof vi.fn> };
+  serviceTicketMessage: { create: ReturnType<typeof vi.fn>; updateMany: ReturnType<typeof vi.fn> };
   serviceTicket: { update: ReturnType<typeof vi.fn> };
 };
 
 const tx: Tx = {
-  serviceTicketMessage: { create: vi.fn() },
+  serviceTicketMessage: { create: vi.fn(), updateMany: vi.fn() },
   serviceTicket: { update: vi.fn() },
 };
 
 const orderFindUnique = prisma.order.findUnique as Mock;
 const ticketFindUnique = prisma.serviceTicket.findUnique as Mock;
 const ticketCreate = prisma.serviceTicket.create as Mock;
+const ticketUpdateMany = prisma.serviceTicket.updateMany as Mock;
+const messageUpdateMany = prisma.serviceTicketMessage.updateMany as Mock;
 const transaction = prisma.$transaction as Mock;
 
 beforeEach(() => {
@@ -42,7 +50,10 @@ beforeEach(() => {
   transaction.mockImplementation((fn: (t: Tx) => Promise<unknown>) => fn(tx));
   ticketCreate.mockResolvedValue({ id: "ticket-1" });
   tx.serviceTicketMessage.create.mockResolvedValue({});
+  tx.serviceTicketMessage.updateMany.mockResolvedValue({ count: 0 });
   tx.serviceTicket.update.mockResolvedValue({});
+  ticketUpdateMany.mockResolvedValue({ count: 1 });
+  messageUpdateMany.mockResolvedValue({ count: 1 });
 });
 
 describe("createTicket — 提交咨询工单", () => {
@@ -168,5 +179,117 @@ describe("addUserMessage — 用户回复", () => {
         data: expect.objectContaining({ status: "PROCESSING", closedAt: null }),
       }),
     );
+  });
+});
+
+describe("addCsMessage — 客服回复", () => {
+  it("新增客服消息（角色快照 + isRead=true）+ 用户消息全置已读 + bump updatedAt", async () => {
+    ticketFindUnique.mockResolvedValue({ status: "PROCESSING" });
+
+    await addCsMessage("cs-1", "CUSTOMER_SERVICE", "ticket-1", "您好，为您查询");
+
+    expect(tx.serviceTicketMessage.create).toHaveBeenCalledWith({
+      data: {
+        ticketId: "ticket-1",
+        senderId: "cs-1",
+        senderRole: "CUSTOMER_SERVICE",
+        content: "您好，为您查询",
+        isRead: true,
+      },
+    });
+    // 客服回复 → 用户未读全部清零
+    expect(tx.serviceTicketMessage.updateMany).toHaveBeenCalledWith({
+      where: { ticketId: "ticket-1", senderRole: "USER", isRead: false },
+      data: { isRead: true },
+    });
+    expect(tx.serviceTicket.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "ticket-1" },
+        data: expect.objectContaining({ updatedAt: expect.any(Date) }),
+      }),
+    );
+    // PROCESSING 不触发自动转状态
+    expect(tx.serviceTicket.update.mock.calls[0][0].data).not.toHaveProperty("status");
+  });
+
+  it("OPEN 工单客服首回 → 自动转 PROCESSING", async () => {
+    ticketFindUnique.mockResolvedValue({ status: "OPEN" });
+
+    await addCsMessage("cs-1", "CUSTOMER_SERVICE", "ticket-1", "您好");
+
+    expect(tx.serviceTicket.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "PROCESSING" }),
+      }),
+    );
+  });
+
+  it("工单不存在 → TICKET_NOT_FOUND", async () => {
+    ticketFindUnique.mockResolvedValue(null);
+
+    await expect(addCsMessage("cs-1", "CUSTOMER_SERVICE", "nope", "hi")).rejects.toMatchObject({
+      code: ERROR_CODES.TICKET_NOT_FOUND.code,
+    });
+  });
+});
+
+describe("markTicketRead — 打开即已读", () => {
+  it("用户消息全部置已读", async () => {
+    await markTicketRead("ticket-1");
+
+    expect(messageUpdateMany).toHaveBeenCalledWith({
+      where: { ticketId: "ticket-1", senderRole: "USER", isRead: false },
+      data: { isRead: true },
+    });
+  });
+});
+
+describe("updateTicketStatus — 客服变更状态", () => {
+  it("合法流转 PROCESSING → RESOLVED → 写 closedAt", async () => {
+    ticketFindUnique.mockResolvedValue({ status: "PROCESSING" });
+
+    await updateTicketStatus("ticket-1", "RESOLVED");
+
+    expect(ticketUpdateMany).toHaveBeenCalledWith({
+      where: { id: "ticket-1", status: "PROCESSING" },
+      data: { status: "RESOLVED", closedAt: expect.any(Date) },
+    });
+  });
+
+  it("CLOSED 误关重开 → 清空 closedAt", async () => {
+    ticketFindUnique.mockResolvedValue({ status: "CLOSED" });
+
+    await updateTicketStatus("ticket-1", "OPEN");
+
+    expect(ticketUpdateMany).toHaveBeenCalledWith({
+      where: { id: "ticket-1", status: "CLOSED" },
+      data: { status: "OPEN", closedAt: null },
+    });
+  });
+
+  it("非法流转（PROCESSING → OPEN，越级）→ VALIDATION_ERROR，不写库", async () => {
+    ticketFindUnique.mockResolvedValue({ status: "PROCESSING" });
+
+    await expect(updateTicketStatus("ticket-1", "OPEN")).rejects.toMatchObject({
+      code: ERROR_CODES.VALIDATION_ERROR.code,
+    });
+    expect(ticketUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("工单不存在 → TICKET_NOT_FOUND", async () => {
+    ticketFindUnique.mockResolvedValue(null);
+
+    await expect(updateTicketStatus("nope", "RESOLVED")).rejects.toMatchObject({
+      code: ERROR_CODES.TICKET_NOT_FOUND.code,
+    });
+  });
+
+  it("并发状态已变更（守卫命中 0 行）→ VALIDATION_ERROR 提示刷新", async () => {
+    ticketFindUnique.mockResolvedValue({ status: "PROCESSING" });
+    ticketUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(updateTicketStatus("ticket-1", "RESOLVED")).rejects.toMatchObject({
+      code: ERROR_CODES.VALIDATION_ERROR.code,
+    });
   });
 });
