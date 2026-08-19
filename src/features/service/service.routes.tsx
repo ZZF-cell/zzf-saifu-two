@@ -14,6 +14,7 @@ import type {
 import { TICKET_CATEGORIES } from "./service.types";
 import { apiFetch } from "@/shared/api/client";
 import { SiteHeader } from "@/shared/ui/SiteHeader";
+import { WorkbenchHeader } from "@/shared/ui/WorkbenchHeader";
 import { fenToYuan } from "@/shared/utils/money";
 import { StatusBadge, STATUS_LABEL } from "@/shared/ui/StatusBadge";
 
@@ -394,9 +395,10 @@ export function ServiceCenterPage() {
 
   return (
     <main className="mx-auto min-h-screen max-w-6xl bg-white pb-24">
-      <SiteHeader />
+      {/* 独立工作台头部：不带主站购物车等导航，工作台内只有主页面/个人中心/退出 */}
+      <WorkbenchHeader title="客服中心" />
       <div className="mx-auto w-full max-w-5xl px-4 pt-4">
-        <h1 className="text-center text-xl font-bold text-gray-900">客服工作台</h1>
+        <h1 className="text-center text-xl font-bold text-gray-900">客服中心</h1>
       </div>
 
       <div className="mx-auto w-full max-w-5xl px-4 pt-3">

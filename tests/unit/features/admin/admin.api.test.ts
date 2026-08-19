@@ -11,6 +11,7 @@ vi.mock("@/shared/api/auth", () => ({
   ADMIN_ROLES: ["ADMIN", "SUPER"],
   AFTERSALES_ROLES: ["ADMIN", "SUPER", "CUSTOMER_SERVICE"],
   SERVICE_ROLES: ["CUSTOMER_SERVICE", "SUPER"],
+  INSPECT_ROLES: ["QUALITY_INSPECTOR", "SUPER"],
 }));
 
 vi.mock("@/features/admin/admin.service", () => ({

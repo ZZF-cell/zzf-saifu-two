@@ -1,9 +1,10 @@
-// 管理后台 API Route Handlers（ADMIN + SUPER；订单售后另开放 CUSTOMER_SERVICE）
+// 管理后台 API Route Handlers（ADMIN + SUPER；订单售后另开放 CUSTOMER_SERVICE；
+// 商品质检/质检模板已按职责移入质检中心，守卫为 INSPECT_ROLES）
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { apiError, withValidation, parsePagination } from "@/shared/utils/api";
 import { ERROR_CODES } from "@/shared/errors/errors";
-import { requireRole, ADMIN_ROLES, AFTERSALES_ROLES } from "@/shared/api/auth";
+import { requireRole, ADMIN_ROLES, AFTERSALES_ROLES, INSPECT_ROLES } from "@/shared/api/auth";
 import { updateProductSchema } from "@/shared/validation/product";
 import * as adminQueries from "./admin.queries";
 import * as adminService from "./admin.service";
@@ -32,17 +33,19 @@ const generateInviteSchema = z.object({
 });
 
 /**
- * 审核操作统一处理（品牌审核/商品质检共用）
+ * 审核操作统一处理（品牌审核/商品质检共用，roles 由调用方指定：
+ * 品牌审核 ADMIN_ROLES，商品质检 INSPECT_ROLES — 职责彻底隔离）
  * 参数路由（[id]）无法复用 withValidation（其 handler 只收 (data, req)），
  * 此处手动解析 body + zod 校验，与 orders.api 参数路由同一模式
  */
 async function handleReview(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
+  roles: readonly string[],
   action: (id: string, decision: ReviewDecision, operatorId: string) => Promise<void>,
 ): Promise<NextResponse> {
   try {
-    const admin = await requireRole(req, ADMIN_ROLES);
+    const admin = await requireRole(req, roles);
     const { id } = await ctx.params;
     const body = await req.json().catch(() => null);
     const parsed = reviewSchema.safeParse(body);
@@ -86,7 +89,7 @@ export async function getBrands(req: Request) {
 }
 
 export function reviewBrand(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  return handleReview(req, ctx, adminService.reviewBrand);
+  return handleReview(req, ctx, ADMIN_ROLES, adminService.reviewBrand);
 }
 
 // ── 删除审核拒绝的品牌（仅 REJECTED；删除后商家可重新用新邀请码入驻） ──
@@ -102,11 +105,11 @@ export async function deleteBrand(req: Request, ctx: { params: Promise<{ id: str
   }
 }
 
-// ── 商品质检 ──
+// ── 商品质检（守卫 INSPECT_ROLES：质检员/最高权限者，与 /inspect 质检中心职责对应） ──
 
 export async function getProducts(req: Request) {
   try {
-    await requireRole(req, ADMIN_ROLES);
+    await requireRole(req, INSPECT_ROLES);
     const url = new URL(req.url);
     const { page, pageSize } = parsePagination(url);
     const status = url.searchParams.get("status") || undefined;
@@ -118,10 +121,10 @@ export async function getProducts(req: Request) {
 }
 
 export function reviewProduct(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  return handleReview(req, ctx, adminService.reviewProduct);
+  return handleReview(req, ctx, INSPECT_ROLES, adminService.reviewProduct);
 }
 
-// ── 商品生命周期（下架/重新上架/编辑，与品牌方同一套状态机，操作人是管理员） ──
+// ── 商品生命周期（下架/重新上架/编辑，与品牌方同一套状态机，操作人是质检员） ──
 
 /** GET /api/admin/products/[id] — 审核/管理详情（完整信息 + 该品类质检清单） */
 export async function getProductDetail(
@@ -129,7 +132,7 @@ export async function getProductDetail(
   ctx: { params: Promise<{ id: string }> },
 ) {
   try {
-    await requireRole(req, ADMIN_ROLES);
+    await requireRole(req, INSPECT_ROLES);
     const { id } = await ctx.params;
     const detail = await adminQueries.getAdminProductDetail(id);
     if (!detail) {
@@ -150,7 +153,7 @@ export async function delistProduct(
   ctx: { params: Promise<{ id: string }> },
 ) {
   try {
-    const admin = await requireRole(req, ADMIN_ROLES);
+    const admin = await requireRole(req, INSPECT_ROLES);
     const { id } = await ctx.params;
     await adminService.delistProduct(id, admin.userId);
     return NextResponse.json({ success: true });
@@ -165,7 +168,7 @@ export async function relistProduct(
   ctx: { params: Promise<{ id: string }> },
 ) {
   try {
-    const admin = await requireRole(req, ADMIN_ROLES);
+    const admin = await requireRole(req, INSPECT_ROLES);
     const { id } = await ctx.params;
     await adminService.relistProduct(id, admin.userId);
     return NextResponse.json({ success: true });
@@ -183,7 +186,7 @@ export async function updateProduct(
   ctx: { params: Promise<{ id: string }> },
 ) {
   try {
-    const admin = await requireRole(req, ADMIN_ROLES);
+    const admin = await requireRole(req, INSPECT_ROLES);
     const { id } = await ctx.params;
     const body = await req.json().catch(() => null);
     const parsed = updateProductSchema.safeParse(body);
@@ -273,11 +276,11 @@ export async function getUsers(req: Request) {
   }
 }
 
-// ── 质检模板 ──
+// ── 质检模板（守卫 INSPECT_ROLES：质检员/最高权限者） ──
 
 export async function getAuditTemplates(req: Request) {
   try {
-    await requireRole(req, ADMIN_ROLES);
+    await requireRole(req, INSPECT_ROLES);
     const templates = await adminQueries.getAuditTemplates();
     return NextResponse.json({ items: templates });
   } catch (error) {
@@ -288,7 +291,7 @@ export async function getAuditTemplates(req: Request) {
 export const upsertAuditTemplate = withValidation(
   auditTemplateSchema,
   async (data, req) => {
-    const admin = await requireRole(req, ADMIN_ROLES);
+    const admin = await requireRole(req, INSPECT_ROLES);
     await adminService.upsertAuditTemplate(data, admin.userId);
     return NextResponse.json({ success: true });
   },
@@ -297,7 +300,7 @@ export const upsertAuditTemplate = withValidation(
 /** DELETE /api/admin/audit-templates?categoryId= — 删除质检模板 */
 export async function deleteAuditTemplate(req: Request) {
   try {
-    const admin = await requireRole(req, ADMIN_ROLES);
+    const admin = await requireRole(req, INSPECT_ROLES);
     const url = new URL(req.url);
     const categoryId = url.searchParams.get("categoryId");
     if (!categoryId) {
