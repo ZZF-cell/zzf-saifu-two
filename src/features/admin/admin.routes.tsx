@@ -173,7 +173,13 @@ function DashboardTab({
   );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
+      <div className="flex items-center justify-between pb-1">
+        <p className="py-2 text-sm font-semibold text-gray-900">平台概览</p>
+      </div>
+      {/* 内容固定高度 + 内部滚动：与其余 Tab 同高 → 切换 Tab 页面永不重排 */}
+      <div className="h-[calc(100vh-13rem)] overflow-y-auto rounded-xl">
+        <div className="space-y-4">
       {/* 统计卡网格 */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {cards.map((c) => (
@@ -264,6 +270,8 @@ function DashboardTab({
               ))}
             </div>
           )}
+        </div>
+      </div>
         </div>
       </div>
     </div>
@@ -788,6 +796,12 @@ function UsersTab({ active }: { active?: boolean }) {
         <div className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</div>
       )}
 
+      <div className="flex items-center justify-between pb-1">
+        <p className="py-2 text-sm text-gray-400">共 {users.length} 个用户</p>
+      </div>
+
+      {/* 列表固定高度 + 内部滚动：与其余 Tab 同高 → 切换 Tab 页面永不重排 */}
+      <div className="h-[calc(100vh-13rem)] overflow-y-auto rounded-xl">
       <div className={`overflow-x-auto rounded-xl border border-gray-100 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
         <table className="w-full text-sm">
           <thead>
@@ -904,6 +918,7 @@ function UsersTab({ active }: { active?: boolean }) {
           </tbody>
         </table>
       </div>
+      </div>
 
       {confirm && (
         <ConfirmModal
@@ -984,35 +999,37 @@ function InviteCodesTab({ active }: { active?: boolean }) {
 
   return (
     <div className="space-y-3">
-      <div className="rounded-2xl border border-gray-100 p-5">
-        <div className="flex items-end justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-base font-semibold text-gray-900">生成入驻邀请码</p>
-            <p className="mt-0.5 text-sm text-gray-400">格式 INV-XXXX-XXXX，发放给意向品牌方</p>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <input
-              type="number"
-              min={1}
-              max={100}
-              value={count}
-              onChange={(e) => setCount(Math.max(1, Number(e.target.value) || 1))}
-              className="w-20 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
-            />
-            <button
-              onClick={handleGenerate}
-              disabled={generating}
-              className="rounded-lg bg-primary px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
-            >
-              {generating ? "生成中…" : "生成"}
-            </button>
-          </div>
+      <div className="flex h-10 items-center justify-between">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-gray-900">生成入驻邀请码</p>
+          <p className="text-xs leading-4 text-gray-400">格式 INV-XXXX-XXXX，发放给意向品牌方</p>
         </div>
-        {error && <div className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
+        <div className="flex shrink-0 items-center gap-2">
+          <input
+            type="number"
+            min={1}
+            max={100}
+            value={count}
+            onChange={(e) => setCount(Math.max(1, Number(e.target.value) || 1))}
+            className="w-20 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+          />
+          <button
+            onClick={handleGenerate}
+            disabled={generating}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+          >
+            {generating ? "生成中…" : "生成"}
+          </button>
+        </div>
       </div>
+      {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
 
+      {/* 列表固定高度 + 内部滚动：与其余 Tab 同高 → 切换 Tab 页面永不重排 */}
+      <div className="h-[calc(100vh-13rem)] overflow-y-auto rounded-xl">
       {codes.length === 0 ? (
-        <div className="py-12 text-center text-gray-400">暂无邀请码</div>
+        <div className="flex min-h-[40vh] items-center justify-center text-center text-gray-400">
+          暂无邀请码
+        </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-gray-100">
           <table className="w-full text-sm">
@@ -1062,6 +1079,7 @@ function InviteCodesTab({ active }: { active?: boolean }) {
           </table>
         </div>
       )}
+      </div>
     </div>
   );
 }

@@ -714,7 +714,7 @@ function TemplatesTab({ active }: { active?: boolean }) {
         <div className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</div>
       )}
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between pb-1">
         <p className="text-sm text-gray-400">
           共 {templates.length} 个大类已配置（品牌方提交商品时将按此清单要求必交材料）
         </p>
@@ -726,10 +726,15 @@ function TemplatesTab({ active }: { active?: boolean }) {
         </button>
       </div>
 
+      {/* 列表固定高度 + 内部滚动：与「商品质检」Tab 同高 → 切换 Tab 页面永不重排 */}
+      <div className="h-[calc(100vh-14rem)] overflow-y-auto rounded-xl">
       {templates.length === 0 ? (
-        <div className="py-12 text-center text-gray-400">暂无质检模板</div>
+        <div className="flex min-h-[40vh] items-center justify-center text-center text-gray-400">
+          暂无质检模板
+        </div>
       ) : (
-        templates.map((t) => (
+        <div className="space-y-3">
+        {templates.map((t) => (
           <div key={t.categoryId} className="rounded-2xl border border-gray-100 p-5">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -759,8 +764,10 @@ function TemplatesTab({ active }: { active?: boolean }) {
               </div>
             </div>
           </div>
-        ))
+        ))}
+        </div>
       )}
+      </div>
 
       {(editing || creating) && (
         <TemplateModal

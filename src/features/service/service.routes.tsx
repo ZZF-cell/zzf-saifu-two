@@ -631,8 +631,8 @@ function TicketsWorkbench({ active }: { active?: boolean }) {
   // ── 列表视图 ──
   return (
     <div className="space-y-3">
-      {/* 筛选栏 */}
-      <div className="flex flex-wrap gap-2">
+      {/* 筛选栏（h-10 与「订单售后」药丸行同高 → 切 Tab 页面永不重排） */}
+      <div className="flex h-10 flex-wrap items-center gap-2">
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
