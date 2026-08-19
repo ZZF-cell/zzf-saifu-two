@@ -444,6 +444,8 @@ function TicketsWorkbench() {
 
   // 筛选切换时保留旧列表，仅首载显示骨架 → 消除列表高度塌缩抖动
   const loadedOnce = useRef(false);
+  // 请求序号守卫：快速连点筛选时后发先回不覆盖错位数据、不复位 refreshing 造成明暗闪断
+  const seqRef = useRef(0);
 
   // 详情视图（选中工单后替换列表）
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -456,14 +458,20 @@ function TicketsWorkbench() {
   const fetchList = useCallback(async () => {
     if (!loadedOnce.current) setLoading(true);
     setRefreshing(true);
+    const seq = ++seqRef.current;
     try {
       const qs = new URLSearchParams();
       if (statusFilter) qs.set("status", statusFilter);
       if (categoryFilter) qs.set("category", categoryFilter);
       if (keyword.trim()) qs.set("keyword", keyword.trim());
       const data = await apiCall("GET", `/api/service/tickets?${qs.toString()}`);
+      if (seq !== seqRef.current) return;
       setItems(data.items ?? []);
-    } catch { /* 筛选失败静默，保留上次列表 */ } finally {
+    } catch {
+      if (seq !== seqRef.current) return;
+      /* 筛选失败静默，保留上次列表 */
+    } finally {
+      if (seq !== seqRef.current) return;
       loadedOnce.current = true;
       setLoading(false);
       setRefreshing(false);
@@ -644,6 +652,8 @@ function TicketsWorkbench() {
         />
       </div>
 
+      {/* 三态容器 min-h 兜底：列表/空态/骨架高度差异不整页重排 → 消除筛选切换的高度塌缩抖动 */}
+      <div className="min-h-[45vh]">
       {loading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
@@ -651,7 +661,9 @@ function TicketsWorkbench() {
           ))}
         </div>
       ) : items.length === 0 ? (
-        <div className="py-16 text-center text-gray-400">暂无匹配工单</div>
+        <div className={`flex min-h-[45vh] items-center justify-center text-center text-gray-400 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
+          暂无匹配工单
+        </div>
       ) : (
         <div className={`space-y-3 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
           {items.map((t) => {
@@ -693,6 +705,7 @@ function TicketsWorkbench() {
           })}
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -721,17 +734,23 @@ function OrdersWorkbench() {
 
   // 筛选切换时保留旧列表，仅首载显示骨架 → 消除列表高度塌缩抖动
   const loadedOnce = useRef(false);
+  // 请求序号守卫：快速连点药丸时后发先回不覆盖错位数据、不复位 refreshing 造成明暗闪断
+  const seqRef = useRef(0);
 
   const fetchOrders = useCallback(async () => {
     if (!loadedOnce.current) setLoading(true);
     setRefreshing(true);
+    const seq = ++seqRef.current;
     try {
       const url = `/api/admin/orders?pageSize=50${statusFilter ? `&status=${statusFilter}` : ""}`;
       const data = await apiCall("GET", url);
+      if (seq !== seqRef.current) return;
       setOrders(data.orders || []);
     } catch (err: unknown) {
+      if (seq !== seqRef.current) return;
       setError(err instanceof Error ? err.message : "订单加载失败");
     } finally {
+      if (seq !== seqRef.current) return;
       loadedOnce.current = true;
       setLoading(false);
       setRefreshing(false);
@@ -771,10 +790,12 @@ function OrdersWorkbench() {
         ))}
       </div>
       {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
+      {/* 三态容器 min-h 兜底：列表/空态/骨架高度差异不整页重排 → 消除筛选切换的高度塌缩抖动 */}
+      <div className="min-h-[45vh]">
       {loading ? (
         <div className="h-32 animate-pulse rounded-xl bg-gray-100" />
       ) : orders.length === 0 ? (
-        <div className="py-12 text-center text-gray-400">
+        <div className={`flex min-h-[45vh] items-center justify-center text-center text-gray-400 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
           {statusFilter ? "该状态下暂无订单" : "暂无订单"}
         </div>
       ) : (
@@ -811,7 +832,7 @@ function OrdersWorkbench() {
                 </>
               )}
             </div>
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-3 flex min-h-[40px] flex-wrap items-center gap-2">
               {o.status === "PAID" && (
                 <button
                   onClick={() => handleAction(o.id, "ship")}
@@ -853,6 +874,7 @@ function OrdersWorkbench() {
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }

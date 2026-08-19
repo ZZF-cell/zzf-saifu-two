@@ -97,10 +97,13 @@ type DashboardNav = {
 
 function DashboardTab({
   onNavigate,
+  active,
 }: {
   onNavigate: (nav: DashboardNav) => void;
+  active?: boolean;
 }) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const loadedOnce = useRef(false);
 
   useEffect(() => {
     apiFetch("/api/admin/dashboard")
@@ -108,6 +111,19 @@ function DashboardTab({
       .then(setStats)
       .catch(() => {});
   }, []);
+
+  // 首载完成后标记已加载；切回本 Tab 时静默刷新（不再重建骨架）
+  useEffect(() => {
+    if (stats) loadedOnce.current = true;
+  }, [stats]);
+  useEffect(() => {
+    if (active && loadedOnce.current) {
+      apiFetch("/api/admin/dashboard")
+        .then((r) => r.json())
+        .then(setStats)
+        .catch(() => {});
+    }
+  }, [active]);
 
   if (!stats) {
     return (
@@ -249,17 +265,24 @@ function DashboardTab({
 function BrandReviewTab({
   statusFilter,
   onStatusFilterChange,
+  active,
 }: {
   statusFilter: string;
   onStatusFilterChange: (s: string) => void;
+  active?: boolean;
 }) {
   const [brands, setBrands] = useState<AdminBrand[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState("");
 
+  // 筛选切换时保留旧列表，仅首载显示骨架 → 消除列表高度塌缩抖动
+  const loadedOnce = useRef(false);
+
   const fetchBrands = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
+    setRefreshing(true);
     try {
       const data = await apiCall(
         "GET",
@@ -267,11 +290,17 @@ function BrandReviewTab({
       );
       setBrands(data.items || []);
     } catch { /* 静默 */ } finally {
+      loadedOnce.current = true;
       setLoading(false);
+      setRefreshing(false);
     }
   }, [statusFilter]);
 
   useEffect(() => { fetchBrands(); }, [fetchBrands]);
+  // 切回本 Tab 时静默刷新（已加载过不重建骨架）
+  useEffect(() => {
+    if (active && loadedOnce.current) void fetchBrands();
+  }, [active, fetchBrands]);
 
   const handleReview = async (id: string, decision: "APPROVED" | "REJECTED") => {
     setActing(id);
@@ -327,7 +356,8 @@ function BrandReviewTab({
           {statusFilter ? "该状态下暂无品牌" : "暂无品牌"}
         </div>
       ) : (
-        brands.map((b) => (
+        <div className={`space-y-3 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
+          {brands.map((b) => (
           <div key={b.id} className="flex items-center justify-between rounded-2xl border border-gray-100 p-5">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -377,7 +407,8 @@ function BrandReviewTab({
               )}
             </div>
           </div>
-        ))
+          ))}
+        </div>
       )}
     </div>
   );
@@ -386,9 +417,11 @@ function BrandReviewTab({
 function OrdersTab({
   statusFilter,
   onStatusFilterChange,
+  active,
 }: {
   statusFilter: string;
   onStatusFilterChange: (s: string) => void;
+  active?: boolean;
 }) {
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -414,6 +447,10 @@ function OrdersTab({
   }, [statusFilter]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
+  // 切回本 Tab 时静默刷新（已加载过不重建骨架）
+  useEffect(() => {
+    if (active && loadedOnce.current) void fetchOrders();
+  }, [active, fetchOrders]);
 
   const handleAction = async (orderId: string, action: string) => {
     setActing(orderId);
@@ -616,9 +653,10 @@ function ResetPasswordModal({
   );
 }
 
-function UsersTab() {
+function UsersTab({ active }: { active?: boolean }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [actingId, setActingId] = useState<string | null>(null);
@@ -630,20 +668,33 @@ function UsersTab() {
   } | null>(null);
   const [resetFor, setResetFor] = useState<AdminUser | null>(null);
 
-  const fetchUsers = async () => {
+  // 仅首载显示骨架，切回本 Tab 时保留旧列表静默刷新
+  const loadedOnce = useRef(false);
+
+  const fetchUsers = useCallback(async () => {
+    if (!loadedOnce.current) setLoading(true);
+    setRefreshing(true);
     try {
       const res = await apiFetch("/api/admin/users?pageSize=50");
       const data = await res.json();
       setUsers(data.items || []);
-    } catch { /* 静默 */ }
-  };
+    } catch { /* 静默 */ } finally {
+      loadedOnce.current = true;
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
     fetchUsers()
       .then(() => apiFetch("/api/auth/me").then((r) => r.json()).then((m) => setMeId(m?.user?.id ?? null)))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [fetchUsers]);
+  // 切回本 Tab 时静默刷新
+  useEffect(() => {
+    if (active && loadedOnce.current) void fetchUsers();
+  }, [active, fetchUsers]);
 
   /** 通用 PATCH 操作：成功后刷新列表 + 提示 */
   const runAction = async (
@@ -712,7 +763,7 @@ function UsersTab() {
         <div className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</div>
       )}
 
-      <div className="overflow-x-auto rounded-xl border border-gray-100">
+      <div className={`overflow-x-auto rounded-xl border border-gray-100 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-gray-50 text-left text-sm text-gray-500">
@@ -859,7 +910,7 @@ function UsersTab() {
   );
 }
 
-function InviteCodesTab() {
+function InviteCodesTab({ active }: { active?: boolean }) {
   const [codes, setCodes] = useState<AdminInviteCode[]>([]);
   const [count, setCount] = useState(5);
   const [generating, setGenerating] = useState(false);
@@ -873,6 +924,10 @@ function InviteCodesTab() {
   }, []);
 
   useEffect(() => { fetchCodes(); }, [fetchCodes]);
+  // 切回本 Tab 时静默刷新（保留旧列表，无骨架）
+  useEffect(() => {
+    if (active) void fetchCodes();
+  }, [active, fetchCodes]);
 
   const handleGenerate = async () => {
     setGenerating(true);
@@ -1034,21 +1089,30 @@ export function AdminDashboardPage() {
       </div>
 
       <div className="mx-auto w-full max-w-5xl p-4 pt-3">
-        {tab === "dashboard" && <DashboardTab onNavigate={handleNavigate} />}
-        {tab === "brands" && (
+        {/* 常驻挂载 + hidden 切换：切 Tab 不卸载/重挂组件 → 不重建骨架、不高度塌缩 */}
+        <div className={tab === "dashboard" ? "" : "hidden"}>
+          <DashboardTab onNavigate={handleNavigate} active={tab === "dashboard"} />
+        </div>
+        <div className={tab === "brands" ? "" : "hidden"}>
           <BrandReviewTab
             statusFilter={brandStatusFilter}
             onStatusFilterChange={setBrandStatusFilter}
+            active={tab === "brands"}
           />
-        )}
-        {tab === "orders" && (
+        </div>
+        <div className={tab === "orders" ? "" : "hidden"}>
           <OrdersTab
             statusFilter={orderStatusFilter}
             onStatusFilterChange={setOrderStatusFilter}
+            active={tab === "orders"}
           />
-        )}
-        {tab === "users" && <UsersTab />}
-        {tab === "invites" && <InviteCodesTab />}
+        </div>
+        <div className={tab === "users" ? "" : "hidden"}>
+          <UsersTab active={tab === "users"} />
+        </div>
+        <div className={tab === "invites" ? "" : "hidden"}>
+          <InviteCodesTab active={tab === "invites"} />
+        </div>
       </div>
     </main>
   );

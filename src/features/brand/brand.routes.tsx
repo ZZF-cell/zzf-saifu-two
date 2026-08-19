@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { apiFetch } from "@/shared/api/client";
 import { fenToYuan } from "@/shared/utils/money";
 import { firstFieldError } from "@/shared/utils/api-errors";
@@ -76,8 +76,9 @@ interface BrandOrder {
 
 // ── 品牌概览 ──
 
-function OverviewTab() {
+function OverviewTab({ active }: { active?: boolean }) {
   const [overview, setOverview] = useState<BrandOverview | null>(null);
+  const loadedOnce = useRef(false);
 
   useEffect(() => {
     apiFetch("/api/brand/overview")
@@ -85,6 +86,19 @@ function OverviewTab() {
       .then(setOverview)
       .catch(() => {});
   }, []);
+
+  // 首载完成后标记已加载；切回本 Tab 时静默刷新（不重建骨架）
+  useEffect(() => {
+    if (overview) loadedOnce.current = true;
+  }, [overview]);
+  useEffect(() => {
+    if (active && loadedOnce.current) {
+      apiFetch("/api/brand/overview")
+        .then((r) => r.json())
+        .then(setOverview)
+        .catch(() => {});
+    }
+  }, [active]);
 
   if (!overview) {
     return <div className="h-32 animate-pulse rounded-xl bg-gray-100" />;
@@ -561,25 +575,39 @@ function SubmitProductTab() {
 
 // ── 我的商品 ──
 
-function ProductsTab() {
+function ProductsTab({ active }: { active?: boolean }) {
   const [products, setProducts] = useState<BrandProduct[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<BrandProduct | null>(null);
   const [notice, setNotice] = useState("");
 
-  const load = async () => {
-    const res = await apiFetch("/api/brand/products?pageSize=50");
-    const data = await res.json();
-    setProducts(data.items || []);
-  };
+  // 仅首载显示骨架，切回本 Tab 时保留旧列表静默刷新
+  const loadedOnce = useRef(false);
+
+  const load = useCallback(async () => {
+    if (!loadedOnce.current) setLoading(true);
+    setRefreshing(true);
+    try {
+      const res = await apiFetch("/api/brand/products?pageSize=50");
+      const data = await res.json();
+      setProducts(data.items || []);
+    } catch { /* 静默 */ } finally {
+      loadedOnce.current = true;
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
-    load()
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+    load();
+  }, [load]);
+  // 切回本 Tab 时静默刷新
+  useEffect(() => {
+    if (active && loadedOnce.current) void load();
+  }, [active, load]);
 
   /** 撤回/下架/重新上架：POST 成功后刷新列表 */
   const runAction = async (id: string, url: string) => {
@@ -628,7 +656,8 @@ function ProductsTab() {
       {products.length === 0 ? (
         <div className="py-12 text-center text-gray-400">暂无商品，请先提交</div>
       ) : (
-        products.map((p) => {
+        <div className={`space-y-3 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
+        {products.map((p) => {
           const actions = actionFor(p);
           return (
             <div key={p.id} className="rounded-xl border border-gray-100 p-4">
@@ -661,7 +690,8 @@ function ProductsTab() {
               </div>
             </div>
           );
-        })
+        })}
+        </div>
       )}
 
       {editing && (
@@ -702,9 +732,10 @@ function ProductsTab() {
 
 // ── 品牌订单 ──
 
-function OrdersTab() {
+function OrdersTab({ active }: { active?: boolean }) {
   const [orders, setOrders] = useState<BrandOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const loadedOnce = useRef(false);
 
   useEffect(() => {
     apiFetch("/api/brand/orders?pageSize=50")
@@ -713,6 +744,19 @@ function OrdersTab() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  // 切回本 Tab 时静默刷新（已加载过不重建骨架）
+  useEffect(() => {
+    if (active && loadedOnce.current) {
+      apiFetch("/api/brand/orders?pageSize=50")
+        .then((r) => r.json())
+        .then((data) => setOrders(data.orders || []))
+        .catch(() => {});
+    }
+  }, [active]);
+  useEffect(() => {
+    if (orders.length > 0) loadedOnce.current = true;
+  }, [orders]);
 
   if (loading) {
     return <div className="h-32 animate-pulse rounded-xl bg-gray-100" />;
@@ -777,10 +821,19 @@ export function BrandCenterPage() {
       </div>
 
       <div className="mx-auto w-full max-w-3xl p-4 pt-3">
-        {tab === "overview" && <OverviewTab />}
-        {tab === "submit" && <SubmitProductTab />}
-        {tab === "products" && <ProductsTab />}
-        {tab === "orders" && <OrdersTab />}
+        {/* 常驻挂载 + hidden 切换：切 Tab 不卸载/重挂 → 不重建骨架、不高度塌缩 */}
+        <div className={tab === "overview" ? "" : "hidden"}>
+          <OverviewTab active={tab === "overview"} />
+        </div>
+        <div className={tab === "submit" ? "" : "hidden"}>
+          <SubmitProductTab />
+        </div>
+        <div className={tab === "products" ? "" : "hidden"}>
+          <ProductsTab active={tab === "products"} />
+        </div>
+        <div className={tab === "orders" ? "" : "hidden"}>
+          <OrdersTab active={tab === "orders"} />
+        </div>
       </div>
     </main>
   );

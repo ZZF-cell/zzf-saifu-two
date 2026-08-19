@@ -604,13 +604,18 @@ export function OrderListPage() {
   const searchParams = useSearchParams();
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   // URL ?status= 驱动 Tab（非法 key 归一为「全部」；URL 用 tab key，API 用真实状态逗号串）
   const rawKey = searchParams.get("status") ?? "";
   const activeKey = rawKey in TAB_TO_GROUP ? rawKey : "";
 
+  // 仅首载显示骨架，切 Tab 时保留旧列表静默刷新 → 消除列表高度塌缩抖动
+  const loadedOnce = useRef(false);
+
   const fetchOrders = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
+    setRefreshing(true);
     try {
       const group = TAB_TO_GROUP[activeKey];
       const qs = group && group.length > 0 ? `?status=${group.join(",")}` : "";
@@ -619,7 +624,9 @@ export function OrderListPage() {
     } catch {
       // 静默失败
     } finally {
+      loadedOnce.current = true;
       setLoading(false);
+      setRefreshing(false);
     }
   }, [activeKey]);
 
@@ -676,7 +683,7 @@ export function OrderListPage() {
             </button>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className={`space-y-3 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
             {orders.map((order) => (
               <OrderCard key={order.id} {...order} />
             ))}

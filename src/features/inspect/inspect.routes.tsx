@@ -383,8 +383,10 @@ function AdminProductEditForm({
 function ProductReviewTab({
   statusFilter,
   onStatusFilterChange,
+  active,
 }: {
   statusFilter: string;
+  active?: boolean;
   onStatusFilterChange: (s: string) => void;
 }) {
   const [products, setProducts] = useState<AdminProduct[]>([]);
@@ -417,6 +419,10 @@ function ProductReviewTab({
   }, [statusFilter]);
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
+  // 切回本 Tab 时静默刷新（已加载过不重建骨架）
+  useEffect(() => {
+    if (active && loadedOnce.current) void fetchProducts();
+  }, [active, fetchProducts]);
 
   /** 拉取商品详情（详情/编辑模态共用；详情接口含质检清单） */
   const fetchDetail = async (id: string): Promise<AdminProductDetail> => {
@@ -612,7 +618,7 @@ function ProductReviewTab({
 
 // ── 质检模板 Tab（该品类必交材料 + 检查项，品牌方提交商品按此清单要求） ──
 
-function TemplatesTab() {
+function TemplatesTab({ active }: { active?: boolean }) {
   const [templates, setTemplates] = useState<AuditTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -622,18 +628,22 @@ function TemplatesTab() {
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AuditTemplate | null>(null);
 
-  const fetchTemplates = async () => {
+  const fetchTemplates = useCallback(async () => {
     try {
       const data = await apiCall("GET", "/api/admin/audit-templates");
       setTemplates(data.items || []);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "模板加载失败");
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchTemplates().finally(() => setLoading(false));
-  }, []);
+  }, [fetchTemplates]);
+  // 切回本 Tab 时静默刷新（保留旧列表，无骨架）
+  useEffect(() => {
+    if (active) void fetchTemplates();
+  }, [active, fetchTemplates]);
 
   const handleSave = async (input: {
     categoryId: string;
@@ -913,13 +923,17 @@ export function InspectCenterPage() {
         </div>
       </div>
       <div className="mx-auto w-full max-w-5xl p-4 pt-3">
-        {tab === "products" && (
+        {/* 常驻挂载 + hidden 切换：切 Tab 不卸载/重挂 → 不重建骨架、不高度塌缩 */}
+        <div className={tab === "products" ? "" : "hidden"}>
           <ProductReviewTab
             statusFilter={statusFilter}
             onStatusFilterChange={setStatusFilter}
+            active={tab === "products"}
           />
-        )}
-        {tab === "templates" && <TemplatesTab />}
+        </div>
+        <div className={tab === "templates" ? "" : "hidden"}>
+          <TemplatesTab active={tab === "templates"} />
+        </div>
       </div>
     </main>
   );

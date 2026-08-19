@@ -58,7 +58,7 @@ function useProfile() {
   return { profile, loading, error };
 }
 
-// ── 绑定手机号（/account/phone） ──
+// ── 更换手机号（/account/phone） ──
 
 export function ChangePhoneForm() {
   const { profile, loading, error } = useProfile();
@@ -126,16 +126,16 @@ export function ChangePhoneForm() {
   };
 
   if (loading) {
-    return <SubPageShell title="绑定手机号"><div className="h-32 animate-pulse rounded-xl bg-gray-100" /></SubPageShell>;
+    return <SubPageShell title="更换手机号"><div className="h-32 animate-pulse rounded-xl bg-gray-100" /></SubPageShell>;
   }
   if (!profile) {
-    return <SubPageShell title="绑定手机号"><p className="py-20 text-center text-gray-400">{error || "个人信息加载失败"}</p></SubPageShell>;
+    return <SubPageShell title="更换手机号"><p className="py-20 text-center text-gray-400">{error || "个人信息加载失败"}</p></SubPageShell>;
   }
 
   return (
-    <SubPageShell title="绑定手机号">
+    <SubPageShell title="更换手机号">
       <div className="rounded-xl bg-gray-50 p-4">
-        <p className="text-sm font-medium text-gray-900">更换绑定手机号</p>
+        <p className="text-sm font-medium text-gray-900">更换手机号</p>
         <p className="mb-4 mt-0.5 text-xs text-gray-400">
           更换后需用新手机号验证，旧手机号不可再登录；验证码 5 分钟内有效
         </p>

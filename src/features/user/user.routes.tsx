@@ -264,7 +264,7 @@ export function AccountPage() {
           <h3 className="mb-3 text-sm font-semibold text-gray-700">账号安全</h3>
           <div className="divide-y divide-gray-100 rounded-xl border border-gray-100">
             <Link href="/account/phone" className="flex items-center justify-between px-4 py-3 text-sm text-gray-700 transition hover:bg-gray-50">
-              <span>绑定手机号</span>
+              <span>更换手机号</span>
               <span className="text-xs text-gray-400">更换后需用新手机号验证</span>
               <span className="text-gray-300">›</span>
             </Link>
