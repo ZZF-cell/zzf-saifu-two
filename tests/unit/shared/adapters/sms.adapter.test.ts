@@ -248,8 +248,12 @@ describe("sendSms — dypns 验证码专用通道（SMS_BACKEND=dypns-send-verif
     expect(dq.get("ValidTime")).toBe("300");
     expect(dq.get("DuplicatePolicy")).toBe("1");
     expect(dq.get("ReturnVerifyCode")).toBe("true");
-    // 占位符模式：验证码由阿里云生成，不强制传自选验证码
-    expect(dq.has("TemplateParam")).toBe(false);
+    // 占位符模式（TemplateParam 必填）：##code## 由阿里云生成验证码（实测缺参会 MissingTemplateParam）
+    expect(dq.get("TemplateParam")).toBe('{"code":"##code##","min":"5"}');
+    // 线上形态：JSON 模板参数百分号编码
+    expect(captureQuery().get("TemplateParam")).toBe(
+      "%7B%22code%22%3A%22%23%23code%23%23%22%2C%22min%22%3A%225%22%7D",
+    );
     // 签名存在
     const sig = captureQuery().get("Signature") ?? "";
     expect(sig.length).toBeGreaterThan(20);

@@ -150,9 +150,10 @@ async function sendSmsVerifyCode(phone: string, fallbackCode: string): Promise<S
   }
 
   try {
-    // 占位符模式（默认 mode 1，不传 TemplateParam）：
-    //   验证码由阿里云生成 → ReturnVerifyCode=true 使响应 Model.VerifyCode 回传，
-    //   调用方存哈希自核验 —— 阿里云端可校验，最符合「验证码专用」通道语义。
+    // 占位符模式（TemplateParam 必填，阿里云报 MissingTemplateParam 实测）：
+    //   值传 {"code":"##code##","min":"5"} —— ##code## 由阿里云生成验证码 →
+    //   ReturnVerifyCode=true 使响应 Model.VerifyCode 回传，调用方存哈希自核验。
+    //   阿里云端可校验，最符合「验证码专用」通道语义。
     // 业务参数：CodeLength=6（保持现有 6 位验证码交互）、ValidTime=300（5 分钟，与 DB TTL 一致）、
     //   DuplicatePolicy=1（新码覆盖旧码，同号只留最新）、不传 Interval（阿里云端 60s 限流兜底）
     const data = (await rpcRequest(
@@ -162,6 +163,7 @@ async function sendSmsVerifyCode(phone: string, fallbackCode: string): Promise<S
         PhoneNumber: phone,
         SignName: signName,
         TemplateCode: templateCode,
+        TemplateParam: JSON.stringify({ code: "##code##", min: "5" }),
         CodeLength: "6",
         ValidTime: "300",
         DuplicatePolicy: "1",
