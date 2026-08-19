@@ -23,7 +23,8 @@ const MAX_PDF_BYTES = 10 * 1024 * 1024;
 
 // G3 检测证书是品牌方提交商品的质检材料，仅 BRAND 角色可上传 cert 用途
 // （USER 无商品可提交，传证无业务意义且可被用来伪造资质材料堆砌）。
-// product/brand 用途仍放行任意登录用户：product=商品图（BRAND 用）、brand=入驻 logo（USER 激活时传）
+// product/brand/avatar 用途仍放行任意登录用户：product=商品图（BRAND 用）、brand=入驻 logo（USER 激活时传）、
+// avatar=用户头像（个人中心上传，消费侧 isOssUrlOwnedBy 校验归属）
 const CERT_UPLOAD_ROLES: readonly string[] = ["BRAND"];
 
 // G1 每日上传配额（复用 RateLimitBucket 原子桶）：单用户 24h 窗口最多 100 次。
@@ -38,12 +39,12 @@ const uploadFormSchema = z
     file: z
       .instanceof(File, { message: "请选择文件" })
       .refine((f) => f.size > 0, "文件不能为空"),
-    purpose: z.enum(["product", "brand", "cert"]).default("product"),
+    purpose: z.enum(["product", "brand", "cert", "avatar"]).default("product"),
   })
   .superRefine((data, ctx) => {
     const { file, purpose } = data;
     const isPdf = isPdfMime(file.type);
-    // product/brand 用途只收图片（商品主图/品牌 logo）；cert 收图片 + PDF（检测证书）
+    // product/brand/avatar 用途只收图片（商品主图/品牌 logo/用户头像）；cert 收图片 + PDF（检测证书）
     if (isPdf && purpose !== "cert") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

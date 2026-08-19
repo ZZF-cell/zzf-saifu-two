@@ -114,7 +114,7 @@ export function isOssUrl(url: string): boolean {
 // ── G4 OSS key 结构 / 归属校验（纯函数，供消费侧 schema 与 service 复用） ──
 
 /** 本站上传目录白名单（= 上传 purpose 枚举，buildObjectKey 的 folder 段） */
-export const OSS_KEY_FOLDERS = ["product", "brand", "cert"] as const;
+export const OSS_KEY_FOLDERS = ["product", "brand", "cert", "avatar"] as const;
 
 /**
  * 从 OSS URL 提取对象 key（host 白名单校验 + 去协议/去 host/去首斜杠）。

@@ -4,12 +4,33 @@ import { z } from "zod";
 import { withValidation, apiError } from "@/shared/utils/api";
 import { authenticate } from "@/shared/api/auth";
 import { getProfile } from "./user.queries";
-import { updateNickname } from "./user.service";
+import { updateNickname, updateAvatar, changePhone, deleteAccount } from "./user.service";
 
 // ── Schemas ──
 
-const updateNicknameSchema = z.object({
-  nickname: z.string().trim().min(1, "昵称不能为空").max(30, "昵称最长 30 个字符"),
+const updateProfileSchema = z
+  .object({
+    nickname: z
+      .string()
+      .trim()
+      .min(1, "昵称不能为空")
+      .max(30, "昵称最长 30 个字符")
+      .optional(),
+    avatarUrl: z.string().trim().max(500, "图片地址过长").optional(),
+  })
+  .refine((d) => d.nickname !== undefined || d.avatarUrl !== undefined, {
+    message: "没有要更新的字段",
+  });
+
+const changePhoneSchema = z.object({
+  newPhone: z.string().regex(/^1[3-9]\d{9}$/, "手机号格式不正确"),
+  code: z.string().length(6, "验证码为 6 位数字"),
+});
+
+const deactivateSchema = z.object({
+  password: z.string().min(6, "密码至少 6 位").optional(),
+  // 必须显式确认（前端双重确认弹窗），防误触/自动化批量注销
+  confirm: z.literal(true),
 });
 
 // ── Route Handlers ──
@@ -25,12 +46,38 @@ export async function getProfileHandler(req: Request) {
   }
 }
 
-/** PATCH /api/user/profile — 修改昵称 */
+/** PATCH /api/user/profile — 修改昵称 / 头像（可只传其一） */
 export const updateProfileHandler = withValidation(
-  updateNicknameSchema,
+  updateProfileSchema,
   async (data, req) => {
     const userId = await authenticate(req);
-    const result = await updateNickname(userId, data.nickname);
+    const result: { nickname?: string; avatarUrl?: string | null } = {};
+    if (data.nickname !== undefined) {
+      result.nickname = (await updateNickname(userId, data.nickname)).nickname;
+    }
+    if (data.avatarUrl !== undefined) {
+      result.avatarUrl = (await updateAvatar(userId, data.avatarUrl)).avatarUrl;
+    }
     return NextResponse.json(result);
+  },
+);
+
+/** POST /api/user/change-phone — 换绑手机号（新号短信验证） */
+export const changePhoneHandler = withValidation(
+  changePhoneSchema,
+  async (data, req) => {
+    const userId = await authenticate(req);
+    await changePhone(userId, data.newPhone, data.code);
+    return NextResponse.json({ success: true });
+  },
+);
+
+/** POST /api/user/deactivate — 自主注销（硬删除，不可逆） */
+export const deactivateHandler = withValidation(
+  deactivateSchema,
+  async (data, req) => {
+    const userId = await authenticate(req);
+    await deleteAccount(userId, data.password);
+    return NextResponse.json({ success: true });
   },
 );

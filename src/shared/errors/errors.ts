@@ -16,6 +16,7 @@ export const ERROR_CODES = {
   USER_NOT_FOUND: { status: 404, code: "USER_NOT_FOUND" },
   CANNOT_OPERATE_SELF: { status: 403, code: "CANNOT_OPERATE_SELF" },
   USER_NOT_LOCKED: { status: 409, code: "USER_NOT_LOCKED" },
+  ACCOUNT_HAS_BRAND: { status: 409, code: "ACCOUNT_HAS_BRAND" }, // 注销拦截：已入驻品牌须先解约
 
   // 库存/商品 2xxx
   STOCK_CONFLICT: { status: 409, code: "STOCK_CONFLICT" },

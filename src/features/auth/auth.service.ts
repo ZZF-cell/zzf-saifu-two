@@ -60,7 +60,7 @@ function generateCode(): string {
   return String(crypto.randomInt(100000, 999999));
 }
 
-async function verifyAndConsumeCode(
+export async function verifyAndConsumeCode(
   phone: string,
   code: string,
 ): Promise<boolean> {
@@ -431,6 +431,42 @@ export async function setPassword(
     throw new AppError(ERROR_CODES.USER_DISABLED, "账号已被禁用，请联系管理员");
   }
   const passwordHash = await hashPassword(password);
+  await prisma.user.update({
+    where: { id: userId },
+    data: { passwordHash },
+  });
+}
+
+/**
+ * 修改密码（含「无密码 → 设置首密」双态）
+ * - 已有密码：必须验旧密码（防已登录设备被他人改密接管）
+ * - 无密码（纯短信登录）：直接设置，无需旧密码
+ * 被禁用用户禁止改密（access token 15min 内仍有效，禁用门禁必须下沉到写入口）
+ */
+export async function changePassword(
+  userId: string,
+  oldPassword: string | undefined,
+  newPassword: string,
+): Promise<void> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { status: true, passwordHash: true },
+  });
+  if (!user) throw new AppError(ERROR_CODES.UNAUTHORIZED, "用户不存在");
+  if (user.status === "DISABLED") {
+    throw new AppError(ERROR_CODES.USER_DISABLED, "账号已被禁用，请联系管理员");
+  }
+  // 已有密码 → 验旧（不通过 → INVALID_CREDENTIALS，绝不留改密入口）
+  if (user.passwordHash) {
+    if (!oldPassword) {
+      throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "请输入原密码");
+    }
+    const ok = await verifyPassword(oldPassword, user.passwordHash);
+    if (!ok) {
+      throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "原密码错误");
+    }
+  }
+  const passwordHash = await hashPassword(newPassword);
   await prisma.user.update({
     where: { id: userId },
     data: { passwordHash },

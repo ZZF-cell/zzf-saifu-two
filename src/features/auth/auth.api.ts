@@ -34,6 +34,12 @@ const setPasswordSchema = z.object({
   password: z.string().min(6, "密码至少 6 位"),
 });
 
+// 修改密码：已有密码须带 oldPassword（验旧），纯短信用户（无密码）可省略直接设首密
+const changePasswordSchema = z.object({
+  oldPassword: z.string().min(6, "密码至少 6 位").optional(),
+  newPassword: z.string().min(6, "密码至少 6 位"),
+});
+
 // ── Cookie 工具 ──
 
 // SameSite=Lax：允许支付宝等跨站支付网关支付完成后 302 回跳（顶级导航）携带 cookie，
@@ -143,6 +149,16 @@ export const setPassword = withValidation(
   async ({ password }, req) => {
     const user = await requireAuthFromRequest(req);
     await authService.setPassword(user.userId, password);
+    return NextResponse.json({ success: true });
+  },
+);
+
+/** POST /api/auth/change-password — 设置/修改密码 */
+export const changePassword = withValidation(
+  changePasswordSchema,
+  async ({ oldPassword, newPassword }, req) => {
+    const user = await requireAuthFromRequest(req);
+    await authService.changePassword(user.userId, oldPassword, newPassword);
     return NextResponse.json({ success: true });
   },
 );

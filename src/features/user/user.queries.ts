@@ -9,7 +9,15 @@ import type { UserProfile } from "./user.types";
 export async function getProfile(userId: string): Promise<UserProfile> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { nickname: true, role: true, ageVerified: true, createdAt: true },
+    // passwordHash 仅用于推导 hasPassword 布尔，绝不回传
+    select: {
+      nickname: true,
+      role: true,
+      ageVerified: true,
+      avatarUrl: true,
+      passwordHash: true,
+      createdAt: true,
+    },
   });
 
   if (!user) throw new AppError(ERROR_CODES.UNAUTHORIZED, "用户不存在");
@@ -26,8 +34,11 @@ export async function getProfile(userId: string): Promise<UserProfile> {
   const countByStatus = (status: string) =>
     grouped.find((g) => g.status === status)?._count._all ?? 0;
 
+  // passwordHash 只用于推导 hasPassword，剥除后回传
+  const { passwordHash, ...safeUser } = user;
   return {
-    ...user,
+    ...safeUser,
+    hasPassword: Boolean(passwordHash),
     stats: {
       totalOrders: grouped.reduce((sum, g) => sum + g._count._all, 0),
       pendingPayment: countByStatus(ORDER_STATUS.PENDING),

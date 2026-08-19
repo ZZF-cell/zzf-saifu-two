@@ -15,6 +15,8 @@ export interface UserProfile {
   nickname: string | null;
   role: string;
   ageVerified: boolean;
+  avatarUrl: string | null; // OSS 公开 URL（无头像为 null）
+  hasPassword: boolean; // 是否已设置密码（决定「设置密码/修改密码」UI 分支）
   createdAt: Date;
   stats: OrderStats;
 }

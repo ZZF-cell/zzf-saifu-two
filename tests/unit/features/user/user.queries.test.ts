@@ -130,4 +130,40 @@ describe("getProfile — 个人信息 + 订单统计", () => {
       code: "UNAUTHORIZED",
     });
   });
+
+  it("回传 avatarUrl + hasPassword（推导后剥除 passwordHash，绝不外泄）", async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      nickname: "小赛夫",
+      role: "USER",
+      ageVerified: true,
+      avatarUrl: "https://oss.example.com/avatar/user-1/20260819/a1.jpg",
+      passwordHash: "scrypt.abcd.efgh",
+      createdAt: new Date("2026-08-01T00:00:00Z"),
+    } as never);
+    vi.mocked(prisma.order.groupBy).mockResolvedValue([] as never);
+
+    const profile = await getProfile(USER_ID);
+
+    expect(profile.avatarUrl).toBe("https://oss.example.com/avatar/user-1/20260819/a1.jpg");
+    expect(profile.hasPassword).toBe(true);
+    // 安全契约：passwordHash 不允许出现在响应里
+    expect(profile).not.toHaveProperty("passwordHash");
+  });
+
+  it("无密码用户 → hasPassword 为 false", async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      nickname: null,
+      role: "USER",
+      ageVerified: false,
+      avatarUrl: null,
+      passwordHash: null,
+      createdAt: new Date(),
+    } as never);
+    vi.mocked(prisma.order.groupBy).mockResolvedValue([] as never);
+
+    const profile = await getProfile(USER_ID);
+
+    expect(profile.hasPassword).toBe(false);
+    expect(profile).not.toHaveProperty("passwordHash");
+  });
 });
