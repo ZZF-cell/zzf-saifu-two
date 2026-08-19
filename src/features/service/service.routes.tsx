@@ -423,7 +423,10 @@ export function ServiceCenterPage() {
       </div>
 
       <div className="mx-auto w-full max-w-5xl p-4">
-        {tab === "tickets" ? <TicketsWorkbench /> : <OrdersWorkbench />}
+        {/* 双 workbench 常驻挂载、仅切换显隐：loadedOnce 是组件级 ref，条件卸载会重置 →
+            切 tab 时骨架闪烁 + 高度塌缩（用户反馈的抖动）；hidden 保留两份列表状态，切换零重载 */}
+        <div className={tab === "tickets" ? "" : "hidden"}><TicketsWorkbench /></div>
+        <div className={tab === "orders" ? "" : "hidden"}><OrdersWorkbench /></div>
       </div>
     </main>
   );

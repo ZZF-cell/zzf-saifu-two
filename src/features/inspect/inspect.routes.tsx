@@ -67,6 +67,14 @@ interface AuditTemplate {
   checkPoints: unknown;
 }
 
+/** 时间格式容错：无效时间 → 「时间未知」，避免 new Date(...).toLocaleString 抛 RangeError 白屏 */
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? "时间未知"
+    : d.toLocaleString("zh-CN", { hour12: false });
+}
+
 // ── 商品详情模态（完整信息 + 该品类质检清单，审核决策闭环） ──
 
 function ProductDetailModal({
@@ -78,13 +86,20 @@ function ProductDetailModal({
 }) {
   const strList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
   const specEntries = detail.specs ? Object.entries(detail.specs) : [];
+  // 脏数据防御：certificates/images 来自品牌方提交，历史/异常数据可能缺 name 等字段，
+  // 若结构不符在渲染期抛 TypeError/Invalid Date 会白屏整页（已复现）→ 先滤非对象项再容错取值
   const certList: ProductCertificate[] = Array.isArray(detail.certificates)
-    ? detail.certificates
+    ? detail.certificates.filter((c): c is ProductCertificate => Boolean(c && typeof c === "object"))
+    : [];
+  const imageList: string[] = Array.isArray(detail.images)
+    ? detail.images.filter((u): u is string => typeof u === "string")
     : [];
   const requiredDocs = detail.qcTemplate ? strList(detail.qcTemplate.requiredDocs) : [];
   /** 必交材料是否已交：证书文件名与必交项文本互相包含即视为命中（模糊对照） */
   const certMet = (doc: string) =>
-    certList.some((c) => c.name.includes(doc) || doc.includes(c.name));
+    certList.some(
+      (c) => typeof c.name === "string" && (c.name.includes(doc) || doc.includes(c.name)),
+    );
 
   return (
     <div
@@ -106,9 +121,9 @@ function ProductDetailModal({
           </button>
         </div>
 
-        {detail.images.length > 0 && (
+        {imageList.length > 0 && (
           <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
-            {detail.images.map((url, i) => (
+            {imageList.map((url, i) => (
               <Image
                 key={url}
                 src={url}
@@ -134,7 +149,7 @@ function ProductDetailModal({
             价格 ¥{fenToYuan(detail.price)} · 库存 {detail.stock} · 已售 {detail.sales}
           </p>
           <p className="text-sm text-gray-400">
-            提交于 {new Date(detail.createdAt).toLocaleString("zh-CN", { hour12: false })}
+            提交于 {formatDateTime(detail.createdAt)}
           </p>
           {detail.description && (
             <p className="rounded-lg bg-gray-50 px-4 py-3 text-sm leading-relaxed text-gray-600">
@@ -165,8 +180,8 @@ function ProductDetailModal({
             <p className="mt-1 text-sm text-gray-400">该商品未提交证书</p>
           ) : (
             <div className="mt-2 space-y-2">
-              {certList.map((cert) => (
-                <div key={cert.url} className="flex items-center gap-2">
+              {certList.map((cert, i) => (
+                <div key={cert.url || cert.name || i} className="flex items-center gap-2">
                   {cert.mime === "application/pdf" ? (
                     <a
                       href={cert.url}
@@ -177,7 +192,7 @@ function ProductDetailModal({
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-red-50 text-[10px] font-bold text-red-500">
                         PDF
                       </span>
-                      <span className="truncate">{cert.name}</span>
+                      <span className="truncate">{cert.name || "未命名证书"}</span>
                     </a>
                   ) : (
                     <a
@@ -188,12 +203,12 @@ function ProductDetailModal({
                     >
                       <Image
                         src={cert.url}
-                        alt={cert.name}
+                        alt={cert.name || "证书图片"}
                         width={32}
                         height={32}
                         className="h-8 w-8 shrink-0 rounded border border-gray-100 object-cover"
                       />
-                      <span className="truncate">{cert.name}</span>
+                      <span className="truncate">{cert.name || "未命名证书"}</span>
                     </a>
                   )}
                   <span className="shrink-0 rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
@@ -392,7 +407,9 @@ function ProductReviewTab({
       const url = `/api/admin/products?pageSize=50${statusFilter ? `&status=${statusFilter}` : ""}`;
       const data = await apiCall("GET", url);
       setProducts(data.items || []);
-    } catch { /* 静默 */ } finally {
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "商品列表加载失败");
+    } finally {
       loadedOnce.current = true;
       setLoading(false);
       setRefreshing(false);
@@ -607,10 +624,11 @@ function TemplatesTab() {
 
   const fetchTemplates = async () => {
     try {
-      const res = await apiFetch("/api/admin/audit-templates");
-      const data = await res.json();
+      const data = await apiCall("GET", "/api/admin/audit-templates");
       setTemplates(data.items || []);
-    } catch { /* 静默 */ }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "模板加载失败");
+    }
   };
 
   useEffect(() => {
