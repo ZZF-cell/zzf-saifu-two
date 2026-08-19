@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { apiFetch } from "@/shared/api/client";
 import { fenToYuan } from "@/shared/utils/money";
 import { SiteHeader } from "@/shared/ui/SiteHeader";
@@ -19,6 +19,14 @@ async function apiCall(method: string, url: string, body?: Record<string, unknow
   if (!res.ok) throw new Error(data?.message || "请求失败");
   return data;
 }
+
+/** 售后动作 → 目标状态：动作成功后本地更新订单状态，避免整表重拉（保持零抖动切换） */
+const ACTION_STATUS: Record<string, string> = {
+  ship: "SHIPPED",
+  deliver: "DELIVERED",
+  complete: "COMPLETED",
+  "refund-confirm": "REFUNDED",
+};
 
 // ── 类型 ──
 
@@ -273,34 +281,35 @@ function BrandReviewTab({
 }) {
   const [brands, setBrands] = useState<AdminBrand[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  // 筛选切换时保留旧列表，仅首载显示骨架 → 消除列表高度塌缩抖动
+  // 客户端过滤：首载一次拉全量，之后切状态药丸即时过滤，零网络往返、零延迟
   const loadedOnce = useRef(false);
 
   const fetchBrands = useCallback(async () => {
     if (!loadedOnce.current) setLoading(true);
-    setRefreshing(true);
     try {
-      const data = await apiCall(
-        "GET",
-        `/api/admin/brands${statusFilter ? `?status=${statusFilter}` : ""}`,
-      );
+      // 筛选由客户端完成：一次拉全量（含 PENDING/REJECTED 在内存过滤）
+      const data = await apiCall("GET", "/api/admin/brands?pageSize=100");
       setBrands(data.items || []);
     } catch { /* 静默 */ } finally {
       loadedOnce.current = true;
       setLoading(false);
-      setRefreshing(false);
     }
-  }, [statusFilter]);
+  }, []);
 
   useEffect(() => { fetchBrands(); }, [fetchBrands]);
   // 切回本 Tab 时静默刷新（已加载过不重建骨架）
   useEffect(() => {
     if (active && loadedOnce.current) void fetchBrands();
   }, [active, fetchBrands]);
+
+  // 客户端过滤：状态精确匹配
+  const filteredBrands = useMemo(
+    () => (statusFilter ? brands.filter((b) => b.status === statusFilter) : brands),
+    [brands, statusFilter],
+  );
 
   const handleReview = async (id: string, decision: "APPROVED" | "REJECTED") => {
     setActing(id);
@@ -351,13 +360,15 @@ function BrandReviewTab({
         ))}
       </div>
       {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
-      {brands.length === 0 ? (
-        <div className="py-12 text-center text-gray-400">
+      {/* 列表固定高度 + 内部滚动：切状态药丸时页面永不重排 */}
+      <div className="h-[calc(100vh-13rem)] overflow-y-auto rounded-xl">
+      {filteredBrands.length === 0 ? (
+        <div className="flex min-h-[40vh] items-center justify-center text-center text-gray-400">
           {statusFilter ? "该状态下暂无品牌" : "暂无品牌"}
         </div>
       ) : (
-        <div className={`space-y-3 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
-          {brands.map((b) => (
+        <div className="space-y-3">
+          {filteredBrands.map((b) => (
           <div key={b.id} className="flex items-center justify-between rounded-2xl border border-gray-100 p-5">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
@@ -410,6 +421,7 @@ function BrandReviewTab({
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -425,26 +437,23 @@ function OrdersTab({
 }) {
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  // 筛选切换时保留旧列表，仅首载显示骨架 → 消除列表高度塌缩抖动
+  // 客户端过滤：首载一次拉全量，之后切状态药丸即时过滤，零网络往返、零延迟
   const loadedOnce = useRef(false);
 
   const fetchOrders = useCallback(async () => {
     if (!loadedOnce.current) setLoading(true);
-    setRefreshing(true);
     try {
-      const url = `/api/admin/orders?pageSize=50${statusFilter ? `&status=${statusFilter}` : ""}`;
-      const data = await apiCall("GET", url);
+      // 筛选由客户端完成：一次拉全量（含 TO_SHIP=PAID+SHIPPED 合并口径在客户端重算）
+      const data = await apiCall("GET", "/api/admin/orders?pageSize=100");
       setOrders(data.orders || []);
     } catch { /* 静默 */ } finally {
       loadedOnce.current = true;
       setLoading(false);
-      setRefreshing(false);
     }
-  }, [statusFilter]);
+  }, []);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
   // 切回本 Tab 时静默刷新（已加载过不重建骨架）
@@ -452,12 +461,25 @@ function OrdersTab({
     if (active && loadedOnce.current) void fetchOrders();
   }, [active, fetchOrders]);
 
+  // 客户端过滤：TO_SHIP = PAID + SHIPPED（与服务端 getAdminOrders 同口径），其余精确匹配
+  const filteredOrders = useMemo(() => {
+    if (!statusFilter) return orders;
+    if (statusFilter === "TO_SHIP") return orders.filter((o) => o.status === "PAID" || o.status === "SHIPPED");
+    return orders.filter((o) => o.status === statusFilter);
+  }, [orders, statusFilter]);
+
+  // 动作成功 → 本地更新订单状态（发货/送达/完成/退款），列表即时重算，无需重拉全量
+  const applyStatus = (orderId: string, next: string) => {
+    setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: next } : o)));
+  };
+
   const handleAction = async (orderId: string, action: string) => {
     setActing(orderId);
     setError("");
+    const next = ACTION_STATUS[action];
     try {
       await apiCall("POST", `/api/admin/orders/${orderId}/${action}`);
-      await fetchOrders();
+      if (next) applyStatus(orderId, next);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "操作失败");
     } finally {
@@ -483,15 +505,17 @@ function OrdersTab({
         ))}
       </div>
       {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
+      {/* 列表固定高度 + 内部滚动：切状态药丸时页面永不重排 */}
+      <div className="h-[calc(100vh-13rem)] overflow-y-auto rounded-xl">
       {loading ? (
         <div className="h-32 animate-pulse rounded-xl bg-gray-100" />
-      ) : orders.length === 0 ? (
-        <div className="py-12 text-center text-gray-400">
+      ) : filteredOrders.length === 0 ? (
+        <div className="flex min-h-[40vh] items-center justify-center text-center text-gray-400">
           {statusFilter ? "该状态下暂无订单" : "暂无订单"}
         </div>
       ) : (
-        <div className={`space-y-3 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
-          {orders.map((o) => (
+        <div className="space-y-3">
+          {filteredOrders.map((o) => (
           <div key={o.id} className="rounded-2xl border border-gray-100 p-5">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -565,6 +589,7 @@ function OrdersTab({
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type {
@@ -425,8 +425,8 @@ export function ServiceCenterPage() {
       <div className="mx-auto w-full max-w-5xl p-4">
         {/* 双 workbench 常驻挂载、仅切换显隐：loadedOnce 是组件级 ref，条件卸载会重置 →
             切 tab 时骨架闪烁 + 高度塌缩（用户反馈的抖动）；hidden 保留两份列表状态，切换零重载 */}
-        <div className={tab === "tickets" ? "" : "hidden"}><TicketsWorkbench /></div>
-        <div className={tab === "orders" ? "" : "hidden"}><OrdersWorkbench /></div>
+        <div className={tab === "tickets" ? "" : "hidden"}><TicketsWorkbench active={tab === "tickets"} /></div>
+        <div className={tab === "orders" ? "" : "hidden"}><OrdersWorkbench active={tab === "orders"} /></div>
       </div>
     </main>
   );
@@ -434,17 +434,16 @@ export function ServiceCenterPage() {
 
 // ── Tab1 咨询工单 ──
 
-function TicketsWorkbench() {
+function TicketsWorkbench({ active }: { active?: boolean }) {
   const [items, setItems] = useState<TicketSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [statusFilter, setStatusFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [keyword, setKeyword] = useState("");
 
-  // 筛选切换时保留旧列表，仅首载显示骨架 → 消除列表高度塌缩抖动
+  // 客户端过滤：首载一次拉全量，之后切状态/类别/关键词即时过滤，零网络往返、零延迟
   const loadedOnce = useRef(false);
-  // 请求序号守卫：快速连点筛选时后发先回不覆盖错位数据、不复位 refreshing 造成明暗闪断
+  // 请求序号守卫：快速连点筛选时后发先回不覆盖错位数据
   const seqRef = useRef(0);
 
   // 详情视图（选中工单后替换列表）
@@ -457,28 +456,38 @@ function TicketsWorkbench() {
 
   const fetchList = useCallback(async () => {
     if (!loadedOnce.current) setLoading(true);
-    setRefreshing(true);
     const seq = ++seqRef.current;
     try {
-      const qs = new URLSearchParams();
-      if (statusFilter) qs.set("status", statusFilter);
-      if (categoryFilter) qs.set("category", categoryFilter);
-      if (keyword.trim()) qs.set("keyword", keyword.trim());
-      const data = await apiCall("GET", `/api/service/tickets?${qs.toString()}`);
+      // 筛选由客户端完成：一次拉全量（含 keyword/状态/类别在内存过滤）
+      const data = await apiCall("GET", "/api/service/tickets?pageSize=100");
       if (seq !== seqRef.current) return;
       setItems(data.items ?? []);
     } catch {
       if (seq !== seqRef.current) return;
-      /* 筛选失败静默，保留上次列表 */
+      /* 拉取失败静默，保留上次列表 */
     } finally {
       if (seq !== seqRef.current) return;
       loadedOnce.current = true;
       setLoading(false);
-      setRefreshing(false);
     }
-  }, [statusFilter, categoryFilter, keyword]);
+  }, []);
 
   useEffect(() => { fetchList(); }, [fetchList]);
+  // 切回本 Tab 时静默刷新（保数据新鲜，不重建骨架）
+  useEffect(() => {
+    if (active && loadedOnce.current) void fetchList();
+  }, [active, fetchList]);
+
+  // 客户端过滤：状态/类别精确匹配 + 关键词模糊匹配主题/工单号（与服务端 listAllTickets 同口径）
+  const filteredItems = useMemo(() => {
+    const kw = keyword.trim().toLowerCase();
+    return items.filter((t) => {
+      if (statusFilter && t.status !== statusFilter) return false;
+      if (categoryFilter && t.category !== categoryFilter) return false;
+      if (kw && !t.title.toLowerCase().includes(kw) && !t.id.toLowerCase().includes(kw)) return false;
+      return true;
+    });
+  }, [items, statusFilter, categoryFilter, keyword]);
 
   const openDetail = useCallback(async (id: string) => {
     setSelectedId(id);
@@ -652,21 +661,21 @@ function TicketsWorkbench() {
         />
       </div>
 
-      {/* 三态容器 min-h 兜底：列表/空态/骨架高度差异不整页重排 → 消除筛选切换的高度塌缩抖动 */}
-      <div className="min-h-[45vh]">
+      {/* 列表固定高度 + 内部滚动：切筛选/类别/关键词时页面永不重排 → 消除高度塌缩抖动 */}
+      <div className="h-[calc(100vh-14rem)] overflow-y-auto rounded-xl">
       {loading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-16 animate-pulse rounded-xl bg-gray-100" />
           ))}
         </div>
-      ) : items.length === 0 ? (
-        <div className={`flex min-h-[45vh] items-center justify-center text-center text-gray-400 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
+      ) : filteredItems.length === 0 ? (
+        <div className="flex min-h-[40vh] items-center justify-center text-center text-gray-400">
           暂无匹配工单
         </div>
       ) : (
-        <div className={`space-y-3 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
-          {items.map((t) => {
+        <div className="space-y-3">
+          {filteredItems.map((t) => {
           const badge = STATUS_BADGE[t.status] ?? STATUS_BADGE.OPEN;
           return (
             <button
@@ -712,6 +721,14 @@ function TicketsWorkbench() {
 
 // ── Tab2 订单售后（复用 /api/admin/orders + 发货/送达/完成/退款） ──
 
+/** 售后动作 → 目标状态：动作成功后本地更新订单状态，避免整表重拉（保持零抖动切换） */
+const ACTION_STATUS: Record<string, string> = {
+  ship: "SHIPPED",
+  deliver: "DELIVERED",
+  complete: "COMPLETED",
+  "refund-confirm": "REFUNDED",
+};
+
 interface ServiceOrder {
   id: string;
   buyerNickname: string | null;
@@ -724,26 +741,24 @@ interface ServiceOrder {
   isDestroyed: boolean;
 }
 
-function OrdersWorkbench() {
+function OrdersWorkbench({ active }: { active?: boolean }) {
   const [orders, setOrders] = useState<ServiceOrder[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
 
-  // 筛选切换时保留旧列表，仅首载显示骨架 → 消除列表高度塌缩抖动
+  // 客户端过滤：首载一次拉全量，之后切状态药丸即时过滤，零网络往返、零延迟
   const loadedOnce = useRef(false);
-  // 请求序号守卫：快速连点药丸时后发先回不覆盖错位数据、不复位 refreshing 造成明暗闪断
+  // 请求序号守卫：快速连点药丸时后发先回不覆盖错位数据
   const seqRef = useRef(0);
 
   const fetchOrders = useCallback(async () => {
     if (!loadedOnce.current) setLoading(true);
-    setRefreshing(true);
     const seq = ++seqRef.current;
     try {
-      const url = `/api/admin/orders?pageSize=50${statusFilter ? `&status=${statusFilter}` : ""}`;
-      const data = await apiCall("GET", url);
+      // 筛选由客户端完成：一次拉全量（含 TO_SHIP=PAID+SHIPPED 合并口径在客户端重算）
+      const data = await apiCall("GET", "/api/admin/orders?pageSize=100");
       if (seq !== seqRef.current) return;
       setOrders(data.orders || []);
     } catch (err: unknown) {
@@ -753,18 +768,34 @@ function OrdersWorkbench() {
       if (seq !== seqRef.current) return;
       loadedOnce.current = true;
       setLoading(false);
-      setRefreshing(false);
     }
-  }, [statusFilter]);
+  }, []);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
+  // 切回本 Tab 时静默刷新（保数据新鲜，不重建骨架）
+  useEffect(() => {
+    if (active && loadedOnce.current) void fetchOrders();
+  }, [active, fetchOrders]);
+
+  // 客户端过滤：TO_SHIP = PAID + SHIPPED（与服务端 getAdminOrders 同口径），其余精确匹配
+  const filteredOrders = useMemo(() => {
+    if (!statusFilter) return orders;
+    if (statusFilter === "TO_SHIP") return orders.filter((o) => o.status === "PAID" || o.status === "SHIPPED");
+    return orders.filter((o) => o.status === statusFilter);
+  }, [orders, statusFilter]);
+
+  // 动作成功 → 本地更新订单状态（发货/送达/完成/退款），列表即时重算，无需重拉全量
+  const applyStatus = (orderId: string, next: string) => {
+    setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: next } : o)));
+  };
 
   const handleAction = async (orderId: string, action: string) => {
     setActing(orderId);
     setError("");
+    const next = ACTION_STATUS[action];
     try {
       await apiCall("POST", `/api/admin/orders/${orderId}/${action}`);
-      await fetchOrders();
+      if (next) applyStatus(orderId, next);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "操作失败");
     } finally {
@@ -790,17 +821,17 @@ function OrdersWorkbench() {
         ))}
       </div>
       {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
-      {/* 三态容器 min-h 兜底：列表/空态/骨架高度差异不整页重排 → 消除筛选切换的高度塌缩抖动 */}
-      <div className="min-h-[45vh]">
+      {/* 列表固定高度 + 内部滚动：切状态药丸时页面永不重排 → 消除高度塌缩抖动 */}
+      <div className="h-[calc(100vh-14rem)] overflow-y-auto rounded-xl">
       {loading ? (
         <div className="h-32 animate-pulse rounded-xl bg-gray-100" />
-      ) : orders.length === 0 ? (
-        <div className={`flex min-h-[45vh] items-center justify-center text-center text-gray-400 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
+      ) : filteredOrders.length === 0 ? (
+        <div className="flex min-h-[40vh] items-center justify-center text-center text-gray-400">
           {statusFilter ? "该状态下暂无订单" : "暂无订单"}
         </div>
       ) : (
-        <div className={`space-y-3 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
-          {orders.map((o) => (
+        <div className="space-y-3">
+          {filteredOrders.map((o) => (
           <div key={o.id} className="rounded-2xl border border-gray-100 p-5">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">

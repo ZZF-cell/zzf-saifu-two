@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { apiFetch } from "@/shared/api/client";
 import { WorkbenchHeader } from "@/shared/ui/WorkbenchHeader";
 import { StatusBadge, STATUS_LABEL } from "@/shared/ui/StatusBadge";
@@ -41,31 +41,30 @@ const BRAND_STATUS_FILTERS = ["", "PENDING", "APPROVED", "REJECTED"];
 export function BrandManagementPage() {
   const [brands, setBrands] = useState<AdminBrand[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [statusFilter, setStatusFilter] = useState("");
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  // 筛选切换时保留旧列表，仅首载显示骨架 → 消除列表高度塌缩抖动
-  const loadedOnce = useRef(false);
-
+  // 客户端过滤：首载一次拉全量，之后切状态药丸即时过滤，零网络往返、零延迟、零塌缩
   const fetchBrands = useCallback(async () => {
-    if (!loadedOnce.current) setLoading(true);
-    setRefreshing(true);
+    setLoading(true);
     try {
-      const url = `/api/admin/brands${statusFilter ? `?status=${statusFilter}` : ""}`;
-      const data = await apiCall("GET", url);
+      const data = await apiCall("GET", "/api/admin/brands?pageSize=100");
       setBrands(data.items || []);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "品牌列表加载失败");
     } finally {
-      loadedOnce.current = true;
       setLoading(false);
-      setRefreshing(false);
     }
-  }, [statusFilter]);
+  }, []);
 
   useEffect(() => { fetchBrands(); }, [fetchBrands]);
+
+  // 客户端过滤：状态精确匹配（与服务端 getAdminBrands 同口径），""=全部
+  const filteredBrands = useMemo(
+    () => (statusFilter ? brands.filter((b) => b.status === statusFilter) : brands),
+    [brands, statusFilter],
+  );
 
   const handleReview = async (id: string, decision: "APPROVED" | "REJECTED") => {
     setActing(id);
@@ -122,13 +121,16 @@ export function BrandManagementPage() {
           {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
           {loading ? (
             <div className="h-32 animate-pulse rounded-xl bg-gray-100" />
-          ) : brands.length === 0 ? (
-            <div className="py-12 text-center text-gray-400">
-              {statusFilter ? "该状态下暂无品牌" : "暂无品牌"}
-            </div>
           ) : (
-            <div className={`space-y-3 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
-              {brands.map((b) => (
+            /* 列表固定高度 + 内部滚动：切状态药丸时页面永不重排 */
+            <div className="h-[calc(100vh-13rem)] overflow-y-auto rounded-xl">
+            {filteredBrands.length === 0 ? (
+              <div className="flex min-h-[40vh] items-center justify-center text-center text-gray-400">
+                {statusFilter ? "该状态下暂无品牌" : "暂无品牌"}
+              </div>
+            ) : (
+              <div className="space-y-3">
+              {filteredBrands.map((b) => (
                 <div key={b.id} className="flex items-center justify-between rounded-2xl border border-gray-100 p-5">
                   <div className="flex min-w-0 items-center gap-3">
                     {b.logo ? (
@@ -197,6 +199,8 @@ export function BrandManagementPage() {
                   </div>
                 </div>
               ))}
+              </div>
+            )}
             </div>
           )}
         </div>

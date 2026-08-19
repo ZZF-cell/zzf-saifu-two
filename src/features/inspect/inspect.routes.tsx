@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { apiFetch } from "@/shared/api/client";
 import { fenToYuan } from "@/shared/utils/money";
 import { WorkbenchHeader } from "@/shared/ui/WorkbenchHeader";
@@ -391,7 +391,6 @@ function ProductReviewTab({
 }) {
   const [products, setProducts] = useState<AdminProduct[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [detail, setDetail] = useState<AdminProductDetail | null>(null);
@@ -399,30 +398,34 @@ function ProductReviewTab({
   const [editProduct, setEditProduct] = useState<AdminProductDetail | null>(null);
   const [notice, setNotice] = useState("");
 
-  // 筛选切换时保留旧列表，仅首载显示骨架 → 消除列表高度塌缩抖动
+  // 客户端过滤：首载一次拉全量，之后切状态药丸即时过滤，零网络往返、零延迟
   const loadedOnce = useRef(false);
 
   const fetchProducts = useCallback(async () => {
     if (!loadedOnce.current) setLoading(true);
-    setRefreshing(true);
     try {
-      const url = `/api/admin/products?pageSize=50${statusFilter ? `&status=${statusFilter}` : ""}`;
-      const data = await apiCall("GET", url);
+      // 筛选由客户端完成：一次拉全量（含 PENDING/APPROVED/DELISTED 等在内存过滤）
+      const data = await apiCall("GET", "/api/admin/products?pageSize=100");
       setProducts(data.items || []);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "商品列表加载失败");
     } finally {
       loadedOnce.current = true;
       setLoading(false);
-      setRefreshing(false);
     }
-  }, [statusFilter]);
+  }, []);
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
   // 切回本 Tab 时静默刷新（已加载过不重建骨架）
   useEffect(() => {
     if (active && loadedOnce.current) void fetchProducts();
   }, [active, fetchProducts]);
+
+  // 客户端过滤：状态精确匹配
+  const filteredProducts = useMemo(
+    () => (statusFilter ? products.filter((p) => p.status === statusFilter) : products),
+    [products, statusFilter],
+  );
 
   /** 拉取商品详情（详情/编辑模态共用；详情接口含质检清单） */
   const fetchDetail = async (id: string): Promise<AdminProductDetail> => {
@@ -452,7 +455,10 @@ function ProductReviewTab({
     setError("");
     try {
       await apiCall("POST", `/api/admin/products/${id}/${action}`);
-      await fetchProducts();
+      // 本地更新上下架状态，列表即时重算，无需重拉全量
+      setProducts((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, status: action === "delist" ? "DELISTED" : "APPROVED" } : p)),
+      );
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "操作失败");
     } finally {
@@ -513,15 +519,17 @@ function ProductReviewTab({
       {notice && !editProduct && (
         <div className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</div>
       )}
+      {/* 列表固定高度 + 内部滚动：切状态药丸时页面永不重排 */}
+      <div className="h-[calc(100vh-14rem)] overflow-y-auto rounded-xl">
       {loading ? (
         <div className="h-32 animate-pulse rounded-xl bg-gray-100" />
-      ) : products.length === 0 ? (
-        <div className="py-12 text-center text-gray-400">
+      ) : filteredProducts.length === 0 ? (
+        <div className="flex min-h-[40vh] items-center justify-center text-center text-gray-400">
           {statusFilter ? "该状态下暂无商品" : "暂无商品"}
         </div>
       ) : (
-        <div className={`space-y-3 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
-          {products.map((p) => {
+        <div className="space-y-3">
+          {filteredProducts.map((p) => {
           const lc = lifecycleAction(p);
           return (
             <div key={p.id} className="rounded-2xl border border-gray-100 p-5">
@@ -581,6 +589,7 @@ function ProductReviewTab({
           })}
         </div>
       )}
+      </div>
 
       {detail && (
         <ProductDetailModal detail={detail} onClose={() => setDetail(null)} />

@@ -604,33 +604,33 @@ export function OrderListPage() {
   const searchParams = useSearchParams();
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
-  // URL ?status= 驱动 Tab（非法 key 归一为「全部」；URL 用 tab key，API 用真实状态逗号串）
+  // URL ?status= 驱动 Tab（非法 key 归一为「全部」；URL 用 tab key，内存过滤用真实状态组）
   const rawKey = searchParams.get("status") ?? "";
   const activeKey = rawKey in TAB_TO_GROUP ? rawKey : "";
 
-  // 仅首载显示骨架，切 Tab 时保留旧列表静默刷新 → 消除列表高度塌缩抖动
-  const loadedOnce = useRef(false);
-
+  // 首载一次拉全量（pageSize=100），Tab 切换在内存 useMemo 过滤 →
+  // 零网络往返、零延迟、零高度塌缩（列表固定高度内部滚动，页面永不重排）
   const fetchOrders = useCallback(async () => {
-    if (!loadedOnce.current) setLoading(true);
-    setRefreshing(true);
+    setLoading(true);
     try {
-      const group = TAB_TO_GROUP[activeKey];
-      const qs = group && group.length > 0 ? `?status=${group.join(",")}` : "";
-      const data = await apiCall("GET", `/api/orders${qs}`);
+      const data = await apiCall("GET", "/api/orders?pageSize=100");
       setOrders(data.orders || []);
     } catch {
       // 静默失败
     } finally {
-      loadedOnce.current = true;
       setLoading(false);
-      setRefreshing(false);
     }
-  }, [activeKey]);
+  }, []);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
+
+  // 客户端过滤：与 TAB_TO_GROUP / ORDER_STATUS_GROUPS 同口径，undefined=全部
+  const filteredOrders = useMemo(() => {
+    const group = TAB_TO_GROUP[activeKey];
+    if (!group) return orders;
+    return orders.filter((o) => group.includes(o.status as OrderStatus));
+  }, [orders, activeKey]);
 
   const switchTab = (key: string) => {
     router.push(key ? `/orders?status=${key}` : "/orders");
@@ -672,21 +672,28 @@ export function OrderListPage() {
               <div key={i} className="h-20 animate-pulse rounded-xl bg-gray-100" />
             ))}
           </div>
-        ) : orders.length === 0 ? (
-          <div className="mx-auto w-full max-w-3xl py-20 text-center text-gray-400">
-            <p className="text-lg">{activeKey ? "该状态下暂无订单" : "暂无订单"}</p>
-            <button
-              onClick={() => router.push("/")}
-              className="mt-3 rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white"
-            >
-              去逛逛
-            </button>
-          </div>
         ) : (
-          <div className={`space-y-3 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
-            {orders.map((order) => (
-              <OrderCard key={order.id} {...order} />
-            ))}
+          /* 列表固定高度 + 内部滚动：切 Tab 时页面永不重排 */
+          <div className="h-[calc(100vh-10rem)] overflow-y-auto rounded-xl">
+            {filteredOrders.length === 0 ? (
+              <div className="flex min-h-[40vh] items-center justify-center text-center text-gray-400">
+                <div>
+                  <p className="text-lg">{activeKey ? "该状态下暂无订单" : "暂无订单"}</p>
+                  <button
+                    onClick={() => router.push("/")}
+                    className="mt-3 rounded-lg bg-primary px-6 py-2 text-sm font-medium text-white"
+                  >
+                    去逛逛
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {filteredOrders.map((order) => (
+                  <OrderCard key={order.id} {...order} />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
