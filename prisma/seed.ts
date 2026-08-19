@@ -55,6 +55,13 @@ async function main() {
     create: { phoneHash: hashPhone("19968506071"), role: "SUPER" },
   });
 
+  // 客服（/service 工作台：咨询工单处理 + 订单售后）
+  const customerService = await prisma.user.upsert({
+    where: { phoneHash: hashPhone("13700000000") },
+    update: { role: "CUSTOMER_SERVICE" },
+    create: { phoneHash: hashPhone("13700000000"), role: "CUSTOMER_SERVICE" },
+  });
+
   // ── 品牌 ──
   const brand = await prisma.brand.upsert({
     where: { inviteCode: "SEED-BRAND-001" },
@@ -293,6 +300,7 @@ async function main() {
 
   console.log("✅ seed 完成");
   console.log(`  最高权限者: 19968506071 (验证码登录) id=${superUser.id}`);
+  console.log(`  客服:   13700000000 (验证码登录)  id=${customerService.id}`);
   console.log(`  管理员: 13900000000 (验证码登录)  id=${admin.id}`);
   console.log(`  用户:   13800138000 / 123456      id=${buyer.id}`);
   console.log(`  品牌方: 13888888888 (验证码登录)  id=${brandOwner.id}`);
