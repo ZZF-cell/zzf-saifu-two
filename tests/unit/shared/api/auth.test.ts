@@ -16,7 +16,7 @@ vi.mock("@/features/auth", () => ({
   },
 }));
 
-import { authenticateUser, requireRole } from "@/shared/api/auth";
+import { authenticateUser, requireRole, ADMIN_ROLES, SERVICE_ROLES, AFTERSALES_ROLES } from "@/shared/api/auth";
 import { authService } from "@/features/auth";
 import { ERROR_CODES } from "@/shared/errors/errors";
 
@@ -122,5 +122,56 @@ describe("requireRole — 角色门禁", () => {
 
     const ctx = await requireRole(makeRequest(), ["BRAND", "ADMIN"]);
     expect(ctx.role).toBe("BRAND");
+  });
+
+  it("角色组常量定义正确", () => {
+    expect(ADMIN_ROLES).toEqual(["ADMIN", "SUPER"]);
+    expect(SERVICE_ROLES).toEqual(["CUSTOMER_SERVICE", "SUPER"]);
+    expect(AFTERSALES_ROLES).toEqual(["ADMIN", "SUPER", "CUSTOMER_SERVICE"]);
+  });
+
+  it("SUPER 通过 ADMIN_ROLES 门禁（最高权限者可进管理后台）", async () => {
+    vi.mocked(authService.verifyAccessToken).mockResolvedValue({
+      userId: "super-1",
+      role: "SUPER",
+    } as never);
+    vi.mocked(authService.getUserAuthContext).mockResolvedValue({
+      id: "super-1",
+      role: "SUPER",
+      status: "ACTIVE",
+    });
+
+    const ctx = await requireRole(makeRequest(), ADMIN_ROLES);
+    expect(ctx.role).toBe("SUPER");
+  });
+
+  it("CUSTOMER_SERVICE 通过 SERVICE_ROLES 门禁（客服工作台）", async () => {
+    vi.mocked(authService.verifyAccessToken).mockResolvedValue({
+      userId: "cs-1",
+      role: "CUSTOMER_SERVICE",
+    } as never);
+    vi.mocked(authService.getUserAuthContext).mockResolvedValue({
+      id: "cs-1",
+      role: "CUSTOMER_SERVICE",
+      status: "ACTIVE",
+    });
+
+    const ctx = await requireRole(makeRequest(), SERVICE_ROLES);
+    expect(ctx.role).toBe("CUSTOMER_SERVICE");
+  });
+
+  it("CUSTOMER_SERVICE 通过 AFTERSALES_ROLES 门禁（订单售后）", async () => {
+    vi.mocked(authService.verifyAccessToken).mockResolvedValue({
+      userId: "cs-1",
+      role: "CUSTOMER_SERVICE",
+    } as never);
+    vi.mocked(authService.getUserAuthContext).mockResolvedValue({
+      id: "cs-1",
+      role: "CUSTOMER_SERVICE",
+      status: "ACTIVE",
+    });
+
+    const ctx = await requireRole(makeRequest(), AFTERSALES_ROLES);
+    expect(ctx.role).toBe("CUSTOMER_SERVICE");
   });
 });

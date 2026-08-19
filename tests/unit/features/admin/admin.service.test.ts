@@ -115,7 +115,7 @@ describe("reviewBrand — 品牌入驻审核", () => {
       data: { status: "APPROVED" },
     });
     expect(tx.user.updateMany).toHaveBeenCalledWith({
-      where: { id: "user-1", role: { notIn: ["BRAND", "ADMIN"] } },
+      where: { id: "user-1", role: { notIn: ["BRAND", "ADMIN", "CUSTOMER_SERVICE", "SUPER"] } },
       data: { role: "BRAND" },
     });
     expect(tx.auditLog.create).toHaveBeenCalledWith({
@@ -177,13 +177,13 @@ describe("reviewBrand — 品牌入驻审核", () => {
   it("负责人已是 ADMIN（更高角色）→ 角色守卫不降级，仍通过 + 审计日志", async () => {
     tx.brand.findUnique.mockResolvedValue({ ownerId: "user-admin" });
     tx.brand.updateMany.mockResolvedValue({ count: 1 });
-    // 守卫命中 0 行：updateMany 带 notIn:["BRAND","ADMIN"]，ADMIN 不匹配 → 0 行 = no-op 而非抛错
+    // 守卫命中 0 行：updateMany 带 notIn:[BRAND,ADMIN,CUSTOMER_SERVICE,SUPER]，ADMIN 不匹配 → 0 行 = no-op 而非抛错
     tx.user.updateMany.mockResolvedValue({ count: 0 });
 
     await reviewBrand("brand-1", "APPROVED", "admin-1");
 
     expect(tx.user.updateMany).toHaveBeenCalledWith({
-      where: { id: "user-admin", role: { notIn: ["BRAND", "ADMIN"] } },
+      where: { id: "user-admin", role: { notIn: ["BRAND", "ADMIN", "CUSTOMER_SERVICE", "SUPER"] } },
       data: { role: "BRAND" },
     });
     // 0 行命中不阻断审核流程（幂等升级），审计正常落库
@@ -203,7 +203,7 @@ describe("reviewBrand — 品牌入驻审核", () => {
       data: { status: "APPROVED" },
     });
     expect(tx.user.updateMany).toHaveBeenCalledWith({
-      where: { id: "user-1", role: { notIn: ["BRAND", "ADMIN"] } },
+      where: { id: "user-1", role: { notIn: ["BRAND", "ADMIN", "CUSTOMER_SERVICE", "SUPER"] } },
       data: { role: "BRAND" },
     });
     expect(tx.auditLog.create).toHaveBeenCalledWith({
@@ -795,7 +795,7 @@ describe("setUserRole — 改角色", () => {
     tx.user.findUnique.mockResolvedValue({ role: "USER", status: "ACTIVE", lockUntil: null, ageVerified: false });
     tx.user.updateMany.mockResolvedValue({ count: 1 });
 
-    await setUserRole("user-1", "BRAND", "admin-1");
+    await setUserRole("user-1", "BRAND", "admin-1", "ADMIN");
 
     expect(tx.user.findUnique).toHaveBeenCalledWith({
       where: { id: "user-1" },
@@ -817,7 +817,7 @@ describe("setUserRole — 改角色", () => {
   });
 
   it("操作自己 → 403 CANNOT_OPERATE_SELF（不自伤）", async () => {
-    await expect(setUserRole("admin-1", "ADMIN", "admin-1")).rejects.toThrow(
+    await expect(setUserRole("admin-1", "ADMIN", "admin-1", "ADMIN")).rejects.toThrow(
       expect.objectContaining({ code: ERROR_CODES.CANNOT_OPERATE_SELF.code, statusCode: 403 }),
     );
     expect(tx.user.findUnique).not.toHaveBeenCalled();
@@ -825,7 +825,7 @@ describe("setUserRole — 改角色", () => {
 
   it("目标用户不存在 → 404 USER_NOT_FOUND", async () => {
     tx.user.findUnique.mockResolvedValue(null);
-    await expect(setUserRole("nobody", "BRAND", "admin-1")).rejects.toThrow(
+    await expect(setUserRole("nobody", "BRAND", "admin-1", "ADMIN")).rejects.toThrow(
       expect.objectContaining({ code: ERROR_CODES.USER_NOT_FOUND.code, statusCode: 404 }),
     );
   });
@@ -833,7 +833,7 @@ describe("setUserRole — 改角色", () => {
   it("角色未变 → 幂等跳过，不落审计", async () => {
     tx.user.findUnique.mockResolvedValue({ role: "ADMIN", status: "ACTIVE", lockUntil: null, ageVerified: false });
 
-    await setUserRole("user-1", "ADMIN", "admin-1");
+    await setUserRole("user-1", "ADMIN", "admin-1", "ADMIN");
 
     expect(tx.user.updateMany).not.toHaveBeenCalled();
     expect(tx.auditLog.create).not.toHaveBeenCalled();
@@ -845,7 +845,7 @@ describe("setUserStatus — 禁用/启用", () => {
     tx.user.findUnique.mockResolvedValue({ role: "USER", status: "ACTIVE", lockUntil: null, ageVerified: false });
     tx.user.updateMany.mockResolvedValue({ count: 1 });
 
-    await setUserStatus("user-1", "DISABLED", "admin-1");
+    await setUserStatus("user-1", "DISABLED", "admin-1", "ADMIN");
 
     expect(tx.user.updateMany).toHaveBeenCalledWith({
       where: { id: "user-1", status: "ACTIVE" },
@@ -868,13 +868,13 @@ describe("setUserStatus — 禁用/启用", () => {
     tx.user.findUnique.mockResolvedValue({ role: "USER", status: "DISABLED", lockUntil: null, ageVerified: false });
     tx.user.updateMany.mockResolvedValue({ count: 1 });
 
-    await setUserStatus("user-1", "ACTIVE", "admin-1");
+    await setUserStatus("user-1", "ACTIVE", "admin-1", "ADMIN");
 
     expect(tx.refreshToken.deleteMany).not.toHaveBeenCalled();
   });
 
   it("禁用自己 → 403", async () => {
-    await expect(setUserStatus("admin-1", "DISABLED", "admin-1")).rejects.toThrow(
+    await expect(setUserStatus("admin-1", "DISABLED", "admin-1", "ADMIN")).rejects.toThrow(
       expect.objectContaining({ code: ERROR_CODES.CANNOT_OPERATE_SELF.code, statusCode: 403 }),
     );
   });
@@ -883,7 +883,7 @@ describe("setUserStatus — 禁用/启用", () => {
     tx.user.findUnique.mockResolvedValue({ role: "USER", status: "ACTIVE", lockUntil: null, ageVerified: false });
     tx.user.updateMany.mockResolvedValue({ count: 0 });
 
-    await expect(setUserStatus("user-1", "DISABLED", "admin-1")).rejects.toThrow(
+    await expect(setUserStatus("user-1", "DISABLED", "admin-1", "ADMIN")).rejects.toThrow(
       expect.objectContaining({ statusCode: 500 }),
     );
   });
@@ -895,7 +895,7 @@ describe("unlockUser — 解锁", () => {
     tx.user.findUnique.mockResolvedValue({ role: "USER", status: "ACTIVE", lockUntil, ageVerified: false });
     tx.user.updateMany.mockResolvedValue({ count: 1 });
 
-    await unlockUser("user-1", "admin-1");
+    await unlockUser("user-1", "admin-1", "ADMIN");
 
     expect(tx.user.updateMany).toHaveBeenCalledWith({
       where: { id: "user-1", lockUntil },
@@ -909,7 +909,7 @@ describe("unlockUser — 解锁", () => {
   it("未锁定 → 409 USER_NOT_LOCKED", async () => {
     tx.user.findUnique.mockResolvedValue({ role: "USER", status: "ACTIVE", lockUntil: null, ageVerified: false });
 
-    await expect(unlockUser("user-1", "admin-1")).rejects.toThrow(
+    await expect(unlockUser("user-1", "admin-1", "ADMIN")).rejects.toThrow(
       expect.objectContaining({ code: ERROR_CODES.USER_NOT_LOCKED.code, statusCode: 409 }),
     );
   });
@@ -917,7 +917,7 @@ describe("unlockUser — 解锁", () => {
   it("锁定已过期（lockUntil < now）→ 视为未锁定 409", async () => {
     tx.user.findUnique.mockResolvedValue({ role: "USER", status: "ACTIVE", lockUntil: new Date(Date.now() - 1000), ageVerified: false });
 
-    await expect(unlockUser("user-1", "admin-1")).rejects.toThrow(
+    await expect(unlockUser("user-1", "admin-1", "ADMIN")).rejects.toThrow(
       expect.objectContaining({ code: ERROR_CODES.USER_NOT_LOCKED.code, statusCode: 409 }),
     );
   });
@@ -928,7 +928,7 @@ describe("resetPassword — 重置密码", () => {
     tx.user.findUnique.mockResolvedValue({ role: "USER", status: "ACTIVE", lockUntil: null, ageVerified: false });
     tx.user.updateMany.mockResolvedValue({ count: 1 });
 
-    const result = await resetPassword("user-1", "Temp@123456", "admin-1");
+    const result = await resetPassword("user-1", "Temp@123456", "admin-1", "ADMIN");
 
     expect(result.tempPassword).toBe("Temp@123456");
     expect(tx.user.updateMany).toHaveBeenCalledWith({
@@ -947,7 +947,7 @@ describe("resetPassword — 重置密码", () => {
   });
 
   it("临时密码 <6 位 → 422 VALIDATION_ERROR，不触碰 DB", async () => {
-    await expect(resetPassword("user-1", "12345", "admin-1")).rejects.toThrow(
+    await expect(resetPassword("user-1", "12345", "admin-1", "ADMIN")).rejects.toThrow(
       expect.objectContaining({ code: ERROR_CODES.VALIDATION_ERROR.code, statusCode: 422 }),
     );
     expect(tx.user.updateMany).not.toHaveBeenCalled();
@@ -955,7 +955,7 @@ describe("resetPassword — 重置密码", () => {
 
   it("目标用户不存在 → 404，不产生「对不存在用户成功」", async () => {
     tx.user.findUnique.mockResolvedValue(null);
-    await expect(resetPassword("nobody", "Temp@123456", "admin-1")).rejects.toThrow(
+    await expect(resetPassword("nobody", "Temp@123456", "admin-1", "ADMIN")).rejects.toThrow(
       expect.objectContaining({ code: ERROR_CODES.USER_NOT_FOUND.code, statusCode: 404 }),
     );
   });
@@ -966,7 +966,7 @@ describe("clearAgeVerification — 清除年龄验证", () => {
     tx.user.findUnique.mockResolvedValue({ role: "USER", status: "ACTIVE", lockUntil: null, ageVerified: true });
     tx.user.updateMany.mockResolvedValue({ count: 1 });
 
-    await clearAgeVerification("user-1", "admin-1");
+    await clearAgeVerification("user-1", "admin-1", "ADMIN");
 
     expect(tx.user.updateMany).toHaveBeenCalledWith({
       where: { id: "user-1", ageVerified: true },
@@ -986,10 +986,55 @@ describe("clearAgeVerification — 清除年龄验证", () => {
   it("未验证 → 幂等跳过，不落审计", async () => {
     tx.user.findUnique.mockResolvedValue({ role: "USER", status: "ACTIVE", lockUntil: null, ageVerified: false });
 
-    await clearAgeVerification("user-1", "admin-1");
+    await clearAgeVerification("user-1", "admin-1", "ADMIN");
 
     expect(tx.user.updateMany).not.toHaveBeenCalled();
     expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+});
+
+// ── 最高权限者保护 ──
+
+describe("最高权限者（SUPER）账号保护", () => {
+  it("ADMIN 改 SUPER 角色 → 403 FORBIDDEN", async () => {
+    tx.user.findUnique.mockResolvedValue({ role: "SUPER", status: "ACTIVE", lockUntil: null, ageVerified: true });
+
+    await expect(setUserRole("super-1", "ADMIN", "admin-1", "ADMIN")).rejects.toThrow(
+      expect.objectContaining({ code: ERROR_CODES.FORBIDDEN.code, statusCode: 403 }),
+    );
+    expect(tx.user.updateMany).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("ADMIN 禁用 SUPER → 403 FORBIDDEN", async () => {
+    tx.user.findUnique.mockResolvedValue({ role: "SUPER", status: "ACTIVE", lockUntil: null, ageVerified: true });
+
+    await expect(setUserStatus("super-1", "DISABLED", "admin-1", "ADMIN")).rejects.toThrow(
+      expect.objectContaining({ code: ERROR_CODES.FORBIDDEN.code, statusCode: 403 }),
+    );
+    expect(tx.refreshToken.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("ADMIN 重置 SUPER 密码 → 403 FORBIDDEN", async () => {
+    tx.user.findUnique.mockResolvedValue({ role: "SUPER", status: "ACTIVE", lockUntil: null, ageVerified: true });
+
+    await expect(resetPassword("super-1", "Temp@123456", "admin-1", "ADMIN")).rejects.toThrow(
+      expect.objectContaining({ code: ERROR_CODES.FORBIDDEN.code, statusCode: 403 }),
+    );
+    expect(tx.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("SUPER 操作者操作 SUPER 目标 → 放行（仅 SUPER 本人可操作）", async () => {
+    tx.user.findUnique.mockResolvedValue({ role: "SUPER", status: "ACTIVE", lockUntil: null, ageVerified: true });
+    tx.user.updateMany.mockResolvedValue({ count: 1 });
+
+    await setUserStatus("super-1", "DISABLED", "super-op", "SUPER");
+
+    expect(tx.user.updateMany).toHaveBeenCalledWith({
+      where: { id: "super-1", status: "ACTIVE" },
+      data: { status: "DISABLED" },
+    });
+    expect(tx.auditLog.create).toHaveBeenCalled();
   });
 });
 

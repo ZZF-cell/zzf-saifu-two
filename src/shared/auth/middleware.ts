@@ -5,9 +5,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 
+export type UserRole = "USER" | "BRAND" | "CUSTOMER_SERVICE" | "ADMIN" | "SUPER";
+
 export interface AuthUser {
   userId: string;
-  role: "USER" | "BRAND" | "ADMIN";
+  role: UserRole;
 }
 
 // JWT 公钥对端（注意：JWT 仅 base64 编码，载荷对任何人可见。phoneHash 已从载荷中移除。）
@@ -83,10 +85,16 @@ export function getRouteGuardDecision(
   path: string,
   authUser: AuthUser | null,
 ): RouteGuardDecision {
-  // 管理后台
+  // 管理后台（管理员 + 最高权限者）
   if (path.startsWith("/admin")) {
     if (!authUser) return "login";
-    if (authUser.role !== "ADMIN") return "forbidden"; // M10
+    if (!["ADMIN", "SUPER"].includes(authUser.role)) return "forbidden"; // M10
+  }
+
+  // 客服工作台（客服 + 最高权限者；与 /admin 隔离）
+  if (path.startsWith("/service")) {
+    if (!authUser) return "login";
+    if (!["CUSTOMER_SERVICE", "SUPER"].includes(authUser.role)) return "forbidden"; // M10
   }
 
   // 品牌方后台（仅 BRAND：品牌中心是品牌方自己的后台，ADMIN 走 /admin）

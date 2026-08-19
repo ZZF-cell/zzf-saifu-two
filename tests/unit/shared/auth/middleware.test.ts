@@ -9,6 +9,8 @@ import { getRouteGuardDecision } from "@/shared/auth/middleware";
 const USER = { userId: "u1", role: "USER" as const };
 const BRAND = { userId: "b1", role: "BRAND" as const };
 const ADMIN = { userId: "a1", role: "ADMIN" as const };
+const SUPER = { userId: "s1", role: "SUPER" as const };
+const CS = { userId: "c1", role: "CUSTOMER_SERVICE" as const };
 
 describe("getRouteGuardDecision — 路由权限决策", () => {
   it("未登录访问 /admin → login（引导登录）", () => {
@@ -25,6 +27,34 @@ describe("getRouteGuardDecision — 路由权限决策", () => {
 
   it("ADMIN 访问 /admin → allow", () => {
     expect(getRouteGuardDecision("/admin", ADMIN)).toBe("allow");
+  });
+
+  it("SUPER 访问 /admin → allow（最高权限者可进管理后台）", () => {
+    expect(getRouteGuardDecision("/admin", SUPER)).toBe("allow");
+  });
+
+  it("CUSTOMER_SERVICE 访问 /admin → forbidden（客服走 /service，与管理后台隔离）", () => {
+    expect(getRouteGuardDecision("/admin", CS)).toBe("forbidden");
+  });
+
+  it("未登录访问 /service → login", () => {
+    expect(getRouteGuardDecision("/service", null)).toBe("login");
+  });
+
+  it("CUSTOMER_SERVICE 访问 /service → allow", () => {
+    expect(getRouteGuardDecision("/service/tickets", CS)).toBe("allow");
+  });
+
+  it("SUPER 访问 /service → allow（可监督客服工作台）", () => {
+    expect(getRouteGuardDecision("/service", SUPER)).toBe("allow");
+  });
+
+  it("M10：USER 访问 /service → forbidden", () => {
+    expect(getRouteGuardDecision("/service", USER)).toBe("forbidden");
+  });
+
+  it("M10：ADMIN 访问 /service → forbidden（管理员走 /admin）", () => {
+    expect(getRouteGuardDecision("/service", ADMIN)).toBe("forbidden");
   });
 
   it("未登录访问 /brand → login", () => {

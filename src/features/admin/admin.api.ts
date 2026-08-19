@@ -1,9 +1,9 @@
-// 管理后台 API Route Handlers（仅 ADMIN）
+// 管理后台 API Route Handlers（ADMIN + SUPER；订单售后另开放 CUSTOMER_SERVICE）
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { apiError, withValidation, parsePagination } from "@/shared/utils/api";
 import { ERROR_CODES } from "@/shared/errors/errors";
-import { requireRole } from "@/shared/api/auth";
+import { requireRole, ADMIN_ROLES, AFTERSALES_ROLES } from "@/shared/api/auth";
 import { updateProductSchema } from "@/shared/validation/product";
 import * as adminQueries from "./admin.queries";
 import * as adminService from "./admin.service";
@@ -42,7 +42,7 @@ async function handleReview(
   action: (id: string, decision: ReviewDecision, operatorId: string) => Promise<void>,
 ): Promise<NextResponse> {
   try {
-    const admin = await requireRole(req, ["ADMIN"]);
+    const admin = await requireRole(req, ADMIN_ROLES);
     const { id } = await ctx.params;
     const body = await req.json().catch(() => null);
     const parsed = reviewSchema.safeParse(body);
@@ -63,7 +63,7 @@ async function handleReview(
 
 export async function getDashboard(req: Request) {
   try {
-    await requireRole(req, ["ADMIN"]);
+    await requireRole(req, ADMIN_ROLES);
     const stats = await adminQueries.getDashboardStats();
     return NextResponse.json(stats);
   } catch (error) {
@@ -75,7 +75,7 @@ export async function getDashboard(req: Request) {
 
 export async function getBrands(req: Request) {
   try {
-    await requireRole(req, ["ADMIN"]);
+    await requireRole(req, ADMIN_ROLES);
     const url = new URL(req.url);
     const status = url.searchParams.get("status") || undefined;
     const brands = await adminQueries.getAdminBrands(status);
@@ -93,7 +93,7 @@ export function reviewBrand(req: Request, ctx: { params: Promise<{ id: string }>
 
 export async function deleteBrand(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const admin = await requireRole(req, ["ADMIN"]);
+    const admin = await requireRole(req, ADMIN_ROLES);
     const { id } = await ctx.params;
     await adminService.deleteBrand(id, admin.userId);
     return NextResponse.json({ success: true });
@@ -106,7 +106,7 @@ export async function deleteBrand(req: Request, ctx: { params: Promise<{ id: str
 
 export async function getProducts(req: Request) {
   try {
-    await requireRole(req, ["ADMIN"]);
+    await requireRole(req, ADMIN_ROLES);
     const url = new URL(req.url);
     const { page, pageSize } = parsePagination(url);
     const status = url.searchParams.get("status") || undefined;
@@ -129,7 +129,7 @@ export async function getProductDetail(
   ctx: { params: Promise<{ id: string }> },
 ) {
   try {
-    await requireRole(req, ["ADMIN"]);
+    await requireRole(req, ADMIN_ROLES);
     const { id } = await ctx.params;
     const detail = await adminQueries.getAdminProductDetail(id);
     if (!detail) {
@@ -150,7 +150,7 @@ export async function delistProduct(
   ctx: { params: Promise<{ id: string }> },
 ) {
   try {
-    const admin = await requireRole(req, ["ADMIN"]);
+    const admin = await requireRole(req, ADMIN_ROLES);
     const { id } = await ctx.params;
     await adminService.delistProduct(id, admin.userId);
     return NextResponse.json({ success: true });
@@ -165,7 +165,7 @@ export async function relistProduct(
   ctx: { params: Promise<{ id: string }> },
 ) {
   try {
-    const admin = await requireRole(req, ["ADMIN"]);
+    const admin = await requireRole(req, ADMIN_ROLES);
     const { id } = await ctx.params;
     await adminService.relistProduct(id, admin.userId);
     return NextResponse.json({ success: true });
@@ -183,7 +183,7 @@ export async function updateProduct(
   ctx: { params: Promise<{ id: string }> },
 ) {
   try {
-    const admin = await requireRole(req, ["ADMIN"]);
+    const admin = await requireRole(req, ADMIN_ROLES);
     const { id } = await ctx.params;
     const body = await req.json().catch(() => null);
     const parsed = updateProductSchema.safeParse(body);
@@ -204,7 +204,7 @@ export async function updateProduct(
 
 export async function getOrders(req: Request) {
   try {
-    await requireRole(req, ["ADMIN"]);
+    await requireRole(req, AFTERSALES_ROLES);
     const url = new URL(req.url);
     const { page, pageSize } = parsePagination(url);
     const status = url.searchParams.get("status") || undefined;
@@ -217,7 +217,7 @@ export async function getOrders(req: Request) {
 
 export async function shipOrder(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const admin = await requireRole(req, ["ADMIN"]);
+    const admin = await requireRole(req, AFTERSALES_ROLES);
     const { id } = await ctx.params;
     await adminService.shipOrder(id, admin.userId);
     return NextResponse.json({ success: true });
@@ -228,7 +228,7 @@ export async function shipOrder(req: Request, ctx: { params: Promise<{ id: strin
 
 export async function deliverOrder(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const admin = await requireRole(req, ["ADMIN"]);
+    const admin = await requireRole(req, AFTERSALES_ROLES);
     const { id } = await ctx.params;
     await adminService.deliverOrder(id, admin.userId);
     return NextResponse.json({ success: true });
@@ -239,7 +239,7 @@ export async function deliverOrder(req: Request, ctx: { params: Promise<{ id: st
 
 export async function completeOrder(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const admin = await requireRole(req, ["ADMIN"]);
+    const admin = await requireRole(req, AFTERSALES_ROLES);
     const { id } = await ctx.params;
     await adminService.completeOrder(id, admin.userId);
     return NextResponse.json({ success: true });
@@ -250,7 +250,7 @@ export async function completeOrder(req: Request, ctx: { params: Promise<{ id: s
 
 export async function confirmRefund(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const admin = await requireRole(req, ["ADMIN"]);
+    const admin = await requireRole(req, AFTERSALES_ROLES);
     const { id } = await ctx.params;
     await adminService.confirmRefund(id, admin.userId);
     return NextResponse.json({ success: true });
@@ -263,7 +263,7 @@ export async function confirmRefund(req: Request, ctx: { params: Promise<{ id: s
 
 export async function getUsers(req: Request) {
   try {
-    await requireRole(req, ["ADMIN"]);
+    await requireRole(req, ADMIN_ROLES);
     const url = new URL(req.url);
     const { page, pageSize } = parsePagination(url);
     const result = await adminQueries.getAdminUsers({ page, pageSize });
@@ -277,7 +277,7 @@ export async function getUsers(req: Request) {
 
 export async function getAuditTemplates(req: Request) {
   try {
-    await requireRole(req, ["ADMIN"]);
+    await requireRole(req, ADMIN_ROLES);
     const templates = await adminQueries.getAuditTemplates();
     return NextResponse.json({ items: templates });
   } catch (error) {
@@ -288,7 +288,7 @@ export async function getAuditTemplates(req: Request) {
 export const upsertAuditTemplate = withValidation(
   auditTemplateSchema,
   async (data, req) => {
-    const admin = await requireRole(req, ["ADMIN"]);
+    const admin = await requireRole(req, ADMIN_ROLES);
     await adminService.upsertAuditTemplate(data, admin.userId);
     return NextResponse.json({ success: true });
   },
@@ -297,7 +297,7 @@ export const upsertAuditTemplate = withValidation(
 /** DELETE /api/admin/audit-templates?categoryId= — 删除质检模板 */
 export async function deleteAuditTemplate(req: Request) {
   try {
-    const admin = await requireRole(req, ["ADMIN"]);
+    const admin = await requireRole(req, ADMIN_ROLES);
     const url = new URL(req.url);
     const categoryId = url.searchParams.get("categoryId");
     if (!categoryId) {
@@ -317,7 +317,7 @@ export async function deleteAuditTemplate(req: Request) {
 
 export async function getInviteCodes(req: Request) {
   try {
-    await requireRole(req, ["ADMIN"]);
+    await requireRole(req, ADMIN_ROLES);
     const url = new URL(req.url);
     const { page, pageSize } = parsePagination(url);
     const status = url.searchParams.get("status") || undefined;
@@ -331,7 +331,7 @@ export async function getInviteCodes(req: Request) {
 export const generateInviteCodes = withValidation(
   generateInviteSchema,
   async (data, req) => {
-    const admin = await requireRole(req, ["ADMIN"]);
+    const admin = await requireRole(req, ADMIN_ROLES);
     const codes = await adminService.generateInviteCodes(
       { count: data.count, expiresAt: data.expiresAt ? new Date(data.expiresAt) : null },
       admin.userId,
@@ -346,7 +346,7 @@ export const generateInviteCodes = withValidation(
  */
 export async function revokeInviteCode(req: Request, ctx: { params: Promise<{ code: string }> }) {
   try {
-    const admin = await requireRole(req, ["ADMIN"]);
+    const admin = await requireRole(req, ADMIN_ROLES);
     const { code } = await ctx.params;
     await adminService.revokeInviteCode(admin.userId, code);
     return NextResponse.json({ success: true });
@@ -360,8 +360,9 @@ export async function revokeInviteCode(req: Request, ctx: { params: Promise<{ co
 // action 与参数强耦合（discriminatedUnion）：setRole 缺 role / setStatus 缺 status /
 // resetPassword 缺 tempPassword 均直接 422，杜绝「缺参进 service → 500 / 假审计」。
 // 且 switch 内 TS 能按 action 收窄出必填参数，无需 `!` 断言。
+// 可授予角色不含 SUPER（最高权限者账号不可被授予、不可被其他账号操作）
 const userActionSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("setRole"), role: z.enum(["USER", "BRAND", "ADMIN"]) }),
+  z.object({ action: z.literal("setRole"), role: z.enum(["USER", "BRAND", "CUSTOMER_SERVICE", "ADMIN"]) }),
   z.object({ action: z.literal("setStatus"), status: z.enum(["ACTIVE", "DISABLED"]) }),
   z.object({ action: z.literal("unlock") }),
   z.object({ action: z.literal("resetPassword"), tempPassword: z.string().min(6).max(20) }),
@@ -377,7 +378,7 @@ export async function patchUser(
   ctx: { params: Promise<{ id: string }> },
 ) {
   try {
-    const admin = await requireRole(req, ["ADMIN"]);
+    const admin = await requireRole(req, ADMIN_ROLES);
     const { id } = await ctx.params;
     const body = await req.json().catch(() => null);
     const parsed = userActionSchema.safeParse(body);
@@ -390,20 +391,20 @@ export async function patchUser(
 
     switch (parsed.data.action) {
       case "setRole":
-        await adminService.setUserRole(id, parsed.data.role, admin.userId);
+        await adminService.setUserRole(id, parsed.data.role, admin.userId, admin.role);
         break;
       case "setStatus":
-        await adminService.setUserStatus(id, parsed.data.status, admin.userId);
+        await adminService.setUserStatus(id, parsed.data.status, admin.userId, admin.role);
         break;
       case "unlock":
-        await adminService.unlockUser(id, admin.userId);
+        await adminService.unlockUser(id, admin.userId, admin.role);
         break;
       case "resetPassword": {
-        const result = await adminService.resetPassword(id, parsed.data.tempPassword, admin.userId);
+        const result = await adminService.resetPassword(id, parsed.data.tempPassword, admin.userId, admin.role);
         return NextResponse.json({ success: true, tempPassword: result.tempPassword });
       }
       case "clearAgeVerification":
-        await adminService.clearAgeVerification(id, admin.userId);
+        await adminService.clearAgeVerification(id, admin.userId, admin.role);
         break;
     }
     return NextResponse.json({ success: true });

@@ -8,6 +8,9 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 vi.mock("@/shared/api/auth", () => ({
   requireRole: vi.fn(),
+  ADMIN_ROLES: ["ADMIN", "SUPER"],
+  AFTERSALES_ROLES: ["ADMIN", "SUPER", "CUSTOMER_SERVICE"],
+  SERVICE_ROLES: ["CUSTOMER_SERVICE", "SUPER"],
 }));
 
 vi.mock("@/features/admin/admin.service", () => ({
@@ -67,13 +70,13 @@ describe("PATCH /api/admin/users/[id] — 参数与 action 耦合", () => {
     expect(resetPasswordMock).not.toHaveBeenCalled();
   });
 
-  it("setRole 参数齐全 → 调 setUserRole(id, role, admin.userId)", async () => {
+  it("setRole 参数齐全 → 调 setUserRole(id, role, admin.userId, admin.role)", async () => {
     setUserRoleMock.mockResolvedValue(undefined);
 
     const res = await patchUser(makeRequest({ action: "setRole", role: "BRAND" }), ctx);
 
     expect(res.status).toBe(200);
-    expect(setUserRoleMock).toHaveBeenCalledWith("user-1", "BRAND", "admin-1");
+    expect(setUserRoleMock).toHaveBeenCalledWith("user-1", "BRAND", "admin-1", "ADMIN");
   });
 
   it("resetPassword 参数齐全 → 返回一次临时密码透传", async () => {
@@ -84,7 +87,7 @@ describe("PATCH /api/admin/users/[id] — 参数与 action 耦合", () => {
 
     expect(res.status).toBe(200);
     expect(body.tempPassword).toBe("Temp@123456");
-    expect(resetPasswordMock).toHaveBeenCalledWith("user-1", "Temp@123456", "admin-1");
+    expect(resetPasswordMock).toHaveBeenCalledWith("user-1", "Temp@123456", "admin-1", "ADMIN");
   });
 
   it("clearAgeVerification 无需参数 → 正常分发", async () => {
@@ -93,7 +96,7 @@ describe("PATCH /api/admin/users/[id] — 参数与 action 耦合", () => {
     const res = await patchUser(makeRequest({ action: "clearAgeVerification" }), ctx);
 
     expect(res.status).toBe(200);
-    expect(clearAgeMock).toHaveBeenCalledWith("user-1", "admin-1");
+    expect(clearAgeMock).toHaveBeenCalledWith("user-1", "admin-1", "ADMIN");
   });
 
   it("非法 action → 422", async () => {

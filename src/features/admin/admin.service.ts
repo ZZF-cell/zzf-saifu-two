@@ -45,11 +45,11 @@ export async function reviewBrand(
     }
 
     // 审核通过（含 REJECTED 重审）→ 负责人升级 BRAND 角色（同事务：品牌已过但角色未升是笔错账）
-    // 角色守卫：仅当前非 BRAND/ADMIN 才升级（只把纯 USER 提升为 BRAND），
-    // 避免重审把已授更高权限（如 ADMIN）的负责人降级回 BRAND
+    // 角色守卫：仅当前纯 USER 才升级，避免重审把已授更高权限
+    // （ADMIN/SUPER/CUSTOMER_SERVICE/BRAND）的负责人降级回 BRAND
     if (decision === "APPROVED") {
       await tx.user.updateMany({
-        where: { id: brand.ownerId, role: { notIn: ["BRAND", "ADMIN"] } },
+        where: { id: brand.ownerId, role: { notIn: ["BRAND", "ADMIN", "CUSTOMER_SERVICE", "SUPER"] } },
         data: { role: "BRAND" },
       });
     }
@@ -464,7 +464,8 @@ export async function revokeInviteCode(operatorId: string, code: string): Promis
 // 约束：管理员不能对自己操作（setRole / setStatus）；解锁仅限锁定用户（未锁定 409）；
 // 全部状态变更沿用 updateMany + 同事务审计策略，防并发竞态
 
-export type UserRoleOp = "USER" | "BRAND" | "ADMIN";
+// 可授予角色不含 SUPER：最高权限者账号（19968506071）唯一且不可授予、不可被其他账号操作
+export type UserRoleOp = "USER" | "BRAND" | "CUSTOMER_SERVICE" | "ADMIN";
 export type UserStatusOp = "ACTIVE" | "DISABLED";
 
 /** 事务内取目标用户；不存在 → 404 */
@@ -480,17 +481,26 @@ async function getTargetUser(
   return user;
 }
 
-/** 改角色 — USER/BRAND/ADMIN 互转；不可操作自己 */
+/** 最高权限者账号保护：仅 SUPER 操作者本人可对其操作（禁用/改角色/重置密码/解锁等一律拦截） */
+function assertNotSuperTarget(targetRole: string, operatorRole: string): void {
+  if (targetRole === "SUPER" && operatorRole !== "SUPER") {
+    throw new AppError(ERROR_CODES.FORBIDDEN, "最高权限者账号不可被其他账号操作");
+  }
+}
+
+/** 改角色 — USER/BRAND/CUSTOMER_SERVICE/ADMIN 互转；不可操作自己 */
 export async function setUserRole(
   userId: string,
   role: UserRoleOp,
   operatorId: string,
+  operatorRole: string,
 ): Promise<void> {
   await prisma.$transaction(async (tx) => {
     if (userId === operatorId) {
       throw new AppError(ERROR_CODES.CANNOT_OPERATE_SELF, "不能修改自己的角色");
     }
     const target = await getTargetUser(tx, userId);
+    assertNotSuperTarget(target.role, operatorRole);
     if (target.role === role) return; // 幂等：角色未变不落审计
     const updated = await tx.user.updateMany({
       where: { id: userId, role: target.role }, // 读后守卫，防并发覆盖他人修改
@@ -511,12 +521,14 @@ export async function setUserStatus(
   userId: string,
   status: UserStatusOp,
   operatorId: string,
+  operatorRole: string,
 ): Promise<void> {
   await prisma.$transaction(async (tx) => {
     if (userId === operatorId) {
       throw new AppError(ERROR_CODES.CANNOT_OPERATE_SELF, "不能禁用/启用自己");
     }
     const target = await getTargetUser(tx, userId);
+    assertNotSuperTarget(target.role, operatorRole);
     if (target.status === status) return;
     const updated = await tx.user.updateMany({
       where: { id: userId, status: target.status },
@@ -537,9 +549,14 @@ export async function setUserStatus(
 }
 
 /** 解锁 — 仅锁定（lockUntil 未过期）用户可解锁；未锁定 409 */
-export async function unlockUser(userId: string, operatorId: string): Promise<void> {
+export async function unlockUser(
+  userId: string,
+  operatorId: string,
+  operatorRole: string,
+): Promise<void> {
   await prisma.$transaction(async (tx) => {
     const target = await getTargetUser(tx, userId);
+    assertNotSuperTarget(target.role, operatorRole);
     if (!target.lockUntil || target.lockUntil <= new Date()) {
       throw new AppError(ERROR_CODES.USER_NOT_LOCKED, "该用户未处于锁定状态");
     }
@@ -559,13 +576,15 @@ export async function resetPassword(
   userId: string,
   tempPassword: string,
   operatorId: string,
+  operatorRole: string,
 ): Promise<{ tempPassword: string }> {
   if (!/^.{6,20}$/.test(tempPassword)) {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "临时密码需 6-20 位");
   }
   const passwordHash = await hashPassword(tempPassword);
   await prisma.$transaction(async (tx) => {
-    await getTargetUser(tx, userId); // 不存在 → 404，避免对不存在用户「成功」
+    const target = await getTargetUser(tx, userId); // 不存在 → 404，避免对不存在用户「成功」
+    assertNotSuperTarget(target.role, operatorRole);
     await tx.user.updateMany({
       where: { id: userId },
       data: { passwordHash, failedLoginAttempts: 0, lockUntil: null },
@@ -578,9 +597,14 @@ export async function resetPassword(
 }
 
 /** 清除年龄验证 — ageVerified → false（用户下次需重新过年龄门禁） */
-export async function clearAgeVerification(userId: string, operatorId: string): Promise<void> {
+export async function clearAgeVerification(
+  userId: string,
+  operatorId: string,
+  operatorRole: string,
+): Promise<void> {
   await prisma.$transaction(async (tx) => {
     const target = await getTargetUser(tx, userId);
+    assertNotSuperTarget(target.role, operatorRole);
     if (!target.ageVerified) return; // 幂等：已未验证不落审计
     const updated = await tx.user.updateMany({
       where: { id: userId, ageVerified: true },

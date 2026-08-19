@@ -1331,8 +1331,11 @@ function UsersTab() {
                 <tr key={u.id} className="border-b border-gray-50 last:border-0">
                   <td className="max-w-[110px] truncate px-3 py-2 text-xs text-gray-400">{u.id}</td>
                   <td className="px-4 py-3">
-                    {isSelf ? (
-                      <span className="text-sm">{u.role}</span>
+                    {isSelf || u.role === "SUPER" ? (
+                      // SUPER 最高权限者只读（不可被其他账号改角色）；自己不可改
+                      <span className="text-sm">
+                        {u.role === "SUPER" ? "SUPER（最高权限者）" : u.role}
+                      </span>
                     ) : (
                       <select
                         value={u.role}
@@ -1340,7 +1343,7 @@ function UsersTab() {
                         onChange={(e) => handleRoleChange(u, e.target.value)}
                         className="rounded-lg border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-primary disabled:opacity-50"
                       >
-                        {["USER", "BRAND", "ADMIN"].map((r) => (
+                        {["USER", "BRAND", "CUSTOMER_SERVICE", "ADMIN"].map((r) => (
                           <option key={r} value={r}>{r}</option>
                         ))}
                       </select>

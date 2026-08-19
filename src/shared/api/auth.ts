@@ -16,8 +16,16 @@ export async function authenticate(req: Request): Promise<string> {
 
 export interface AuthUserContext {
   userId: string;
-  role: "USER" | "BRAND" | "ADMIN";
+  role: "USER" | "BRAND" | "CUSTOMER_SERVICE" | "ADMIN" | "SUPER";
 }
+
+// 角色组常量：守卫参数集中定义，避免散落各处漏改
+/** 管理后台（平台管理：用户/品牌/商品/邀请码/质检模板） */
+export const ADMIN_ROLES = ["ADMIN", "SUPER"] as const;
+/** 客服工作台（/service） */
+export const SERVICE_ROLES = ["CUSTOMER_SERVICE", "SUPER"] as const;
+/** 订单售后（看订单 + 发货/送达/完成/退款）：客服亦可操作 */
+export const AFTERSALES_ROLES = ["ADMIN", "SUPER", "CUSTOMER_SERVICE"] as const;
 
 /**
  * 从请求 Cookie 中提取 Access Token 并验证用户身份（返回完整上下文含角色）
@@ -47,7 +55,7 @@ export async function authenticateUser(req: Request): Promise<AuthUserContext> {
  */
 export async function requireRole(
   req: Request,
-  roles: string[],
+  roles: readonly string[],
 ): Promise<AuthUserContext> {
   const user = await authenticateUser(req);
   if (!roles.includes(user.role)) {
