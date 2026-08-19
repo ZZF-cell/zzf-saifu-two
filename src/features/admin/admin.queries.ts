@@ -309,7 +309,7 @@ export async function getAdminProductDetail(productId: string): Promise<AdminPro
 
 export interface AdminOrderRow {
   id: string;
-  userId: string;
+  userId: string | null; // 注销后置空 → 匿名订单
   buyerNickname: string | null;
   /** 收货人信息（姓名 + 脱敏手机号 + 城市），配送地址解密而来 */
   recipient: { name: string; phone: string; city: string } | null;
@@ -390,7 +390,7 @@ export async function getAdminOrders(params: {
       return {
         id: o.id,
         userId: o.userId,
-        buyerNickname: o.user.nickname,
+        buyerNickname: o.user?.nickname ?? null,
         recipient,
         total: o.total,
         status: o.status,
@@ -484,7 +484,7 @@ export interface AdminInviteCodeRow {
   id: string;
   code: string;
   status: string; // UNUSED | USED | DISABLED | EXPIRED（EXPIRED 为推导态，不落库）
-  createdBy: string;
+  createdBy: string | null; // 创建人（注销后置空）
   usedBy: string | null;
   createdAt: Date;
   usedAt: Date | null;

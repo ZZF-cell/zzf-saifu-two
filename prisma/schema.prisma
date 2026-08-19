@@ -20,7 +20,8 @@ model User {
   phoneHash    String   @unique
   passwordHash String?
   nickname     String?
-  role         String   @default("USER") // USER | BRAND | ADMIN
+  avatarUrl    String?  // 头像（OSS 公开 URL，消费侧 isOssUrl 校验）
+  role         String   @default("USER") // USER | BRAND | ADMIN | SUPER
   status       String   @default("ACTIVE") // ACTIVE | DISABLED（管理后台禁用/启用；禁用用户不可登录）
   ageVerified  Boolean  @default(false)
   failedLoginAttempts Int      @default(0) // 密码登录连续失败次数（≥5 触发锁定）
@@ -77,13 +78,13 @@ model InviteCode {
   id        String   @id @default(cuid())
   code      String   @unique          // 邀请码明文（统一大写），自然键（upsert 键）
   status    String   @default("UNUSED") // UNUSED | USED | DISABLED（EXPIRED 由 expiresAt 读取时推导，不落库；DISABLED 为管理端主动作废）
-  createdBy String
+  createdBy String?                   // 创建人（注销置空，保留邀请码历史）
   usedBy    String?                    // 使用用户 id（仅参考，无外键约束，参照 OrderItem.productId 模式）
   createdAt DateTime @default(now())
   usedAt    DateTime?
   expiresAt DateTime?                  // 过期时间（null = 永不过期）
 
-  creator User @relation("InviteCreator", fields: [createdBy], references: [id])
+  creator User? @relation("InviteCreator", fields: [createdBy], references: [id])
 }
 
 // ═══════════════════════════════════
@@ -133,7 +134,7 @@ model CartItem {
 // ═══════════════════════════════════
 model Order {
   id              String   @id @default(cuid())
-  userId          String
+  userId          String?                  // 注销置空 → 订单历史匿名保留（订单数据本体与地址均不删除）
   total           Int                      // 下单快照总价（分）
   status          String   @default("PENDING")
   // PENDING → PAID → SHIPPED → DELIVERED → COMPLETED
@@ -154,7 +155,7 @@ model Order {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  user  User        @relation(fields: [userId], references: [id])
+  user  User?       @relation(fields: [userId], references: [id])
   items OrderItem[]
 
   @@index([userId, createdAt(sort: Desc)])
