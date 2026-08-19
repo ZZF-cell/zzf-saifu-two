@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type {
@@ -432,9 +432,13 @@ export function ServiceCenterPage() {
 function TicketsWorkbench() {
   const [items, setItems] = useState<TicketSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [statusFilter, setStatusFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [keyword, setKeyword] = useState("");
+
+  // 筛选切换时保留旧列表，仅首载显示骨架 → 消除列表高度塌缩抖动
+  const loadedOnce = useRef(false);
 
   // 详情视图（选中工单后替换列表）
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -445,7 +449,8 @@ function TicketsWorkbench() {
   const [actionError, setActionError] = useState("");
 
   const fetchList = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
+    setRefreshing(true);
     try {
       const qs = new URLSearchParams();
       if (statusFilter) qs.set("status", statusFilter);
@@ -454,7 +459,9 @@ function TicketsWorkbench() {
       const data = await apiCall("GET", `/api/service/tickets?${qs.toString()}`);
       setItems(data.items ?? []);
     } catch { /* 筛选失败静默，保留上次列表 */ } finally {
+      loadedOnce.current = true;
       setLoading(false);
+      setRefreshing(false);
     }
   }, [statusFilter, categoryFilter, keyword]);
 
@@ -641,7 +648,8 @@ function TicketsWorkbench() {
       ) : items.length === 0 ? (
         <div className="py-16 text-center text-gray-400">暂无匹配工单</div>
       ) : (
-        items.map((t) => {
+        <div className={`space-y-3 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
+          {items.map((t) => {
           const badge = STATUS_BADGE[t.status] ?? STATUS_BADGE.OPEN;
           return (
             <button
@@ -677,7 +685,8 @@ function TicketsWorkbench() {
               )}
             </button>
           );
-        })
+          })}
+        </div>
       )}
     </div>
   );
@@ -700,12 +709,17 @@ interface ServiceOrder {
 function OrdersWorkbench() {
   const [orders, setOrders] = useState<ServiceOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
 
+  // 筛选切换时保留旧列表，仅首载显示骨架 → 消除列表高度塌缩抖动
+  const loadedOnce = useRef(false);
+
   const fetchOrders = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
+    setRefreshing(true);
     try {
       const url = `/api/admin/orders?pageSize=50${statusFilter ? `&status=${statusFilter}` : ""}`;
       const data = await apiCall("GET", url);
@@ -713,7 +727,9 @@ function OrdersWorkbench() {
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "订单加载失败");
     } finally {
+      loadedOnce.current = true;
       setLoading(false);
+      setRefreshing(false);
     }
   }, [statusFilter]);
 
@@ -757,7 +773,8 @@ function OrdersWorkbench() {
           {statusFilter ? "该状态下暂无订单" : "暂无订单"}
         </div>
       ) : (
-        orders.map((o) => (
+        <div className={`space-y-3 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
+          {orders.map((o) => (
           <div key={o.id} className="rounded-2xl border border-gray-100 p-5">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -828,7 +845,8 @@ function OrdersWorkbench() {
               )}
             </div>
           </div>
-        ))
+          ))}
+        </div>
       )}
     </div>
   );

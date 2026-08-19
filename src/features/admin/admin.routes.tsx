@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { apiFetch } from "@/shared/api/client";
 import { fenToYuan } from "@/shared/utils/money";
 import { SiteHeader } from "@/shared/ui/SiteHeader";
@@ -954,17 +954,24 @@ function OrdersTab({
 }) {
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState("");
 
+  // 筛选切换时保留旧列表，仅首载显示骨架 → 消除列表高度塌缩抖动
+  const loadedOnce = useRef(false);
+
   const fetchOrders = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
+    setRefreshing(true);
     try {
       const url = `/api/admin/orders?pageSize=50${statusFilter ? `&status=${statusFilter}` : ""}`;
       const data = await apiCall("GET", url);
       setOrders(data.orders || []);
     } catch { /* 静默 */ } finally {
+      loadedOnce.current = true;
       setLoading(false);
+      setRefreshing(false);
     }
   }, [statusFilter]);
 
@@ -1008,7 +1015,8 @@ function OrdersTab({
           {statusFilter ? "该状态下暂无订单" : "暂无订单"}
         </div>
       ) : (
-        orders.map((o) => (
+        <div className={`space-y-3 transition-opacity duration-200 ${refreshing ? "opacity-60" : ""}`}>
+          {orders.map((o) => (
           <div key={o.id} className="rounded-2xl border border-gray-100 p-5">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -1079,7 +1087,8 @@ function OrdersTab({
               )}
             </div>
           </div>
-        ))
+          ))}
+        </div>
       )}
     </div>
   );
