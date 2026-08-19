@@ -56,8 +56,9 @@ npm run dev                       # 启动开发服务器 → http://localhost:3
 | 角色 | 手机号 | 密码 | 权限 |
 |------|--------|------|------|
 | 最高权限者（SUPER，唯一） | 19968506071 | 短信登录 | 全部权限；**不可被其他账号操作**（改角色/禁用/注销均被拒） |
-| 管理员 | 13900000000 | — | 管理后台全部功能（品牌审核/商品质检/订单管理/用户管理/质检模板/邀请码管理/数据看板） |
-| 客服 | 13700000000 | — | `/service` 客服工作台：咨询工单处理 + 订单售后（发货/送达/完成/退款） |
+| 管理员 | 13900000000 | — | 管理中心全部功能（品牌审核/订单管理/用户管理/邀请码管理/数据看板） |
+| 客服一/二/三 | 13700000000 / 13700000001 / 13700000002 | — | `/service` 客服中心：咨询工单处理 + 订单售后（发货/送达/完成/退款） |
+| 质检员 | 13700000003 | — | `/inspect` 质检中心：商品审核（待审审核通过/驳回）+ 质检模板管理 |
 | 普通用户 | 13800138000 | 123456 | 浏览商品、购物车、下单、支付、退款、销毁订单、咨询工单、账号安全设置 |
 | 品牌方 | 13888888888 | — | 品牌后台（提交商品/查看订单/品牌资料/数据看板） |
 
@@ -86,7 +87,7 @@ npx prisma db seed                 # 重新填充种子数据
 
 ### Mock 数据策略
 
-- **开发环境**：使用 `prisma/seed.ts` 生成的种子数据（含三个角色测试账号 + 示例商品 + 种子邀请码 `INVITE-BRAND-101/102` + **8 笔覆盖全部状态的演示订单** + **5 个大类质检模板**，可直接用于入驻演示与后台验收）
+- **开发环境**：使用 `prisma/seed.ts` 生成的种子数据（含全角色测试账号：SUPER/管理员/客服一·二·三/质检员/普通用户/品牌方 + 示例商品 + 种子邀请码 `INVITE-BRAND-101/102` + **8 笔覆盖全部状态的演示订单** + **5 个大类质检模板**，可直接用于入驻演示与后台验收）
 - **短信**：已接入阿里云双通道（`shared/adapters/sms.adapter.ts`，`SMS_BACKEND` 切换）——`send-sms`（短信服务 SendSms，自定义审核签名/模板）与 `dypns-send-verify-code`（号码认证-短信认证，系统赠送签名/模板，**验证码专用通道**，敏感行业可免自定义签名审核；验证码由阿里云生成、`ReturnVerifyCode` 回传自核验）；配齐密钥/签名/模板后真实送达手机，任一缺失则回退终端日志。**本地 `.env.local` 已移除真实密钥 → 恒走 dev-fallback**（验证码终端日志 + `DEMO_SMS_ECHO=true` 页面回显，不产生短信费用）；真实发送依赖生产 Vercel env
 - **支付 Mock**：使用支付宝沙箱环境，测试用买家账号付款不会产生真实资金流转
 - **Inngest 本地**：`npx inngest-cli dev` 提供完整的本地函数执行环境，无需连接 Inngest Cloud
@@ -124,7 +125,7 @@ npx prisma db seed                 # 重新填充种子数据
 
 | 模块 | 状态 | 功能 | 技术实现 |
 |------|------|------|---------|
-| **管理后台** | ✅ 已完成 | 数据看板（统计卡可跳转 + 近 7 天销售/状态分布/品类分布图表；**商品数=在售口径仅 APPROVED**，下架/拒绝/撤回不计入，已下架独立卡片）、品牌审核（待审/已拒绝状态筛选，可重审通过或删除）、商品质检（详情含品类质检清单 + 已提交证书「已交/缺」对照）、订单管理（发货/送达/完成/退款，行展示买家/收货人脱敏/件数）、用户管理（改角色/禁用启用/解锁/重置密码/清除年龄验证）、质检模板增删改 | `features/admin/`；所有状态变更用 `updateMany` 状态守卫（防并发重复操作），与审计日志在同一 `$transaction`（审计失败整体回滚，不留「状态已变但无审计」的账）；重复审核返回 409 区分「不存在」404；用户管理禁止操作自己（403）；看板品类商品数分布图与「在售商品」卡同口径（仅 APPROVED），图卡不矛盾 |
+| **管理后台** | ✅ 已完成 | 数据看板（统计卡可跳转 + 近 7 天销售/状态分布/品类分布图表；**商品数=在售口径仅 APPROVED**，下架/拒绝/撤回不计入，已下架独立卡片）、品牌审核（待审/已拒绝状态筛选，可重审通过或删除）、订单管理（发货/送达/完成/退款，行展示买家/收货人脱敏/件数）、用户管理（改角色/禁用启用/解锁/重置密码/清除年龄验证）、邀请码管理 | `features/admin/`；**商品质检/质检模板已按职责移入 `/inspect` 质检中心（守卫 INSPECT_ROLES），管理后台不再含质检 Tab**；所有状态变更用 `updateMany` 状态守卫（防并发重复操作），与审计日志在同一 `$transaction`（审计失败整体回滚，不留「状态已变但无审计」的账）；重复审核返回 409 区分「不存在」404；用户管理禁止操作自己（403）；看板品类商品数分布图与「在售商品」卡同口径（仅 APPROVED），图卡不矛盾 |
 | **品牌方后台** | ✅ 已完成 | 品牌概览、提交新商品（随附检测证书）、商品列表、订单查看、品牌资料 | `features/brand/`；品牌订单/销售额只聚合本品牌商品行（`OrderItem.price` 行总额之和，**price 已含 ×qty 不可再乘**），混合品牌订单不整单全额重复计入；品牌无商品时直接返回零统计，绝不查询全平台数据（防跨租户泄漏）；**概览订单数/销售额与个人中心订单统计同口径过滤已销毁订单**（`destroyedAt IS NULL`，已销毁订单用户/品牌侧均不可见不计数）；提交/编辑商品按品类 `CategoryAuditTemplate.requiredDocs` 展示必交材料清单，可上传证书（图片/PDF）随商品提交 |
 | **订单超时自动取消** | ✅ 已完成 | 下单 30 分钟未支付自动取消并回补库存 | `inngest/functions/order-timeout-cancel.ts`：`order/created` 事件 → `step.sleep(30min)` → `cancelExpiredOrder`（**updateMany 状态守卫先于回补库存**，防并发双重回补）；下单时用 `next/server` 的 `after()` 保证 serverless 中事件投递完成 |
 | **确认收货 + 7 天自动确认** | ✅ 已完成 | 用户确认收货（DELIVERED→COMPLETED）后订单可一键销毁；送达 7 天未确认由系统自动完成 | `confirmReceipt`（归属校验 + `updateMany` 带 `status=DELIVERED` 守卫，与后台 `completeOrder`/自动确认并发只命中一次）+ `inngest/functions/order-delivery-complete-sweep.ts`（每天 3 点 cron 扫 `deliveredAt < now-7d` 的 DELIVERED 订单，`autoCompleteDeliveredOrder` 非 DELIVERED 静默 no-op）；三入口共用 `AUTO_CONFIRM_RECEIPT_MS`=7 天窗口 |
@@ -134,9 +135,10 @@ npx prisma db seed                 # 重新填充种子数据
 | **商品生命周期** | ✅ 已完成 | 撤回待审 / 下架 / 重新上架 / 编辑（双方同状态机）+ 管理员完整审核详情 | `features/brand` 与 `features/admin` 同一套状态机（status 为 String 无需迁移）：`PENDING`→`WITHDRAWN`（品牌撤回）；`APPROVED`⇄`DELISTED`（品牌/管理员可做，重新上架不重质检）；编辑商品「基本信息变更→回 `PENDING` 重审、仅改运营信息（价格/库存）→直改」。**检测证书（`certificates`）属基本信息，仅改证书也会触发重审**。所有变更用 `updateMany` 状态守卫（含品牌侧 `brandId` 归属守卫，越权 403）+ `version:{increment:1}` + AuditLog（snapshot 存 before/after）；守卫 0 行二次 `findUnique` 区分 404/403/409。公开商品详情仅放行 `APPROVED`（DB 层过滤，下架/待审深链 404）。管理端 `GET /api/admin/products/[id]` 返回完整信息 + 品类质检清单 + 已提交证书，审核决策信息闭环 |
 | **微信支付** | ⏳ 待开发 | 接入微信支付 SDK | `shared/adapters/payment.adapter.ts` 定义 `PaymentAdapter` 接口，微信支付实现同一接口；回调幂等逻辑直接复用 `payment.callback.ts` 的 `updateMany` 模式 |
 | **实名认证** | ⏳ 适配器占位已就绪 | 对接实名认证服务 | `shared/adapters/realname.adapter.ts` 已定义 `RealNameAdapter` 接口 + 身份证二要素演示 provider（`REALNAME_MOCK=true`，格式预检 + 演示通过；未配置时安全降级拒绝，与支付适配器一致）。真实服务商接入时实现同一接口替换；用户表增加 `realNameVerified` 字段（待接服务商时落地），不影响现有登录流程 |
-| **角色体系（四级+客服）** | ✅ 已完成 | SUPER（唯一 19968506071）> ADMIN > CUSTOMER_SERVICE > BRAND > USER | `shared/auth/middleware.ts` + `shared/api/auth.ts` 角色组常量（`ADMIN_ROLES`/`SERVICE_ROLES`/`AFTERSALES_ROLES`）；`/admin`→ADMIN+SUPER、`/service`→客服+SUPER、`/brand`→BRAND；**SUPER 唯一、不可授予、不可被其他账号操作**（`admin.service` 非 SUPER 操作 SUPER 目标 403；注销 SUPER 被拒）；角色下拉不含 SUPER（只读标签） |
+| **角色体系（五级+质检员）** | ✅ 已完成 | SUPER（唯一 19968506071）> ADMIN > QUALITY_INSPECTOR > CUSTOMER_SERVICE > BRAND > USER | `shared/auth/middleware.ts` + `shared/api/auth.ts` 角色组常量（`ADMIN_ROLES`/`SERVICE_ROLES`/`INSPECT_ROLES`/`AFTERSALES_ROLES`）；`/admin`→ADMIN+SUPER、`/service`→客服+SUPER、`/inspect`→质检员+SUPER、`/brand`→BRAND；**登录后互不干扰**：SiteHeader 导航按角色收敛（USER 购物车+品牌方入驻；BRAND 品牌中心；客服 客服中心；质检员 质检中心；ADMIN 管理中心；SUPER 全部中心）；**SUPER 唯一、不可授予、不可被其他账号操作**（`admin.service` 非 SUPER 操作 SUPER 目标 403；注销 SUPER 被拒）；角色下拉不含 SUPER（只读标签），管理员可授予 QUALITY_INSPECTOR |
 | **咨询工单系统** | ✅ 已完成 | 用户端 `POST /api/tickets`（创建）/列表/详情/回复；客服端 `/service` 工作台筛选/对话/改状态 | `features/service/`：`ServiceTicket`+`ServiceTicketMessage`（消息带角色快照 + `isRead` 客服未读）；工单状态 `OPEN→PROCESSING→RESOLVED/CLOSED`（CLOSED 禁回复、RESOLVED 用户再回复自动重开）；**归属失败统一 404**（防工单号/订单号枚举）；客服回复置已读、打开详情即已读；注销时工单/消息 `userId`/`senderId` 置空匿名保留 |
-| **客服工作台（订单售后）** | ✅ 已完成 | `/service` Tab2 订单售后：查询全部订单 + 发货/送达/完成/退款 | 复用 `GET /api/admin/orders` + 售后端点（`AFTERSALES_ROLES` 含客服），`features/service/` 独立工作台；退款回补库存与审计同事务（复用 `admin.service`） |
+| **客服中心（订单售后）** | ✅ 已完成 | `/service` Tab2 订单售后：查询全部订单 + 发货/送达/完成/退款 | 复用 `GET /api/admin/orders` + 售后端点（`AFTERSALES_ROLES` 含客服），`features/service/` 独立工作台（`WorkbenchHeader` 仅品牌+工作台名+主页面/个人中心/退出，**不带主站购物车/入驻导航**）；退款回补库存与审计同事务（复用 `admin.service`） |
+| **质检中心** | ✅ 已完成 | `/inspect` 质检中心：Tab1 商品质检（待审审核通过/驳回，详情含品类质检清单 + 已提交证书「已交/缺」对照）+ Tab2 质检模板增删改 | `features/inspect/` 独立工作台（`WorkbenchHeader`）；商品/模板端点复用 `/api/admin/products*`、`/api/admin/audit-templates*`，守卫改为 `INSPECT_ROLES`（质检员+SUPER），与 `/admin` 职责彻底隔离；Tab 切换保留旧列表防抖动（`loadedOnce`+`refreshing`） |
 | **账号信息栏功能** | ✅ 已完成 | 改手机号（新号短信验证）、自主注销（硬删除）、上传头像、设置/修改密码 | `features/user/`：`changePhone`（复用 `auth.verifyAndConsumeCode` + 捕 P2002 → PHONE_ALREADY_EXISTS + 清旧号验证码）；`deleteAccount`（SUPER 拦截 / 已入驻品牌 409 `ACCOUNT_HAS_BRAND` / 有密码验旧；事务内订单/邀请码/工单匿名化 + 删会话/购物车/验证码/User）；`updateAvatar`（`isOssUrlOwnedBy` 归属校验，`purpose=avatar`）；`changePassword`（无密码设首密 / 有密码验旧）；`getProfile` 回 `avatarUrl`+`hasPassword`（passwordHash 剥除不外泄） |
 
 > **技术债预警原则**：每个二期功能的 `features/` 模块是独立的，不跨模块修改，只通过现有 Public API 或新增 Adapter 扩展。如果某个功能需要修改现有模块的内部实现，说明边界设计需要调整。
@@ -195,9 +197,13 @@ src/
 │   │
 │   ├── admin/                       # 管理后台模块
 │   │   ├── index.ts
-│   │   ├── admin.api.ts             #   品牌审核/商品质检/订单管理/用户管理/看板/质检模板
+│   │   ├── admin.api.ts             #   品牌审核/订单管理/用户管理/看板/邀请码 + 商品质检/质检模板（守卫 INSPECT_ROLES 供 /inspect 复用）
 │   │   ├── admin.service.ts        #   状态变更（updateMany 守卫 + 审计同事务）+ 用户操作（角色/禁用/解锁/重置密码）
 │   │   └── admin.queries.ts        #   后台查询 + 看板统计（7 天销售/状态分布/品类分布）
+│   │
+│   ├── inspect/                     # 质检中心模块（/inspect：商品审核 + 质检模板，职责隔离）
+│   │   ├── index.ts
+│   │   └── inspect.routes.tsx      #   质检中心页（商品质检 + 质检模板 Tab；独立工作台 WorkbenchHeader）
 │   │
 │   ├── brand/                       # 品牌方后台模块
 │   │   ├── index.ts
@@ -211,6 +217,13 @@ src/
 │   │   ├── invite.routes.tsx        #   入驻激活页（/invite：邀请码+品牌资料）
 │   │   ├── invite.api.ts            #   POST /api/invite/activate
 │   │   └── invite.service.ts        #   原子消耗邀请码 + 创建 PENDING 品牌
+│   │
+│   ├── service/                     # 客服中心模块（/service：咨询工单 + 订单售后，独立工作台）
+│   │   ├── index.ts
+│   │   ├── service.routes.tsx      #   客服中心页 + 用户端 /tickets 咨询页
+│   │   ├── service.api.ts           #   POST/GET /api/tickets + /api/service/tickets*
+│   │   ├── service.service.ts       #   工单创建/归属校验/状态流转/回复置已读
+│   │   └── service.queries.ts       #   工单查询（归属/未读）
 │   │
 │   ├── upload/                      # 上传模块（商品/品牌图片 + 检测证书）
 │   │   ├── index.ts
@@ -247,7 +260,9 @@ src/
 │   └── ui/                         #   自定义 UI（非 shadcn 源，可改）
 │       ├── Image.tsx               #   双源图片（OSS URL + base64）+ 统一占位图
 │       ├── image-source.ts         #   resolveImageSource 纯函数
-│       └── SiteHeader.tsx          #   登录态感知全局导航（按角色显示购物车/入驻/后台）
+│       ├── SiteHeader.tsx          #   登录态感知全局导航（按角色收敛：个人中心 + 职责中心；SUPER 全部）
+│       ├── WorkbenchHeader.tsx     #   独立工作台头部（客服中心/质检中心：品牌+工作台名+主页面/个人中心/退出）
+│       └── ConfirmModal.tsx        #   通用确认弹窗（管理用户操作/质检模板删除复用）
 │
 ├── app/                             # Next.js App Router 入口
 │   ├── layout.tsx                   #   根布局（PWA Manifest）
@@ -256,7 +271,7 @@ src/
 │   ├── page.tsx                     #   首页 = 商品列表
 │   ├── age-gate/                    #   年龄验证门禁（拒绝 → 硬性阻止页）
 │   ├── (auth)/                      #   登录/注册
-│   ├── admin/ brand/ cart/ checkout/ orders/ products/
+│   ├── admin/ inspect/ service/ brand/ cart/ checkout/ orders/ products/ tickets/
 │   └── api/                         #   Route Handlers（薄转发层，逻辑在 features/）
 │       ├── auth/ ... orders/ cart/ user/ products/ pay/ admin/ brand/ inngest/
 │       └── user/profile/            #   个人信息路由（GET/PATCH）
@@ -284,7 +299,7 @@ features/orders/                   features/orders/
 
 | 模型 | 关键字段 | 说明 | Trade-off 备注 |
 |------|---------|------|---------------|
-| User | phoneHash, passwordHash, role, **status**, ageVerified, **avatarUrl**, **failedLoginAttempts, lockUntil** | 用户（角色: USER/BRAND/CUSTOMER_SERVICE/ADMIN/SUPER）| 手机号不存明文，仅存 `pepper + SHA-256` 哈希；密码存 **scrypt 慢哈希**（格式 `scrypt.salt.hash`，旧 SHA-256 兼容并在登录成功时自动升级）；`failedLoginAttempts`/`lockUntil` 实现密码爆破防护（连续失败 ≥5 次锁定 15 分钟）；`status`（`ACTIVE`/`DISABLED`）供管理员禁用/启用，**禁用用户登录直接 403**，不逐请求查库（access token 15min 内仍有效，可接受）；角色用枚举约束避免权限越界；**SUPER 唯一（19968506071）且不可被其他账号操作**；`avatarUrl` 为 OSS 公开 URL（消费侧 `isOssUrlOwnedBy` 校验归属）；**注销 = 硬删除**：订单/邀请码/工单 `userId` 置空匿名保留，RefreshToken/CartItem/VerificationCode 随用户删除 |
+| User | phoneHash, passwordHash, role, **status**, ageVerified, **avatarUrl**, **failedLoginAttempts, lockUntil** | 用户（角色: USER/BRAND/CUSTOMER_SERVICE/QUALITY_INSPECTOR/ADMIN/SUPER）| 手机号不存明文，仅存 `pepper + SHA-256` 哈希；密码存 **scrypt 慢哈希**（格式 `scrypt.salt.hash`，旧 SHA-256 兼容并在登录成功时自动升级）；`failedLoginAttempts`/`lockUntil` 实现密码爆破防护（连续失败 ≥5 次锁定 15 分钟）；`status`（`ACTIVE`/`DISABLED`）供管理员禁用/启用，**禁用用户登录直接 403**，不逐请求查库（access token 15min 内仍有效，可接受）；角色用枚举约束避免权限越界；**SUPER 唯一（19968506071）且不可被其他账号操作**；`avatarUrl` 为 OSS 公开 URL（消费侧 `isOssUrlOwnedBy` 校验归属）；**注销 = 硬删除**：订单/邀请码/工单 `userId` 置空匿名保留，RefreshToken/CartItem/VerificationCode 随用户删除 |
 | RefreshToken | userId, tokenHash, expiresAt, revokedAt | JWT Refresh Token Rotation | 存 SHA-256 Hash 而非原文——即使 DB 泄露也无法伪造 Token；清理为**惰性**：refresh 轮换事务内顺带删除该用户已过期 token（无独立定时任务）；`revokedAt` 软吊销留痕供重放检测 |
 | VerificationCode | phoneHash, **codeHash**, expiresAt, **attempts** | 短信验证码（手机号哈希关联）| 不存明文手机号（同 User.phoneHash 规则）；**验证码只存 SHA-256 哈希（codeHash）**，比对在服务端对输入同样哈希后进行——防 DB 泄露/备份泄露时验证码明文被直接用于接管账号；`attempts` 验证码错误尝试计数，≥5 次删除记录（防在线爆破）；索引 `(phoneHash, createdAt)` 支持滑动窗口查询 |
 | Brand | name, status, inviteCode, ownerId | 品牌（归属用户 + 邀请码）| ownerId 指向 User，一个用户只能拥有一个品牌，防止品牌方多账号绕审核 |
@@ -444,6 +459,20 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | POST | `/api/service/tickets/[id]/messages` | 客服回复（角色快照 + 用户未读清零） |
 | GET | `/api/admin/orders` | 订单售后列表（客服可查） |
 
+### 质检中心（QUALITY_INSPECTOR/SUPER）
+> 商品质检与质检模板已按职责移入 `/inspect` 质检中心；端点路径沿用 `/api/admin/*`，守卫为 `INSPECT_ROLES`（质检员+SUPER），管理员不可再访问——职责彻底隔离
+| 方法 | 路由 | 说明 |
+|------|------|------|
+| GET | `/api/admin/products` | 商品列表（可按 status 筛选） |
+| GET | `/api/admin/products/[id]` | 商品详情（完整信息 + 品类质检清单 requiredDocs/checkPoints + 已提交证书 certificates，无模板返回 null） |
+| POST | `/api/admin/products/[id]/review` | 商品质检（PENDING → APPROVED/REJECTED，重复质检 409） |
+| POST | `/api/admin/products/[id]/delist` | 下架（APPROVED → DELISTED，守卫非该状态 409） |
+| POST | `/api/admin/products/[id]/relist` | 重新上架（DELISTED → APPROVED，不重质检） |
+| PATCH | `/api/admin/products/[id]` | 编辑商品（改基本信息→回 PENDING 重审；仅改价格/库存→直改；至少传一个字段） |
+| GET | `/api/admin/audit-templates` | 质检模板列表 |
+| PUT | `/api/admin/audit-templates` | 新增/更新质检模板（categoryId 为键 upsert） |
+| DELETE | `/api/admin/audit-templates?categoryId=` | 删除质检模板（不存在 404） |
+
 ### 商品
 | 方法 | 路由 | 说明 |
 |------|------|------|
@@ -463,22 +492,13 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | GET | `/api/admin/brands` | 品牌列表 |
 | POST | `/api/admin/brands/[id]/review` | 品牌审核（PENDING → APPROVED/REJECTED，重复审核 409） |
 | DELETE | `/api/admin/brands/[id]` | 删除品牌（仅 REJECTED 可删，其余状态 409 `BRAND_NOT_DELETABLE`；删除后可用新邀请码重新入驻） |
-| GET | `/api/admin/products` | 商品列表（可按 status 筛选） |
-| GET | `/api/admin/products/[id]` | 商品详情（完整信息 + 品类质检清单 requiredDocs/checkPoints + 已提交证书 certificates，无模板返回 null） |
-| POST | `/api/admin/products/[id]/review` | 商品质检（PENDING → APPROVED/REJECTED，重复质检 409） |
-| POST | `/api/admin/products/[id]/delist` | 下架（APPROVED → DELISTED，守卫非该状态 409） |
-| POST | `/api/admin/products/[id]/relist` | 重新上架（DELISTED → APPROVED，不重质检） |
-| PATCH | `/api/admin/products/[id]` | 编辑商品（改基本信息→回 PENDING 重审；仅改价格/库存→直改；至少传一个字段） |
 | GET | `/api/admin/orders` | 订单列表（可按 status 筛选；行含买家昵称/收货人脱敏/件数） |
 | POST | `/api/admin/orders/[id]/ship` | 发货（PAID → SHIPPED） |
 | POST | `/api/admin/orders/[id]/deliver` | 标记送达（SHIPPED → DELIVERED） |
 | POST | `/api/admin/orders/[id]/complete` | 标记完成（DELIVERED → COMPLETED） |
 | POST | `/api/admin/orders/[id]/refund-confirm` | 确认退款（REFUND_REQUESTED → REFUNDED） |
 | GET | `/api/admin/users` | 用户列表（含角色/状态/锁定/年龄验证） |
-| PATCH | `/api/admin/users/[id]` | 用户管理操作（`action`: `setRole`/`setStatus`/`unlock`/`resetPassword`/`clearAgeVerification`；禁止操作自己 403；`resetPassword` 返回一次临时密码；未锁定解锁 409） |
-| GET | `/api/admin/audit-templates` | 质检模板列表 |
-| PUT | `/api/admin/audit-templates` | 新增/更新质检模板（categoryId 为键 upsert） |
-| DELETE | `/api/admin/audit-templates?categoryId=` | 删除质检模板（不存在 404） |
+| PATCH | `/api/admin/users/[id]` | 用户管理操作（`action`: `setRole`/`setStatus`/`unlock`/`resetPassword`/`clearAgeVerification`；`setRole` 可授予 `USER`/`BRAND`/`CUSTOMER_SERVICE`/`QUALITY_INSPECTOR`/`ADMIN`（不含 SUPER）；禁止操作自己 403；`resetPassword` 返回一次临时密码；未锁定解锁 409） |
 | GET | `/api/admin/invite-codes` | 邀请码列表（分页，状态含推导态 EXPIRED） |
 | POST | `/api/admin/invite-codes` | 批量生成邀请码（INV-XXXX-XXXX，逐码审计留痕） |
 | POST | `/api/admin/invite-codes/[code]/revoke` | 作废邀请码（置 DISABLED，仅 UNUSED 可作废；已使用/已作废 409，不存在 404） |
@@ -589,12 +609,13 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 |------|---------|---------|
 | 游客 | `/` `/products/*` `/login` `/register` `/invite` | 无 |
 | USER | 上面 + `/cart` `/checkout` `/orders/*` `/account` `/tickets/*` | 下单、查看/取消/退款/销毁自己的订单、购物车、个人信息、咨询工单、账号安全（改手机号/头像/密码/注销） |
-| 品牌方 | USER + `/brand/*` | 提交商品、查看品牌数据 |
-| CUSTOMER_SERVICE | USER + `/service` | 咨询工单处理 + 订单售后（发货/送达/完成/退款） |
-| ADMIN | 全部 + `/admin/*` | 管理所有品牌/商品/订单/用户/质检模板/邀请码 |
-| SUPER | 全部（唯一 19968506071） | 全部权限；**不可被其他账号操作**（改角色/禁用/注销均被拒） |
+| 品牌方 | 个人中心 + `/brand/*`（品牌中心） | 提交商品、查看品牌数据 |
+| CUSTOMER_SERVICE | 个人中心 + `/service`（客服中心） | 咨询工单处理 + 订单售后（发货/送达/完成/退款） |
+| QUALITY_INSPECTOR | 个人中心 + `/inspect`（质检中心） | 商品质检（审核通过/驳回）+ 质检模板管理 |
+| ADMIN | 个人中心 + `/admin/*`（管理中心） | 品牌审核/订单管理/用户管理（可授予 QUALITY_INSPECTOR 角色）/邀请码管理/数据看板 |
+| SUPER | 全部中心（唯一 19968506071） | 全部权限；**不可被其他账号操作**（改角色/禁用/注销均被拒） |
 
-> 路由保护由 `middleware.ts` 实现：`/admin/*` 要求 ADMIN+SUPER，`/service` 要求 CUSTOMER_SERVICE+SUPER，`/brand/*` 要求登录且 BRAND 角色；API 层二次校验归属。角色组常量集中在 `shared/api/auth.ts`（`ADMIN_ROLES`/`SERVICE_ROLES`/`AFTERSALES_ROLES`）。
+> **登录后互不干扰**：SiteHeader 导航按角色收敛——USER 购物车+品牌方入驻；BRAND 品牌中心；客服 客服中心；质检员 质检中心；ADMIN 管理中心；SUPER 全部中心。路由保护由 `middleware.ts` 实现：`/admin/*` 要求 ADMIN+SUPER、`/service` 要求 CUSTOMER_SERVICE+SUPER、`/inspect` 要求 QUALITY_INSPECTOR+SUPER、`/brand/*` 要求登录且 BRAND 角色；API 层二次校验归属。角色组常量集中在 `shared/api/auth.ts`（`ADMIN_ROLES`/`SERVICE_ROLES`/`INSPECT_ROLES`/`AFTERSALES_ROLES`）。
 
 > **品牌入驻流程**：游客/USER 在 `/invite` 用管理员发放的邀请码激活品牌（激活只创建 PENDING 品牌，不升级角色）→ 管理员在 `/admin` 审核 → **审核通过时**负责人才升级为 BRAND 角色。当前 access token 15min 内仍携带 USER 角色，需**重新登录**后才可进入 `/brand`。被拒绝的品牌不可再次提交入驻，需联系管理员重新发放邀请码。
 
@@ -665,7 +686,7 @@ npm start
         │ 3 条 │     （Playwright）
         └──────┘
   ┌─────────────────┐
-  │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证（登录/验证码/补设密码/改密/禁用门禁/Refresh Rotation 吊销/原子限流）/管理（用户操作/退款回补库存/品牌重审与删除/看板在售口径）/品牌（证书）/邀请码/上传（配额/角色/魔数加强/PDF）/OSS key 结构与归属校验/客服工单（创建/归属防枚举/状态流转/未读）/用户（改手机号/注销匿名化/头像归属）
+  │    单元测试       │  ← 状态机纯函数、金额/加密工具、订单/支付/认证（登录/验证码/补设密码/改密/禁用门禁/Refresh Rotation 吊销/原子限流）/管理（用户操作/退款回补库存/品牌重审与删除/看板在售口径）/品牌（证书）/邀请码/上传（配额/角色/魔数加强/PDF）/OSS key 结构与归属校验/客服工单（创建/归属防枚举/状态流转/未读）/用户（改手机号/注销匿名化/头像归属）/路由守卫（QUALITY_INSPECTOR 进 /inspect、隔离 /admin）
   │  588 条          │     （Vitest，mock Prisma 与 $transaction）
   └─────────────────┘
 ```
