@@ -15,10 +15,11 @@ import { useRouter } from "next/navigation";
 interface MeUser {
   id: string;
   nickname: string | null;
-  role: "USER" | "BRAND" | "ADMIN";
+  role: "USER" | "BRAND" | "CUSTOMER_SERVICE" | "ADMIN" | "SUPER";
   ageVerified: boolean;
 }
 
+// 角色 → 导航入口（与 shared/auth 的角色组常量同口径）
 const NAV: Record<string, { href: string; label: string }[]> = {
   USER: [
     { href: "/cart", label: "购物车" },
@@ -30,7 +31,17 @@ const NAV: Record<string, { href: string; label: string }[]> = {
     { href: "/account", label: "我的" },
     { href: "/brand", label: "品牌中心" },
   ],
+  CUSTOMER_SERVICE: [
+    { href: "/cart", label: "购物车" },
+    { href: "/account", label: "我的" },
+    { href: "/service", label: "客服工作台" },
+  ],
   ADMIN: [{ href: "/account", label: "我的" }, { href: "/admin", label: "管理后台" }],
+  SUPER: [
+    { href: "/account", label: "我的" },
+    { href: "/admin", label: "管理后台" },
+    { href: "/service", label: "客服工作台" },
+  ],
 };
 
 const GUEST_NAV = [

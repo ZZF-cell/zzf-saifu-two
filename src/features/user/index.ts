@@ -5,3 +5,4 @@ export * as userQueries from "./user.queries";
 export * as userService from "./user.service";
 export type { UserProfile, OrderStats } from "./user.types";
 export { AccountPage } from "./user.routes";
+export { ChangePhoneForm, ChangePasswordForm, DeactivateSection } from "./user.account-forms";
