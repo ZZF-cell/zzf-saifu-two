@@ -34,6 +34,7 @@ model User {
   brand          Brand?           @relation("BrandOwner")
   refreshTokens  RefreshToken[]
   inviteCodesCreated InviteCode[] @relation("InviteCreator")
+  serviceTickets ServiceTicket[]
 }
 
 // ═══════════════════════════════════
@@ -225,6 +226,42 @@ model RateLimitBucket {
 
   @@unique([scope, bucketKey, bucketStart])
   @@index([scope, bucketStart])
+}
+
+// ═══════════════════════════════════
+// 咨询工单（客服处理售前售后）
+// ═══════════════════════════════════
+model ServiceTicket {
+  id        String   @id @default(cuid())
+  userId    String?                  // 提交用户（注销置空 → 匿名工单，对话记录保留）
+  title     String                   // 咨询主题
+  category  String                   // PRESALE | AFTERSALE | OTHER
+  status    String   @default("OPEN") // OPEN | PROCESSING | RESOLVED | CLOSED
+  orderId   String?                  // 关联订单（售后咨询可关联）
+  productId String?                  // 关联商品（售前咨询可关联）
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  closedAt  DateTime?                // 解决/关闭时间
+
+  user     User?                  @relation(fields: [userId], references: [id])
+  messages ServiceTicketMessage[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+}
+
+model ServiceTicketMessage {
+  id         String   @id @default(cuid())
+  ticketId   String
+  senderId   String?                  // 发送者（注销置空）
+  senderRole String                   // USER | CUSTOMER_SERVICE | ADMIN | SUPER（角色快照，注销后仍可辨发言方）
+  content    String
+  isRead     Boolean  @default(false) // 客服未读标记（新用户消息置 false）
+  createdAt  DateTime @default(now())
+
+  ticket ServiceTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
 }
 
 // ═══════════════════════════════════

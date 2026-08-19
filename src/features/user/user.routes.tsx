@@ -24,7 +24,10 @@ async function apiCall(method: string, url: string, body?: Record<string, unknow
 
 const ROLE_LABEL: Record<string, string> = {
   USER: "普通用户",
+  BRAND: "商家",
+  CUSTOMER_SERVICE: "客服",
   ADMIN: "管理员",
+  SUPER: "最高权限者",
 };
 
 export function AccountPage() {
@@ -193,6 +196,10 @@ export function AccountPage() {
           <div className="divide-y divide-gray-100 rounded-xl border border-gray-100">
             <Link href="/cart" className="flex items-center justify-between px-4 py-3 text-sm text-gray-700 transition hover:bg-gray-50">
               我的购物车
+              <span className="text-gray-300">›</span>
+            </Link>
+            <Link href="/tickets" className="flex items-center justify-between px-4 py-3 text-sm text-gray-700 transition hover:bg-gray-50">
+              联系客服
               <span className="text-gray-300">›</span>
             </Link>
             <Link href="/" className="flex items-center justify-between px-4 py-3 text-sm text-gray-700 transition hover:bg-gray-50">

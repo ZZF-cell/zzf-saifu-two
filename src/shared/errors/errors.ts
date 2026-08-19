@@ -55,6 +55,10 @@ export const ERROR_CODES = {
   PAYMENT_SIGNATURE_INVALID: { status: 400, code: "PAYMENT_SIGNATURE_INVALID" },
   PAYMENT_NOT_CONFIGURED: { status: 503, code: "PAYMENT_NOT_CONFIGURED" },
 
+  // 咨询工单
+  TICKET_NOT_FOUND: { status: 404, code: "TICKET_NOT_FOUND" },
+  TICKET_NOT_OWNED: { status: 403, code: "TICKET_NOT_OWNED" },
+
   // 通用
   VALIDATION_ERROR: { status: 422, code: "VALIDATION_ERROR" },
   RATE_LIMITED: { status: 429, code: "RATE_LIMITED" },

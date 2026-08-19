@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { QRCodeSVG } from "qrcode.react";
 import { OrderCard, OrderStatusBadge, OrderTimeline, AddressForm } from "./orders.components";
 // H：DTO 类型收拢到 orders.types（client-safe，零 server 依赖）；常量经 components seam 再导出
@@ -631,8 +632,11 @@ export function OrderListPage() {
   return (
     <main className="mx-auto min-h-screen max-w-6xl bg-white">
       <SiteHeader />
-      <div className="mx-auto w-full max-w-3xl px-4 pt-4">
-        <h1 className="text-center text-xl font-bold text-gray-900">我的订单</h1>
+      <div className="mx-auto flex w-full max-w-3xl items-center justify-between px-4 pt-4">
+        <h1 className="text-xl font-bold text-gray-900">我的订单</h1>
+        <Link href="/tickets" className="text-sm font-medium text-primary hover:underline">
+          联系客服
+        </Link>
       </div>
 
       {/* 状态 Tab：与用户中心统计卡 / ORDER_STATUS_GROUPS 同口径，URL 双向同步 */}
