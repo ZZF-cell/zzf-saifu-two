@@ -85,7 +85,7 @@ npx prisma db seed                 # 重新填充种子数据
 ### Mock 数据策略
 
 - **开发环境**：使用 `prisma/seed.ts` 生成的种子数据（含三个角色测试账号 + 示例商品 + 种子邀请码 `INVITE-BRAND-101/102` + **8 笔覆盖全部状态的演示订单** + **5 个大类质检模板**，可直接用于入驻演示与后台验收）
-- **短信**：已接入阿里云 SendSms（`shared/adapters/sms.adapter.ts`）；配齐密钥/签名/模板后真实送达手机，任一缺失则回退终端日志（`grep "\[SMS\]"` 获取，仅本地/验收）
+- **短信**：已接入阿里云双通道（`shared/adapters/sms.adapter.ts`，`SMS_BACKEND` 切换）——`send-sms`（短信服务 SendSms，自定义审核签名/模板）与 `dypns-send-verify-code`（号码认证-短信认证，系统赠送签名/模板，**验证码专用通道**，敏感行业可免自定义签名审核；验证码由阿里云生成、`ReturnVerifyCode` 回传自核验）；配齐密钥/签名/模板后真实送达手机，任一缺失则回退终端日志（`grep "\[SMS\]"` 获取，仅本地/验收）
 - **支付 Mock**：使用支付宝沙箱环境，测试用买家账号付款不会产生真实资金流转
 - **Inngest 本地**：`npx inngest-cli dev` 提供完整的本地函数执行环境，无需连接 Inngest Cloud
 
@@ -235,7 +235,7 @@ src/
 │   ├── validation/
 │   │   └── schemas.ts              #   Zod schemas（全局共享）
 │   ├── adapters/
-│   │   ├── sms.adapter.ts          #   阿里云短信 SendSms（RPC HMAC-SHA1 签名；未配置回退日志）
+│   │   ├── sms.adapter.ts          #   阿里云短信双通道 SendSms/SendSmsVerifyCode（RPC HMAC-SHA1；未配置回退日志）
 │   │   ├── payment.adapter.ts      #   支付宝沙箱封装
 │   │   └── oss.adapter.ts          #   阿里云 OSS（懒初始化，未配置返回失败标记）
 │   └── ui/                         #   自定义 UI（非 shadcn 源，可改）
@@ -603,11 +603,12 @@ npm start
 | `DATABASE_URL` | 是 | PostgreSQL 连接串（本地 Docker 或 Neon） |
 | `DIRECT_URL` | 否 | Prisma 迁移用直连 URL（Neon 需要） |
 | `JWT_SECRET` | 是 | JWT 签名密钥（生产环境更换为 32+ 字符随机值；显式配置时启动强制校验长度 ≥32 字符，防弱密钥伪造 Token） |
-| `SMS_ACCESS_KEY_ID` | 否 | 阿里云短信 AccessKey |
-| `SMS_ACCESS_KEY_SECRET` | 否 | 阿里云短信 Secret |
-| `SMS_SIGN_NAME` | 否 | 短信签名名称（需已审核） |
-| `SMS_TEMPLATE_CODE` | 否 | 短信模板 CODE（需含 `${code}` 变量，已审核） |
-| `SMS_TEMPLATE_PARAM` | 否 | 模板变量名，默认 `code` |
+| `SMS_BACKEND` | 否 | 短信通道：`send-sms`（默认，短信服务 SendSms）/ `dypns-send-verify-code`（号码认证-短信认证，验证码专用通道） |
+| `SMS_ACCESS_KEY_ID` | 否 | 阿里云 AccessKey（dypns 通道需授权 `AliyunDypnsFullAccess`） |
+| `SMS_ACCESS_KEY_SECRET` | 否 | 阿里云 AccessKey Secret |
+| `SMS_SIGN_NAME` | 否 | 短信签名（send-sms=自定义审核签名；dypns=系统赠送签名名称） |
+| `SMS_TEMPLATE_CODE` | 否 | 短信模板 CODE（send-sms=含 `${code}` 变量、已审核；dypns=系统赠送模板如 `100001`） |
+| `SMS_TEMPLATE_PARAM` | 否 | 模板变量名，默认 `code`（仅 send-sms 生效） |
 | `ALIPAY_APP_ID` | 否 | 支付宝应用 ID |
 | `ALIPAY_PRIVATE_KEY` | 否 | 支付宝应用私钥（PEM 格式） |
 | `ALIPAY_PUBLIC_KEY` | 否 | 支付宝公钥（PEM 格式） |

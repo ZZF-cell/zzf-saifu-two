@@ -212,6 +212,14 @@ export async function sendVerificationCode(
 
   const code = generateCode();
 
+  // 接线短信适配器（SendSms / SendSmsVerifyCode 双通道，SMS_BACKEND 切换）：
+  // - 先发送后落库：dypns 通道验证码由阿里云生成并回传（smsResult.code），必须以实际
+  //   送达/回传的验证码为准存哈希；send-sms 通道等价于我们生成的 code（回传为 undefined）。
+  // - 开发环境未配置密钥 → dev-fallback，验证码仅终端日志
+  // - 生产环境未配置密钥/未接入 SDK → 验证码实际未送达，上报告警
+  const smsResult = await sendSms(phone, code);
+  const finalCode = smsResult.code ?? code;
+
   // 在同一事务中：清旧码 + 写新码，保证原子性
   await prisma.$transaction(async (tx) => {
     await tx.verificationCode.deleteMany({
@@ -220,16 +228,12 @@ export async function sendVerificationCode(
     await tx.verificationCode.create({
       data: {
         phoneHash,
-        codeHash: sha256(code),
+        codeHash: sha256(finalCode),
         expiresAt: new Date(Date.now() + 5 * 60 * 1000),
       },
     });
   });
 
-  // 接线短信适配器（阿里云 SDK 集成为下一模块）：
-  // - 开发环境未配置密钥 → dev-fallback，验证码仅终端日志
-  // - 生产环境未配置密钥/未接入 SDK → 验证码实际未送达，上报告警
-  const smsResult = await sendSms(phone, code);
   const actuallySent =
     smsResult.success &&
     smsResult.messageId !== "dev-fallback" &&
@@ -256,7 +260,7 @@ export async function sendVerificationCode(
   // NODE_ENV 设成 production 又会误伤开发 —— 显式开关保证只有明确配置的环境才开启演示回显。
   // 生产环境要启用短信登录，必须完成真实短信集成（actuallySent=true），否则一律返回 null。
   if (process.env.DEMO_SMS_ECHO !== "true") return null;
-  return actuallySent ? null : code;
+  return actuallySent ? null : finalCode;
 }
 
 /** 短信验证码登录（新用户自动注册） */

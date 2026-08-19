@@ -21,6 +21,7 @@ beforeEach(() => {
   process.env.SMS_SIGN_NAME = "赛夫严选";
   process.env.SMS_TEMPLATE_CODE = "SMS_123456789";
   delete process.env.SMS_TEMPLATE_PARAM;
+  delete process.env.SMS_BACKEND;
 });
 
 afterEach(() => {
@@ -30,6 +31,7 @@ afterEach(() => {
   delete process.env.SMS_SIGN_NAME;
   delete process.env.SMS_TEMPLATE_CODE;
   delete process.env.SMS_TEMPLATE_PARAM;
+  delete process.env.SMS_BACKEND;
 });
 
 /** 捕获最后一次 fetch 的 URL，解析成查询参数 Map（值保持线上原始百分号编码形态） */
@@ -191,5 +193,94 @@ describe("sendSms — 业务失败与网络异常降级", () => {
     } as Response);
     const r = await sendSms("13800000000", "123456");
     expect(r.success).toBe(false);
+  });
+});
+
+describe("sendSms — dypns 验证码专用通道（SMS_BACKEND=dypns-send-verify-code）", () => {
+  // 默认模式（send-sms）之外的第二通道：SendSmsVerifyCode（号码认证服务-短信认证）。
+  // 验证码由阿里云生成（占位符模式），ReturnVerifyCode=true 回传 → 调用方存哈希自核验。
+  beforeEach(() => {
+    process.env.SMS_BACKEND = "dypns-send-verify-code";
+  });
+  afterEach(() => {
+    delete process.env.SMS_BACKEND;
+  });
+
+  it("无密钥 → dev-fallback，回传调用方验证码（供自核验），不发任何请求", async () => {
+    delete process.env.SMS_ACCESS_KEY_ID;
+    const r = await sendSms("13800000000", "123456");
+    expect(r).toEqual({ success: true, code: "123456", messageId: "dev-fallback" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("Code=OK + Model.VerifyCode → success + code（阿里云生成码）+ messageId=RequestId", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      text: async () =>
+        JSON.stringify({ Code: "OK", Message: "OK", RequestId: "req-1", Model: { VerifyCode: "654321" } }),
+    } as Response);
+
+    const r = await sendSms("13800000000", "local-ignored");
+    expect(r).toEqual({ success: true, code: "654321", messageId: "req-1" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("请求线：GET dypnsapi 端点 + SendSmsVerifyCode 业务参数（占位符不传 TemplateParam、CodeLength=6/ValidTime=300/DuplicatePolicy=1/ReturnVerifyCode=true）", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      text: async () =>
+        JSON.stringify({ Code: "OK", Message: "OK", RequestId: "req", Model: { VerifyCode: "123456" } }),
+    } as Response);
+
+    await sendSms("13800000000", "ignored");
+    const url = vi.mocked(fetch).mock.calls[0][0] as string;
+    expect(url.startsWith("https://dypnsapi.aliyuncs.com/?")).toBe(true);
+
+    const dq = captureDecodedQuery();
+    // 公共参数沿用（与 send-sms 同签名机制）
+    expect(dq.get("Version")).toBe("2017-05-25");
+    // 业务参数
+    expect(dq.get("Action")).toBe("SendSmsVerifyCode");
+    expect(dq.get("PhoneNumber")).toBe("13800000000");
+    expect(dq.get("SignName")).toBe("赛夫严选");
+    expect(dq.get("TemplateCode")).toBe("SMS_123456789");
+    expect(dq.get("CodeLength")).toBe("6");
+    expect(dq.get("ValidTime")).toBe("300");
+    expect(dq.get("DuplicatePolicy")).toBe("1");
+    expect(dq.get("ReturnVerifyCode")).toBe("true");
+    // 占位符模式：验证码由阿里云生成，不强制传自选验证码
+    expect(dq.has("TemplateParam")).toBe(false);
+    // 签名存在
+    const sig = captureQuery().get("Signature") ?? "";
+    expect(sig.length).toBeGreaterThan(20);
+  });
+
+  it("Code=OK 但未回传 VerifyCode → success:false（拒绝静默无码）", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({ Code: "OK", Message: "OK", RequestId: "req", Model: {} }),
+    } as Response);
+
+    const r = await sendSms("13800000000", "123456");
+    expect(r.success).toBe(false);
+  });
+
+  it("阿里云返回非 OK（如未开通短信认证）→ success:false + 错误信息", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      text: async () =>
+        JSON.stringify({ Code: "isv.SMS_SIGNATURE_ILLEGAL", Message: "未开通短信认证", RequestId: "req" }),
+    } as Response);
+
+    const r = await sendSms("13800000000", "123456");
+    expect(r.success).toBe(false);
+    expect(r.error).toContain("isv.SMS_SIGNATURE_ILLEGAL");
+  });
+
+  it("fetch 抛错 → success:false 优雅降级", async () => {
+    vi.mocked(fetch).mockRejectedValue(new Error("ENOTFOUND dypnsapi.aliyuncs.com"));
+    const r = await sendSms("13800000000", "123456");
+    expect(r.success).toBe(false);
+    expect(r.error).toContain("ENOTFOUND");
   });
 });

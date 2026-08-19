@@ -140,3 +140,31 @@ describe("sendVerificationCode — 演示模式回显", () => {
     });
   });
 });
+
+describe("sendVerificationCode — dypns 通道（适配器回传阿里云生成验证码）", () => {
+  it("真实送达 + 回传码 → 返回 null（不回显），DB 存回传码的 SHA-256（而非本地生成的码）", async () => {
+    smsMock.mockResolvedValue({ success: true, code: "654321", messageId: "req-1" });
+
+    const code = await sendVerificationCode("13800138000");
+
+    expect(code).toBeNull();
+    expect(tx.verificationCode.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ codeHash: sha256("654321") }),
+      }),
+    );
+  });
+
+  it("dypns dev-fallback（回传码）→ 演示回显回传码，DB 存其哈希", async () => {
+    smsMock.mockResolvedValue({ success: true, code: "654321", messageId: "dev-fallback" });
+
+    const code = await sendVerificationCode("13800138000");
+
+    expect(code).toBe("654321");
+    expect(tx.verificationCode.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ codeHash: sha256("654321") }),
+      }),
+    );
+  });
+});
