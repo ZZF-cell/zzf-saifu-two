@@ -362,7 +362,7 @@ export async function revokeInviteCode(req: Request, ctx: { params: Promise<{ co
 // 且 switch 内 TS 能按 action 收窄出必填参数，无需 `!` 断言。
 // 可授予角色不含 SUPER（最高权限者账号不可被授予、不可被其他账号操作）
 const userActionSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("setRole"), role: z.enum(["USER", "BRAND", "CUSTOMER_SERVICE", "ADMIN"]) }),
+  z.object({ action: z.literal("setRole"), role: z.enum(["USER", "BRAND", "CUSTOMER_SERVICE", "QUALITY_INSPECTOR", "ADMIN"]) }),
   z.object({ action: z.literal("setStatus"), status: z.enum(["ACTIVE", "DISABLED"]) }),
   z.object({ action: z.literal("unlock") }),
   z.object({ action: z.literal("resetPassword"), tempPassword: z.string().min(6).max(20) }),

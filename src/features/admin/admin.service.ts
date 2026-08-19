@@ -46,10 +46,10 @@ export async function reviewBrand(
 
     // 审核通过（含 REJECTED 重审）→ 负责人升级 BRAND 角色（同事务：品牌已过但角色未升是笔错账）
     // 角色守卫：仅当前纯 USER 才升级，避免重审把已授更高权限
-    // （ADMIN/SUPER/CUSTOMER_SERVICE/BRAND）的负责人降级回 BRAND
+    // （ADMIN/SUPER/CUSTOMER_SERVICE/QUALITY_INSPECTOR/BRAND）的负责人降级回 BRAND
     if (decision === "APPROVED") {
       await tx.user.updateMany({
-        where: { id: brand.ownerId, role: { notIn: ["BRAND", "ADMIN", "CUSTOMER_SERVICE", "SUPER"] } },
+        where: { id: brand.ownerId, role: { notIn: ["BRAND", "ADMIN", "CUSTOMER_SERVICE", "QUALITY_INSPECTOR", "SUPER"] } },
         data: { role: "BRAND" },
       });
     }
@@ -465,7 +465,8 @@ export async function revokeInviteCode(operatorId: string, code: string): Promis
 // 全部状态变更沿用 updateMany + 同事务审计策略，防并发竞态
 
 // 可授予角色不含 SUPER：最高权限者账号（19968506071）唯一且不可授予、不可被其他账号操作
-export type UserRoleOp = "USER" | "BRAND" | "CUSTOMER_SERVICE" | "ADMIN";
+// 角色梯度：SUPER > ADMIN > QUALITY_INSPECTOR > CUSTOMER_SERVICE > BRAND > USER（管理员可授予质检员）
+export type UserRoleOp = "USER" | "BRAND" | "CUSTOMER_SERVICE" | "QUALITY_INSPECTOR" | "ADMIN";
 export type UserStatusOp = "ACTIVE" | "DISABLED";
 
 /** 事务内取目标用户；不存在 → 404 */

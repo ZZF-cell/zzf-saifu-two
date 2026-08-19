@@ -16,14 +16,16 @@ export async function authenticate(req: Request): Promise<string> {
 
 export interface AuthUserContext {
   userId: string;
-  role: "USER" | "BRAND" | "CUSTOMER_SERVICE" | "ADMIN" | "SUPER";
+  role: "USER" | "BRAND" | "CUSTOMER_SERVICE" | "QUALITY_INSPECTOR" | "ADMIN" | "SUPER";
 }
 
 // 角色组常量：守卫参数集中定义，避免散落各处漏改
-/** 管理后台（平台管理：用户/品牌/商品/邀请码/质检模板） */
+/** 管理后台（平台管理：用户/品牌/邀请码；商品质检已移入 /inspect 质检中心） */
 export const ADMIN_ROLES = ["ADMIN", "SUPER"] as const;
-/** 客服工作台（/service） */
+/** 客服中心（/service） */
 export const SERVICE_ROLES = ["CUSTOMER_SERVICE", "SUPER"] as const;
+/** 质检中心（/inspect，商品审核 + 质检模板） */
+export const INSPECT_ROLES = ["QUALITY_INSPECTOR", "SUPER"] as const;
 /** 订单售后（看订单 + 发货/送达/完成/退款）：客服亦可操作 */
 export const AFTERSALES_ROLES = ["ADMIN", "SUPER", "CUSTOMER_SERVICE"] as const;
 

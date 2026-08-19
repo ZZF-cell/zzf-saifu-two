@@ -21,7 +21,7 @@ model User {
   passwordHash String?
   nickname     String?
   avatarUrl    String?  // 头像（OSS 公开 URL，消费侧 isOssUrl 校验）
-  role         String   @default("USER") // USER | BRAND | ADMIN | SUPER
+  role         String   @default("USER") // USER | BRAND | CUSTOMER_SERVICE | QUALITY_INSPECTOR | ADMIN | SUPER
   status       String   @default("ACTIVE") // ACTIVE | DISABLED（管理后台禁用/启用；禁用用户不可登录）
   ageVerified  Boolean  @default(false)
   failedLoginAttempts Int      @default(0) // 密码登录连续失败次数（≥5 触发锁定）

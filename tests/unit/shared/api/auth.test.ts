@@ -16,7 +16,7 @@ vi.mock("@/features/auth", () => ({
   },
 }));
 
-import { authenticateUser, requireRole, ADMIN_ROLES, SERVICE_ROLES, AFTERSALES_ROLES } from "@/shared/api/auth";
+import { authenticateUser, requireRole, ADMIN_ROLES, SERVICE_ROLES, AFTERSALES_ROLES, INSPECT_ROLES } from "@/shared/api/auth";
 import { authService } from "@/features/auth";
 import { ERROR_CODES } from "@/shared/errors/errors";
 
@@ -127,6 +127,7 @@ describe("requireRole — 角色门禁", () => {
   it("角色组常量定义正确", () => {
     expect(ADMIN_ROLES).toEqual(["ADMIN", "SUPER"]);
     expect(SERVICE_ROLES).toEqual(["CUSTOMER_SERVICE", "SUPER"]);
+    expect(INSPECT_ROLES).toEqual(["QUALITY_INSPECTOR", "SUPER"]);
     expect(AFTERSALES_ROLES).toEqual(["ADMIN", "SUPER", "CUSTOMER_SERVICE"]);
   });
 
@@ -173,5 +174,36 @@ describe("requireRole — 角色门禁", () => {
 
     const ctx = await requireRole(makeRequest(), AFTERSALES_ROLES);
     expect(ctx.role).toBe("CUSTOMER_SERVICE");
+  });
+
+  it("QUALITY_INSPECTOR 通过 INSPECT_ROLES 门禁（质检中心）", async () => {
+    vi.mocked(authService.verifyAccessToken).mockResolvedValue({
+      userId: "qi-1",
+      role: "QUALITY_INSPECTOR",
+    } as never);
+    vi.mocked(authService.getUserAuthContext).mockResolvedValue({
+      id: "qi-1",
+      role: "QUALITY_INSPECTOR",
+      status: "ACTIVE",
+    });
+
+    const ctx = await requireRole(makeRequest(), INSPECT_ROLES);
+    expect(ctx.role).toBe("QUALITY_INSPECTOR");
+  });
+
+  it("QUALITY_INSPECTOR 不通过 ADMIN_ROLES 门禁（职责隔离，质检员不进管理后台）", async () => {
+    vi.mocked(authService.verifyAccessToken).mockResolvedValue({
+      userId: "qi-1",
+      role: "QUALITY_INSPECTOR",
+    } as never);
+    vi.mocked(authService.getUserAuthContext).mockResolvedValue({
+      id: "qi-1",
+      role: "QUALITY_INSPECTOR",
+      status: "ACTIVE",
+    });
+
+    await expect(requireRole(makeRequest(), ADMIN_ROLES)).rejects.toMatchObject({
+      code: ERROR_CODES.FORBIDDEN.code,
+    });
   });
 });

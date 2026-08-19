@@ -1352,7 +1352,7 @@ function UsersTab() {
                         onChange={(e) => handleRoleChange(u, e.target.value)}
                         className="rounded-lg border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-primary disabled:opacity-50"
                       >
-                        {["USER", "BRAND", "CUSTOMER_SERVICE", "ADMIN"].map((r) => (
+                        {["USER", "BRAND", "CUSTOMER_SERVICE", "QUALITY_INSPECTOR", "ADMIN"].map((r) => (
                           <option key={r} value={r}>{r}</option>
                         ))}
                       </select>

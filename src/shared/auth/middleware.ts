@@ -5,7 +5,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 
-export type UserRole = "USER" | "BRAND" | "CUSTOMER_SERVICE" | "ADMIN" | "SUPER";
+export type UserRole =
+  | "USER"
+  | "BRAND"
+  | "CUSTOMER_SERVICE"
+  | "QUALITY_INSPECTOR"
+  | "ADMIN"
+  | "SUPER";
 
 export interface AuthUser {
   userId: string;
@@ -91,10 +97,16 @@ export function getRouteGuardDecision(
     if (!["ADMIN", "SUPER"].includes(authUser.role)) return "forbidden"; // M10
   }
 
-  // 客服工作台（客服 + 最高权限者；与 /admin 隔离）
+  // 客服中心（客服 + 最高权限者；与 /admin 隔离）
   if (path.startsWith("/service")) {
     if (!authUser) return "login";
     if (!["CUSTOMER_SERVICE", "SUPER"].includes(authUser.role)) return "forbidden"; // M10
+  }
+
+  // 质检中心（质检员 + 最高权限者；商品审核与质检模板在此，与 /admin 职责隔离）
+  if (path.startsWith("/inspect")) {
+    if (!authUser) return "login";
+    if (!["QUALITY_INSPECTOR", "SUPER"].includes(authUser.role)) return "forbidden"; // M10
   }
 
   // 品牌方后台（仅 BRAND：品牌中心是品牌方自己的后台，ADMIN 走 /admin）

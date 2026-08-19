@@ -4,6 +4,8 @@
 //
 // 测试账号（README）:
 //   管理员   13900000000  （验证码登录）
+//   客服一/二/三  13700000000 / 13700000001 / 13700000002（验证码登录）
+//   质检员   13700000003  （验证码登录）
 //   普通用户 13800138000  密码 123456
 //   品牌方   13888888888  （验证码登录，拥有品牌 "悦己实验室"）
 // 示例商品: 悦己手环 Pro / 山茶润体油（status=APPROVED，可用于下单支付闭环）
@@ -55,11 +57,27 @@ async function main() {
     create: { phoneHash: hashPhone("19968506071"), role: "SUPER" },
   });
 
-  // 客服（/service 工作台：咨询工单处理 + 订单售后）
-  const customerService = await prisma.user.upsert({
-    where: { phoneHash: hashPhone("13700000000") },
-    update: { role: "CUSTOMER_SERVICE" },
-    create: { phoneHash: hashPhone("13700000000"), role: "CUSTOMER_SERVICE" },
+  // 客服账号（一个客服一个固定账号：客服一/二/三，/service 客服中心：工单处理 + 订单售后）
+  const customerServices = [
+    { phone: "13700000000", nickname: "客服一" },
+    { phone: "13700000001", nickname: "客服二" },
+    { phone: "13700000002", nickname: "客服三" },
+  ];
+  const customerServiceIds: string[] = [];
+  for (const cs of customerServices) {
+    const u = await prisma.user.upsert({
+      where: { phoneHash: hashPhone(cs.phone) },
+      update: { role: "CUSTOMER_SERVICE", nickname: cs.nickname },
+      create: { phoneHash: hashPhone(cs.phone), role: "CUSTOMER_SERVICE", nickname: cs.nickname },
+    });
+    customerServiceIds.push(u.id);
+  }
+
+  // 质检员（/inspect 质检中心：商品审核 + 质检模板；管理员可授予 QUALITY_INSPECTOR）
+  const qualityInspector = await prisma.user.upsert({
+    where: { phoneHash: hashPhone("13700000003") },
+    update: { role: "QUALITY_INSPECTOR", nickname: "商品质检员" },
+    create: { phoneHash: hashPhone("13700000003"), role: "QUALITY_INSPECTOR", nickname: "商品质检员" },
   });
 
   // ── 品牌 ──
@@ -300,7 +318,8 @@ async function main() {
 
   console.log("✅ seed 完成");
   console.log(`  最高权限者: 19968506071 (验证码登录) id=${superUser.id}`);
-  console.log(`  客服:   13700000000 (验证码登录)  id=${customerService.id}`);
+  console.log(`  客服:   13700000000/01/02（客服一/二/三，验证码登录） id=${customerServiceIds.join("、")}`);
+  console.log(`  质检员: 13700000003（商品质检员，验证码登录） id=${qualityInspector.id}`);
   console.log(`  管理员: 13900000000 (验证码登录)  id=${admin.id}`);
   console.log(`  用户:   13800138000 / 123456      id=${buyer.id}`);
   console.log(`  品牌方: 13888888888 (验证码登录)  id=${brandOwner.id}`);

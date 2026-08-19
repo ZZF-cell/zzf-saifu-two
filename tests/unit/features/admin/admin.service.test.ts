@@ -115,7 +115,7 @@ describe("reviewBrand — 品牌入驻审核", () => {
       data: { status: "APPROVED" },
     });
     expect(tx.user.updateMany).toHaveBeenCalledWith({
-      where: { id: "user-1", role: { notIn: ["BRAND", "ADMIN", "CUSTOMER_SERVICE", "SUPER"] } },
+      where: { id: "user-1", role: { notIn: ["BRAND", "ADMIN", "CUSTOMER_SERVICE", "QUALITY_INSPECTOR", "SUPER"] } },
       data: { role: "BRAND" },
     });
     expect(tx.auditLog.create).toHaveBeenCalledWith({
@@ -177,13 +177,13 @@ describe("reviewBrand — 品牌入驻审核", () => {
   it("负责人已是 ADMIN（更高角色）→ 角色守卫不降级，仍通过 + 审计日志", async () => {
     tx.brand.findUnique.mockResolvedValue({ ownerId: "user-admin" });
     tx.brand.updateMany.mockResolvedValue({ count: 1 });
-    // 守卫命中 0 行：updateMany 带 notIn:[BRAND,ADMIN,CUSTOMER_SERVICE,SUPER]，ADMIN 不匹配 → 0 行 = no-op 而非抛错
+    // 守卫命中 0 行：updateMany 带 notIn:[BRAND,ADMIN,CUSTOMER_SERVICE,QUALITY_INSPECTOR,SUPER]，ADMIN 不匹配 → 0 行 = no-op 而非抛错
     tx.user.updateMany.mockResolvedValue({ count: 0 });
 
     await reviewBrand("brand-1", "APPROVED", "admin-1");
 
     expect(tx.user.updateMany).toHaveBeenCalledWith({
-      where: { id: "user-admin", role: { notIn: ["BRAND", "ADMIN", "CUSTOMER_SERVICE", "SUPER"] } },
+      where: { id: "user-admin", role: { notIn: ["BRAND", "ADMIN", "CUSTOMER_SERVICE", "QUALITY_INSPECTOR", "SUPER"] } },
       data: { role: "BRAND" },
     });
     // 0 行命中不阻断审核流程（幂等升级），审计正常落库
@@ -203,7 +203,7 @@ describe("reviewBrand — 品牌入驻审核", () => {
       data: { status: "APPROVED" },
     });
     expect(tx.user.updateMany).toHaveBeenCalledWith({
-      where: { id: "user-1", role: { notIn: ["BRAND", "ADMIN", "CUSTOMER_SERVICE", "SUPER"] } },
+      where: { id: "user-1", role: { notIn: ["BRAND", "ADMIN", "CUSTOMER_SERVICE", "QUALITY_INSPECTOR", "SUPER"] } },
       data: { role: "BRAND" },
     });
     expect(tx.auditLog.create).toHaveBeenCalledWith({

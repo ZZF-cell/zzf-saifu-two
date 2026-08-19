@@ -11,6 +11,7 @@ const BRAND = { userId: "b1", role: "BRAND" as const };
 const ADMIN = { userId: "a1", role: "ADMIN" as const };
 const SUPER = { userId: "s1", role: "SUPER" as const };
 const CS = { userId: "c1", role: "CUSTOMER_SERVICE" as const };
+const QI = { userId: "q1", role: "QUALITY_INSPECTOR" as const };
 
 describe("getRouteGuardDecision — 路由权限决策", () => {
   it("未登录访问 /admin → login（引导登录）", () => {
@@ -55,6 +56,30 @@ describe("getRouteGuardDecision — 路由权限决策", () => {
 
   it("M10：ADMIN 访问 /service → forbidden（管理员走 /admin）", () => {
     expect(getRouteGuardDecision("/service", ADMIN)).toBe("forbidden");
+  });
+
+  it("未登录访问 /inspect → login", () => {
+    expect(getRouteGuardDecision("/inspect", null)).toBe("login");
+  });
+
+  it("QUALITY_INSPECTOR 访问 /inspect → allow（质检中心专属）", () => {
+    expect(getRouteGuardDecision("/inspect/products", QI)).toBe("allow");
+  });
+
+  it("SUPER 访问 /inspect → allow（可监督质检）", () => {
+    expect(getRouteGuardDecision("/inspect", SUPER)).toBe("allow");
+  });
+
+  it("M10：ADMIN 访问 /inspect → forbidden（商品质检与管理员职责隔离）", () => {
+    expect(getRouteGuardDecision("/inspect", ADMIN)).toBe("forbidden");
+  });
+
+  it("M10：USER 访问 /inspect → forbidden", () => {
+    expect(getRouteGuardDecision("/inspect", USER)).toBe("forbidden");
+  });
+
+  it("M10：QUALITY_INSPECTOR 访问 /admin → forbidden（质检员走 /inspect）", () => {
+    expect(getRouteGuardDecision("/admin", QI)).toBe("forbidden");
   });
 
   it("未登录访问 /brand → login", () => {
