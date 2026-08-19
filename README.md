@@ -55,8 +55,8 @@ npm run dev                       # 启动开发服务器 → http://localhost:3
 
 | 角色 | 手机号 | 密码 | 权限 |
 |------|--------|------|------|
-| 最高权限者（SUPER，唯一） | 19968506071 | 短信登录 | 全部权限；**不可被其他账号操作**（改角色/禁用/注销均被拒） |
-| 管理员 | 13900000000 | — | 管理中心全部功能（品牌审核/订单管理/用户管理/邀请码管理/数据看板） |
+| 最高权限者（SUPER，唯一） | 19968506071 | 短信登录 | 全部权限；导航含**商家管理**（`/brands` 查看全部入驻品牌）；**不可被其他账号操作**（改角色/禁用/注销均被拒） |
+| 管理员 | 13900000000 | — | 管理中心全部功能 + 商家管理（`/brands` 查看全部入驻品牌） |
 | 客服一/二/三 | 13700000000 / 13700000001 / 13700000002 | — | `/service` 客服中心：咨询工单处理 + 订单售后（发货/送达/完成/退款） |
 | 质检员 | 13700000003 | — | `/inspect` 质检中心：商品审核（待审审核通过/驳回）+ 质检模板管理 |
 | 普通用户 | 13800138000 | 123456 | 浏览商品、购物车、下单、支付、退款、销毁订单、咨询工单、账号安全设置 |
@@ -204,6 +204,10 @@ src/
 │   ├── inspect/                     # 质检中心模块（/inspect：商品审核 + 质检模板，职责隔离）
 │   │   ├── index.ts
 │   │   └── inspect.routes.tsx      #   质检中心页（商品质检 + 质检模板 Tab；独立工作台 WorkbenchHeader）
+│   │
+│   ├── brands/                      # 商家管理模块（/brands：ADMIN/SUPER 查看全部入驻品牌）
+│   │   ├── index.ts
+│   │   └── brands.routes.tsx       #   商家管理页（全部状态筛选 + LOGO/入驻时间 + 审核/删除，复用 /api/admin/brands）
 │   │
 │   ├── brand/                       # 品牌方后台模块
 │   │   ├── index.ts
@@ -612,12 +616,12 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | 品牌方 | 个人中心 + `/brand/*`（品牌中心） | 提交商品、查看品牌数据 |
 | CUSTOMER_SERVICE | 个人中心 + `/service`（客服中心） | 咨询工单处理 + 订单售后（发货/送达/完成/退款） |
 | QUALITY_INSPECTOR | 个人中心 + `/inspect`（质检中心） | 商品质检（审核通过/驳回）+ 质检模板管理 |
-| ADMIN | 个人中心 + `/admin/*`（管理中心） | 品牌审核/订单管理/用户管理（可授予 QUALITY_INSPECTOR 角色）/邀请码管理/数据看板 |
-| SUPER | 全部中心（唯一 19968506071） | 全部权限；**不可被其他账号操作**（改角色/禁用/注销均被拒） |
+| ADMIN | 个人中心 + `/admin/*`（管理中心）+ `/brands`（商家管理） | 品牌审核/订单管理/用户管理（可授予 QUALITY_INSPECTOR 角色）/邀请码管理/数据看板/商家管理 |
+| SUPER | 全部中心 + `/brands` 商家管理（唯一 19968506071） | 全部权限；**不可被其他账号操作**（改角色/禁用/注销均被拒） |
 
-> **登录后互不干扰**：SiteHeader 导航按角色收敛——USER 购物车+品牌方入驻；BRAND 品牌中心；客服 客服中心；质检员 质检中心；ADMIN 管理中心；SUPER 全部中心。路由保护由 `middleware.ts` 实现：`/admin/*` 要求 ADMIN+SUPER、`/service` 要求 CUSTOMER_SERVICE+SUPER、`/inspect` 要求 QUALITY_INSPECTOR+SUPER、`/brand/*` 要求登录且 BRAND 角色；API 层二次校验归属。角色组常量集中在 `shared/api/auth.ts`（`ADMIN_ROLES`/`SERVICE_ROLES`/`INSPECT_ROLES`/`AFTERSALES_ROLES`）。
+> **登录后互不干扰**：SiteHeader 导航按角色收敛——USER 购物车+品牌方入驻；BRAND 品牌中心；客服 客服中心；质检员 质检中心；ADMIN 管理中心；SUPER 全部中心（**商家管理** `/brands` 查看全部入驻品牌，替换原本的「品牌方入驻」入口）。路由保护由 `middleware.ts` 实现：`/admin/*` 要求 ADMIN+SUPER、`/service` 要求 CUSTOMER_SERVICE+SUPER、`/inspect` 要求 QUALITY_INSPECTOR+SUPER、`/brands` 要求 ADMIN+SUPER（**须置于 `/brand` 之前**，且 `/brand/*` 已改精确前缀，避免误伤 `/brands`）、`/brand/*` 要求登录且 BRAND 角色；API 层二次校验归属。角色组常量集中在 `shared/api/auth.ts`（`ADMIN_ROLES`/`SERVICE_ROLES`/`INSPECT_ROLES`/`AFTERSALES_ROLES`）。
 
-> **品牌入驻流程**：游客/USER 在 `/invite` 用管理员发放的邀请码激活品牌（激活只创建 PENDING 品牌，不升级角色）→ 管理员在 `/admin` 审核 → **审核通过时**负责人才升级为 BRAND 角色。当前 access token 15min 内仍携带 USER 角色，需**重新登录**后才可进入 `/brand`。被拒绝的品牌不可再次提交入驻，需联系管理员重新发放邀请码。
+> **品牌入驻流程**：游客/USER 在 `/invite` 用管理员发放的邀请码激活品牌（激活只创建 PENDING 品牌，不升级角色）→ 管理员在 `/admin` 或 SUPER 在 `/brands` 商家管理页查看并审核 → **审核通过时**负责人才升级为 BRAND 角色。当前 access token 15min 内仍携带 USER 角色，需**重新登录**后才可进入 `/brand`。被拒绝的品牌不可再次提交入驻，需联系管理员重新发放邀请码。
 
 ## 部署
 

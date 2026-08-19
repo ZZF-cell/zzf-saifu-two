@@ -42,11 +42,12 @@ const NAV: Record<string, { href: string; label: string }[]> = {
     { href: "/inspect", label: "质检中心" },
   ],
   ADMIN: [{ href: "/account", label: "个人中心" }, { href: "/admin", label: "管理中心" }],
-  // 最高权限者显示所有中心信息（/brand 仅品牌方自己的后台，SUPER 看品牌走 /admin 品牌审核）
+  // 最高权限者显示所有中心信息：品牌看「商家管理」(/brands 全部入驻品牌)，
+  // 不再放「品牌方入驻」(/invite 是用户侧入驻落地页，SUPER 已入驻无需再看)
   SUPER: [
     { href: "/cart", label: "购物车" },
     { href: "/account", label: "个人中心" },
-    { href: "/invite", label: "品牌方入驻" },
+    { href: "/brands", label: "商家管理" },
     { href: "/service", label: "客服中心" },
     { href: "/inspect", label: "质检中心" },
     { href: "/admin", label: "管理中心" },

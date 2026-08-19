@@ -109,8 +109,16 @@ export function getRouteGuardDecision(
     if (!["QUALITY_INSPECTOR", "SUPER"].includes(authUser.role)) return "forbidden"; // M10
   }
 
-  // 品牌方后台（仅 BRAND：品牌中心是品牌方自己的后台，ADMIN 走 /admin）
-  if (path.startsWith("/brand")) {
+  // 商家管理（管理员 + 最高权限者：查看所有入驻品牌；与 /admin 品牌审核同角色组）
+  // 注意：必须放在 /brand 之前——/brand 用 startsWith 会误伤 /brands（M 品牌方后台仅 BRAND）
+  if (path === "/brands" || path.startsWith("/brands/")) {
+    if (!authUser) return "login";
+    if (!["ADMIN", "SUPER"].includes(authUser.role)) return "forbidden"; // M10
+  }
+
+  // 品牌方后台（仅 BRAND：品牌中心是品牌方自己的后台，ADMIN 走 /admin；
+  // 精确前缀避免 /brands 商家管理被当作 /brand 子路径）
+  if (path === "/brand" || path.startsWith("/brand/")) {
     if (!authUser) return "login";
     if (authUser.role !== "BRAND") return "forbidden"; // M10
   }

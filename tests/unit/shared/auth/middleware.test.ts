@@ -98,6 +98,33 @@ describe("getRouteGuardDecision — 路由权限决策", () => {
     expect(getRouteGuardDecision("/brand", BRAND)).toBe("allow");
   });
 
+  // ── /brands 商家管理（ADMIN + SUPER，与 /brand 品牌方后台隔离） ──
+
+  it("未登录访问 /brands → login", () => {
+    expect(getRouteGuardDecision("/brands", null)).toBe("login");
+  });
+
+  it("SUPER 访问 /brands → allow（最高权限者商家管理页）", () => {
+    expect(getRouteGuardDecision("/brands", SUPER)).toBe("allow");
+  });
+
+  it("ADMIN 访问 /brands → allow（管理员商家管理页）", () => {
+    expect(getRouteGuardDecision("/brands", ADMIN)).toBe("allow");
+  });
+
+  it("M10：BRAND 访问 /brands → forbidden（商家管理是平台侧，商家走 /brand）", () => {
+    expect(getRouteGuardDecision("/brands", BRAND)).toBe("forbidden");
+  });
+
+  it("M10：USER 访问 /brands → forbidden", () => {
+    expect(getRouteGuardDecision("/brands", USER)).toBe("forbidden");
+  });
+
+  it("/brands/xxx 子路径同样走商家管理守卫（/brand startsWith 已改精确前缀不误伤）", () => {
+    expect(getRouteGuardDecision("/brands/123", BRAND)).toBe("forbidden");
+    expect(getRouteGuardDecision("/brands/123", SUPER)).toBe("allow");
+  });
+
   it("未登录访问受保护页（/cart /checkout /orders /account）→ login", () => {
     expect(getRouteGuardDecision("/cart", null)).toBe("login");
     expect(getRouteGuardDecision("/checkout?items=p1", null)).toBe("login");

@@ -58,6 +58,9 @@ next-env.d.ts
 # backup files
 *.bak
 
+# 本地排查/调试脚本与截图（一次性产物，不入库）
+/tmp/
+
 # PWA 构建版本（prebuild 每次生成，不纳入版本控制）
 public/build-id.json
 
