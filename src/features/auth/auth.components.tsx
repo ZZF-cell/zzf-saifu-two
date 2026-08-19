@@ -92,8 +92,11 @@ export function CodeLoginForm({ onSubmit, onSendCode, submitLabel = "登录 / �
           });
         }, 1000);
         setError("");
-      } catch {
-        setError("发送验证码失败，请稍后重试");
+      } catch (err: unknown) {
+        // 透传接口真实错误（如「发送太频繁，请 N 秒后再试」的限流提示），
+        // 仅未知异常才用兜底文案——否则用户无法区分限流与网络错误
+        const msg = err instanceof Error ? err.message : "发送验证码失败，请稍后重试";
+        setError(msg);
       }
     });
   };
