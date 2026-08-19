@@ -29,6 +29,7 @@ const ROLE_LABEL: Record<string, string> = {
   USER: "普通用户",
   BRAND: "商家",
   CUSTOMER_SERVICE: "客服",
+  QUALITY_INSPECTOR: "质检员",
   ADMIN: "管理员",
   SUPER: "最高权限者",
 };

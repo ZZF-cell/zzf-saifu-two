@@ -1,6 +1,8 @@
 // 共享顶部导航 — 登录态感知（首页/购物车/个人中心/订单/品牌后台/管理后台统一入口）
 // - 挂载时查询 /api/auth/me 拿当前用户角色，按角色渲染导航
-// - 未登录：登录/注册/商家入驻；USER：购物车/我的/商家入驻；BRAND：购物车/我的/品牌中心；ADMIN：我的/管理后台
+// - 登录后互不干扰，只能看到职责内的入口（主页面/个人中心始终在，另加职责中心）：
+//     USER 购物车+品牌方入驻；BRAND 品牌中心；CUSTOMER_SERVICE 客服中心；
+//     QUALITY_INSPECTOR 质检中心；ADMIN 管理中心；SUPER 全部信息
 // - 退出登录统一在这里（清 Cookie → 回登录页），替代各页面重复的 handleLogout
 //
 // ⚠️ me 查询用裸 fetch 而非 apiFetch：apiFetch 对 401 会自动刷新 token 失败后硬跳登录页，
@@ -15,37 +17,44 @@ import { useRouter } from "next/navigation";
 interface MeUser {
   id: string;
   nickname: string | null;
-  role: "USER" | "BRAND" | "CUSTOMER_SERVICE" | "ADMIN" | "SUPER";
+  role: "USER" | "BRAND" | "CUSTOMER_SERVICE" | "QUALITY_INSPECTOR" | "ADMIN" | "SUPER";
   ageVerified: boolean;
 }
 
 // 角色 → 导航入口（与 shared/auth 的角色组常量同口径）
+// 登录后互不干扰：主页面(站点 LOGO) + 个人中心始终在，其余只显示职责内的中心
 const NAV: Record<string, { href: string; label: string }[]> = {
   USER: [
     { href: "/cart", label: "购物车" },
-    { href: "/account", label: "我的" },
-    { href: "/invite", label: "商家入驻" },
+    { href: "/account", label: "个人中心" },
+    { href: "/invite", label: "品牌方入驻" },
   ],
   BRAND: [
-    { href: "/cart", label: "购物车" },
-    { href: "/account", label: "我的" },
+    { href: "/account", label: "个人中心" },
     { href: "/brand", label: "品牌中心" },
   ],
   CUSTOMER_SERVICE: [
-    { href: "/cart", label: "购物车" },
-    { href: "/account", label: "我的" },
-    { href: "/service", label: "客服工作台" },
+    { href: "/account", label: "个人中心" },
+    { href: "/service", label: "客服中心" },
   ],
-  ADMIN: [{ href: "/account", label: "我的" }, { href: "/admin", label: "管理后台" }],
+  QUALITY_INSPECTOR: [
+    { href: "/account", label: "个人中心" },
+    { href: "/inspect", label: "质检中心" },
+  ],
+  ADMIN: [{ href: "/account", label: "个人中心" }, { href: "/admin", label: "管理中心" }],
+  // 最高权限者显示所有中心信息（/brand 仅品牌方自己的后台，SUPER 看品牌走 /admin 品牌审核）
   SUPER: [
-    { href: "/account", label: "我的" },
-    { href: "/admin", label: "管理后台" },
-    { href: "/service", label: "客服工作台" },
+    { href: "/cart", label: "购物车" },
+    { href: "/account", label: "个人中心" },
+    { href: "/invite", label: "品牌方入驻" },
+    { href: "/service", label: "客服中心" },
+    { href: "/inspect", label: "质检中心" },
+    { href: "/admin", label: "管理中心" },
   ],
 };
 
 const GUEST_NAV = [
-  { href: "/invite", label: "商家入驻" },
+  { href: "/invite", label: "品牌方入驻" },
   { href: "/login", label: "登录" },
   { href: "/register", label: "注册" },
 ];
