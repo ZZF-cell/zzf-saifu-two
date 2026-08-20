@@ -59,7 +59,7 @@ export async function createPayment(
     }
     throw new AppError(
       ERROR_CODES.ORDER_STATUS_INVALID,
-      "订单已超时，支付状态确认中，请稍后重试（订单可能已支付）",
+      "订单已超时，支付状态确认中，请稍后重试",
     );
   }
 

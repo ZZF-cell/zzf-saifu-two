@@ -773,6 +773,9 @@ export function OrderDetailPage({ id }: { id: string }) {
         return;
       }
       setError(data?.message || "支付功能暂不可用");
+      // 支付被拒（超时已自动取消/已支付/状态变更）→ 拉取最新订单状态，UI 立即反映：
+      // 若订单已被自动取消，详情不再显示「去支付/取消订单」等待支付操作，避免残留入口
+      await fetchOrder();
     } catch (err: unknown) {
       // apiFetch 在 Refresh Token 失效时已跳转登录页并抛错，这里只提示其他异常
       setError(err instanceof Error ? err.message : "发起支付失败");

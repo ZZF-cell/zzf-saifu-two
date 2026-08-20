@@ -371,7 +371,7 @@ export async function cancelOrder(
     if (!query.success || query.code !== "10000") {
       throw new AppError(
         ERROR_CODES.ORDER_STATUS_INVALID,
-        "支付状态确认中，请稍后重试（订单可能已支付）",
+        "支付状态确认中，请稍后重试",
       );
     }
     const terminalSuccess =
