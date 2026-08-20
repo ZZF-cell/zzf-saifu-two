@@ -129,11 +129,14 @@ export function AccountPage() {
 
   if (loading) {
     return (
-      <main className="mx-auto min-h-screen max-w-6xl p-4">
-        <div className="mx-auto mt-8 w-full max-w-2xl space-y-3">
-          <div className="h-24 animate-pulse rounded-xl bg-gray-100" />
-          <div className="h-24 animate-pulse rounded-xl bg-gray-100" />
-          <div className="h-32 animate-pulse rounded-xl bg-gray-100" />
+      <main className="mx-auto min-h-screen max-w-6xl bg-white pb-24">
+        <SiteHeader />
+        <div className="mx-auto w-full max-w-2xl px-4 pt-4">
+          <h1 className="text-center text-xl font-bold text-gray-900">个人中心</h1>
+        </div>
+        <div className="mx-auto w-full max-w-2xl p-4 pt-3">
+          {/* 骨架与内容容器同高：加载前后页面永不重排 */}
+          <div className="h-[calc(100vh-10rem)] animate-pulse rounded-xl bg-gray-100" />
         </div>
       </main>
     );
@@ -164,7 +167,10 @@ export function AccountPage() {
         <h1 className="text-center text-xl font-bold text-gray-900">个人中心</h1>
       </div>
 
-      <div className="mx-auto w-full max-w-2xl p-4 space-y-6">
+      {/* 内容固定高度 + 内部滚动：加载/切换时页面永不重排 */}
+      <div className="mx-auto w-full max-w-2xl p-4 pt-3">
+        <div className="h-[calc(100vh-10rem)] overflow-y-auto rounded-xl">
+          <div className="space-y-6">
         {/* 账户信息（头像 + 昵称） */}
         <section>
           <h3 className="mb-3 text-sm font-semibold text-gray-700">账户信息</h3>
@@ -331,6 +337,8 @@ export function AccountPage() {
         <p className="text-center text-xs text-gray-400">
           注册于 {new Date(profile.createdAt).toLocaleDateString("zh-CN")}
         </p>
+          </div>
+        </div>
       </div>
     </main>
   );

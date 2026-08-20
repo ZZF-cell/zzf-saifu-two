@@ -701,7 +701,15 @@ function TemplatesTab({ active }: { active?: boolean }) {
   };
 
   if (loading) {
-    return <div className="h-32 animate-pulse rounded-xl bg-gray-100" />;
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between pb-1">
+          <p className="py-2 text-sm text-gray-400">质检模板</p>
+        </div>
+        {/* 骨架与内容容器同高：加载时页面永不重排 */}
+        <div className="h-[calc(100vh-14rem)] animate-pulse rounded-xl bg-gray-100" />
+      </div>
+    );
   }
 
   const strList = (v: unknown): string[] =>

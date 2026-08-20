@@ -101,7 +101,14 @@ function OverviewTab({ active }: { active?: boolean }) {
   }, [active]);
 
   if (!overview) {
-    return <div className="h-32 animate-pulse rounded-xl bg-gray-100" />;
+    return (
+      <div className="space-y-3">
+        <div className="flex h-10 items-center justify-between pb-1">
+          <p className="py-2 text-sm font-semibold text-gray-900">品牌概览</p>
+        </div>
+        <div className="h-[calc(100vh-14rem)] animate-pulse rounded-xl bg-gray-100" />
+      </div>
+    );
   }
 
   const cards = [
@@ -112,23 +119,32 @@ function OverviewTab({ active }: { active?: boolean }) {
   ];
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-xl bg-gray-50 p-4">
-        <p className="text-base font-medium text-gray-900">{overview.brand.name}</p>
-        <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
-          <StatusBadge status={overview.brand.status} />
-          <span>注册于 {new Date(overview.brand.createdAt).toLocaleDateString("zh-CN")}</span>
-        </div>
+    <div className="space-y-3">
+      {/* 顶部行：与其它 Tab 等高（40px）*/}
+      <div className="flex h-10 items-center justify-between pb-1">
+        <p className="py-2 text-sm font-semibold text-gray-900">品牌概览</p>
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {cards.map((c) => (
-          <div key={c.label} className={`rounded-xl p-4 ${c.highlight ? "bg-primary/5" : "bg-gray-50"}`}>
-            <p className={`text-xl font-bold ${c.highlight ? "text-primary" : "text-gray-900"}`}>
-              {c.value}
-            </p>
-            <p className="mt-1 text-xs text-gray-500">{c.label}</p>
+      {/* 固定高度容器：切 Tab 页面永不重排 */}
+      <div className="h-[calc(100vh-14rem)] overflow-y-auto rounded-xl">
+        <div className="space-y-4">
+          <div className="rounded-xl bg-gray-50 p-4">
+            <p className="text-base font-medium text-gray-900">{overview.brand.name}</p>
+            <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
+              <StatusBadge status={overview.brand.status} />
+              <span>注册于 {new Date(overview.brand.createdAt).toLocaleDateString("zh-CN")}</span>
+            </div>
           </div>
-        ))}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {cards.map((c) => (
+              <div key={c.label} className={`rounded-xl p-4 ${c.highlight ? "bg-primary/5" : "bg-gray-50"}`}>
+                <p className={`text-xl font-bold ${c.highlight ? "text-primary" : "text-gray-900"}`}>
+                  {c.value}
+                </p>
+                <p className="mt-1 text-xs text-gray-500">{c.label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -559,17 +575,27 @@ function ProductForm({
 
 function SubmitProductTab() {
   return (
-    <ProductForm
-      submitLabel="提交审核"
-      successMessage="商品已提交，等待平台质检"
-      resetAfterSuccess
-      onSubmit={async (values) => {
-        await apiCall("POST", "/api/brand/products", {
-          ...values,
-          description: values.description || undefined,
-        });
-      }}
-    />
+    <div className="space-y-3">
+      {/* 顶部行：与其它 Tab 等高（40px）*/}
+      <div className="flex h-10 items-center justify-between pb-1">
+        <p className="py-2 text-sm font-semibold text-gray-900">提交商品</p>
+        <p className="text-xs text-gray-400">提交后由平台质检，通过后上架</p>
+      </div>
+      {/* 固定高度容器：切 Tab 页面永不重排 */}
+      <div className="h-[calc(100vh-14rem)] overflow-y-auto rounded-xl">
+        <ProductForm
+          submitLabel="提交审核"
+          successMessage="商品已提交，等待平台质检"
+          resetAfterSuccess
+          onSubmit={async (values) => {
+            await apiCall("POST", "/api/brand/products", {
+              ...values,
+              description: values.description || undefined,
+            });
+          }}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -644,11 +670,25 @@ function ProductsTab({ active }: { active?: boolean }) {
   };
 
   if (loading) {
-    return <div className="h-32 animate-pulse rounded-xl bg-gray-100" />;
+    return (
+      <div className="space-y-3">
+        <div className="flex h-10 items-center justify-between pb-1">
+          <p className="py-2 text-sm font-semibold text-gray-900">我的商品</p>
+        </div>
+        <div className="h-[calc(100vh-14rem)] animate-pulse rounded-xl bg-gray-100" />
+      </div>
+    );
   }
 
   return (
     <div className="space-y-3">
+      {/* 顶部行：与其它 Tab 等高（40px）*/}
+      <div className="flex h-10 items-center justify-between pb-1">
+        <p className="py-2 text-sm font-semibold text-gray-900">我的商品</p>
+        <p className="text-xs text-gray-400">共 {products.length} 个</p>
+      </div>
+      {/* 固定高度容器：切 Tab 页面永不重排 */}
+      <div className="h-[calc(100vh-14rem)] overflow-y-auto rounded-xl">
       {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
       {notice && !editing && (
         <div className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</div>
@@ -693,6 +733,7 @@ function ProductsTab({ active }: { active?: boolean }) {
         })}
         </div>
       )}
+      </div>
 
       {editing && (
         <div
@@ -759,27 +800,44 @@ function OrdersTab({ active }: { active?: boolean }) {
   }, [orders]);
 
   if (loading) {
-    return <div className="h-32 animate-pulse rounded-xl bg-gray-100" />;
+    return (
+      <div className="space-y-3">
+        <div className="flex h-10 items-center justify-between pb-1">
+          <p className="py-2 text-sm font-semibold text-gray-900">品牌订单</p>
+        </div>
+        <div className="h-[calc(100vh-14rem)] animate-pulse rounded-xl bg-gray-100" />
+      </div>
+    );
   }
 
   return (
     <div className="space-y-3">
-      {orders.length === 0 ? (
-        <div className="py-12 text-center text-gray-400">暂无相关订单</div>
-      ) : (
-        orders.map((o) => (
-          <div key={o.id} className="rounded-xl border border-gray-100 p-4">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-medium text-gray-900">{o.firstItemName}</p>
-              <StatusBadge status={o.status} />
+      {/* 顶部行：与其它 Tab 等高（40px）*/}
+      <div className="flex h-10 items-center justify-between pb-1">
+        <p className="py-2 text-sm font-semibold text-gray-900">品牌订单</p>
+        <p className="text-xs text-gray-400">共 {orders.length} 笔</p>
+      </div>
+      {/* 固定高度容器：切 Tab 页面永不重排 */}
+      <div className="h-[calc(100vh-14rem)] overflow-y-auto rounded-xl">
+        {orders.length === 0 ? (
+          <div className="py-12 text-center text-gray-400">暂无相关订单</div>
+        ) : (
+          <div className="space-y-3">
+          {orders.map((o) => (
+            <div key={o.id} className="rounded-xl border border-gray-100 p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-gray-900">{o.firstItemName}</p>
+                <StatusBadge status={o.status} />
+              </div>
+              <p className="mt-1 text-xs text-gray-400">
+                ¥{fenToYuan(o.brandSubtotal)} · 下单于{" "}
+                {new Date(o.createdAt).toLocaleDateString("zh-CN")}
+              </p>
             </div>
-            <p className="mt-1 text-xs text-gray-400">
-              ¥{fenToYuan(o.brandSubtotal)} · 下单于{" "}
-              {new Date(o.createdAt).toLocaleDateString("zh-CN")}
-            </p>
+          ))}
           </div>
-        ))
-      )}
+        )}
+      </div>
     </div>
   );
 }

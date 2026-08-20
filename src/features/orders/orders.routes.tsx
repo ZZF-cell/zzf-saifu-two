@@ -667,11 +667,8 @@ export function OrderListPage() {
 
       <div className="mx-auto w-full max-w-3xl p-4">
         {loading ? (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-20 animate-pulse rounded-xl bg-gray-100" />
-            ))}
-          </div>
+          /* 骨架与列表容器同高：加载前后页面永不重排 */
+          <div className="h-[calc(100vh-10rem)] animate-pulse rounded-xl bg-gray-100" />
         ) : (
           /* 列表固定高度 + 内部滚动：切 Tab 时页面永不重排 */
           <div className="h-[calc(100vh-10rem)] overflow-y-auto rounded-xl">
