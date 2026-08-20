@@ -211,13 +211,17 @@ describe("cancelExpiredOrder — 支付超时自动取消", () => {
     expect(paymentAdapter.queryPayment).not.toHaveBeenCalled();
   });
 
-  it("D2：支付宝已配置但查询失败（success=false 网关超时）→ 保持 PENDING，绝不取消/不回补库存", async () => {
-    // 用户可能已真实付款但异步通知丢失，此刻查询恰逢网关抖动——取消 = 「钱已扣、订单已取消」资损
+  it("D2 修订：支付宝已配置但查询失败（success=false 网关超时）→ 订单已超时，放行取消（窗口已关闭不可能再收款）", async () => {
+    // 回归护栏：此前查询失败一律保持 PENDING → 超时订单永远取消不了（死锁，用户报障）。
+    // cancelExpiredOrder 仅在订单已超时被调用，D1 保证支付宝允许支付窗口已随订单关闭，
+    // 收款不可能新发生 → 查询失败按已超时放行取消，优先解除死锁；能查到已支付时
+    // 仍走下方 M1「标记 PAID 不取消」分支防护。
     tx.order.findUnique.mockResolvedValue({
       status: "PENDING",
       total: 100,
       items: [{ productId: "p1", qty: 1 }],
     });
+    tx.order.updateMany.mockResolvedValue({ count: 1 });
     vi.mocked(paymentAdapter.queryPayment).mockResolvedValue({
       success: false,
       error: "网络超时",
@@ -225,17 +229,21 @@ describe("cancelExpiredOrder — 支付超时自动取消", () => {
 
     const result = await cancelExpiredOrder("order-1");
 
-    expect(result).toEqual({ cancelled: false, status: "PENDING" });
-    expect(tx.order.updateMany).not.toHaveBeenCalled();
-    expect(tx.product.updateMany).not.toHaveBeenCalled();
+    expect(result).toEqual({ cancelled: true, status: "CANCELLED" });
+    expect(tx.order.updateMany).toHaveBeenCalledWith({
+      where: { id: "order-1", status: "PENDING" },
+      data: { status: "CANCELLED", cancelledAt: expect.any(Date) },
+    });
+    expect(tx.product.updateMany).toHaveBeenCalled();
   });
 
-  it("D2：支付宝已配置但网关非 10000（业务错误码）→ 支付状态未知，保持 PENDING 不取消", async () => {
+  it("D2 修订：支付宝已配置但网关非 10000（业务错误码）→ 订单已超时，放行取消", async () => {
     tx.order.findUnique.mockResolvedValue({
       status: "PENDING",
       total: 100,
       items: [{ productId: "p1", qty: 1 }],
     });
+    tx.order.updateMany.mockResolvedValue({ count: 1 });
     vi.mocked(paymentAdapter.queryPayment).mockResolvedValue({
       success: true,
       code: "40004",
@@ -244,9 +252,12 @@ describe("cancelExpiredOrder — 支付超时自动取消", () => {
 
     const result = await cancelExpiredOrder("order-1");
 
-    expect(result).toEqual({ cancelled: false, status: "PENDING" });
-    expect(tx.order.updateMany).not.toHaveBeenCalled();
-    expect(tx.product.updateMany).not.toHaveBeenCalled();
+    expect(result).toEqual({ cancelled: true, status: "CANCELLED" });
+    expect(tx.order.updateMany).toHaveBeenCalledWith({
+      where: { id: "order-1", status: "PENDING" },
+      data: { status: "CANCELLED", cancelledAt: expect.any(Date) },
+    });
+    expect(tx.product.updateMany).toHaveBeenCalled();
   });
 
   it("M1：支付宝返回已支付且金额一致 → 幂等标记 PAID，绝不取消/不回补库存", async () => {

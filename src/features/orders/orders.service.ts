@@ -341,6 +341,7 @@ export async function cancelOrder(
       userId: true,
       status: true,
       total: true,
+      createdAt: true,
       items: { select: { productId: true, qty: true } },
     },
   });
@@ -369,36 +370,43 @@ export async function cancelOrder(
   if (paymentService.isPaymentConfigured()) {
     const query = await paymentService.queryAlipayTrade(orderId);
     if (!query.success || query.code !== "10000") {
-      throw new AppError(
-        ERROR_CODES.ORDER_STATUS_INVALID,
-        "支付状态确认中，请稍后重试",
-      );
-    }
-    const terminalSuccess =
-      query.tradeStatus === "TRADE_SUCCESS" || query.tradeStatus === "TRADE_FINISHED";
-    if (terminalSuccess) {
-      const paidFen = query.totalAmountFen;
-      if (paidFen !== null && paidFen === order.total) {
-        const result = await markOrderPaid(
-          orderId,
-          query.outTradeNo ?? orderId,
-          paidFen,
-          query.alipayTradeNo,
+      // 已超时 → 支付宝允许支付窗口已随订单关闭（createPayment 将 timeoutExpress 钳制到
+      // ≤ 订单剩余时间），收款不可能新发生，查询失败放行取消（解除「取消不了」死锁）；
+      // 未超时 → 用户可能已付款但通知丢失，必须保守保持 PENDING，提示稍后重试
+      const expiresAt = new Date(order.createdAt.getTime() + ORDER_PAYMENT_TIMEOUT_MS);
+      if (expiresAt.getTime() > Date.now()) {
+        throw new AppError(
+          ERROR_CODES.ORDER_STATUS_INVALID,
+          "支付状态确认中，请稍后重试",
         );
-        if (result.success) {
-          throw new AppError(
-            ERROR_CODES.ORDER_STATUS_INVALID,
-            "订单已支付，无法取消，请使用「申请退款」",
-          );
-        }
       }
-      // 金额不符 / 标记冲突：不取消，保持 PENDING（人工介入）
-      throw new AppError(
-        ERROR_CODES.ORDER_STATUS_INVALID,
-        "订单支付状态异常，暂无法取消，请联系客服",
-      );
+    } else {
+      const terminalSuccess =
+        query.tradeStatus === "TRADE_SUCCESS" || query.tradeStatus === "TRADE_FINISHED";
+      if (terminalSuccess) {
+        const paidFen = query.totalAmountFen;
+        if (paidFen !== null && paidFen === order.total) {
+          const result = await markOrderPaid(
+            orderId,
+            query.outTradeNo ?? orderId,
+            paidFen,
+            query.alipayTradeNo,
+          );
+          if (result.success) {
+            throw new AppError(
+              ERROR_CODES.ORDER_STATUS_INVALID,
+              "订单已支付，无法取消，请使用「申请退款」",
+            );
+          }
+        }
+        // 金额不符 / 标记冲突：不取消，保持 PENDING（人工介入）
+        throw new AppError(
+          ERROR_CODES.ORDER_STATUS_INVALID,
+          "订单支付状态异常，暂无法取消，请联系客服",
+        );
+      }
+      // code=10000 且非终态（TRADE_NOT_EXIST/WAIT_BUYER_PAY/TRADE_CLOSED）→ 确认未支付，进入取消
     }
-    // code=10000 且非终态（TRADE_NOT_EXIST/WAIT_BUYER_PAY/TRADE_CLOSED）→ 确认未支付，进入取消
   }
 
   // 仅 PENDING 可取消：回补库存/回减销量 + 置 CANCELLED。
@@ -474,28 +482,34 @@ export async function cancelExpiredOrder(
   if (paymentService.isPaymentConfigured()) {
     const query = await paymentService.queryAlipayTrade(orderId);
     if (!query.success || query.code !== "10000") {
+      // 查询失败放行取消：本函数仅在订单已超时时被调用（Inngest 定时 + 支付/查询支付
+      // 入口的超时兜底），而 createPayment 把支付宝 timeoutExpress 钳制到 ≤ 订单剩余时间，
+      // 超时后支付宝侧允许支付窗口已关闭、收款不可能再发生——查询失败不阻塞取消，
+      // 否则超时订单永远卡 PENDING 死锁（用户取消不了、系统也取消不了）。
+      // 「已付款但通知丢失」仅可能发生在超时前的窄窗口；且能查到 TRADE_SUCCESS 时会
+      // 走下方「标记 PAID 不取消」分支防护，查询失败按已超时放行，优先解除死锁。
       console.error(
-        `[orders] 超时取消前支付宝查询失败: 订单=${orderId} ${query.error ?? `code=${query.code ?? "?"}`} — 保持 PENDING 留待下次 sweep`,
+        `[orders] 超时取消前支付宝查询失败(订单已超时，放行取消): 订单=${orderId} ${query.error ?? `code=${query.code ?? "?"}`}`,
       );
-      return { cancelled: false, status: order.status };
-    }
-    const terminalSuccess =
-      query.tradeStatus === "TRADE_SUCCESS" || query.tradeStatus === "TRADE_FINISHED";
-    if (terminalSuccess) {
-      const paidFen = query.totalAmountFen;
-      if (paidFen !== null && paidFen === order.total) {
-        const result = await markOrderPaid(
-          orderId,
-          query.outTradeNo ?? orderId,
-          paidFen,
-          query.alipayTradeNo,
-        );
-        if (result.success) return { cancelled: false, status: ORDER_STATUS.PAID };
+    } else {
+      const terminalSuccess =
+        query.tradeStatus === "TRADE_SUCCESS" || query.tradeStatus === "TRADE_FINISHED";
+      if (terminalSuccess) {
+        const paidFen = query.totalAmountFen;
+        if (paidFen !== null && paidFen === order.total) {
+          const result = await markOrderPaid(
+            orderId,
+            query.outTradeNo ?? orderId,
+            paidFen,
+            query.alipayTradeNo,
+          );
+          if (result.success) return { cancelled: false, status: ORDER_STATUS.PAID };
+        }
+        // 金额不符 / 标记冲突：不取消，保持 PENDING（人工介入）
+        return { cancelled: false, status: order.status };
       }
-      // 金额不符 / 标记冲突：不取消，保持 PENDING（人工介入）
-      return { cancelled: false, status: order.status };
+      // code=10000 且非终态（TRADE_NOT_EXIST/WAIT_BUYER_PAY/TRADE_CLOSED）→ 确认未支付，进入取消
     }
-    // code=10000 且非终态（TRADE_NOT_EXIST/WAIT_BUYER_PAY/TRADE_CLOSED）→ 确认未支付，进入取消
   }
 
   // 未支付 / 未配置 → 事务内取消（状态守卫必须先于库存回补：
