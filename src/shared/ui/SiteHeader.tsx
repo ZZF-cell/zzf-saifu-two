@@ -43,9 +43,10 @@ const NAV: Record<string, { href: string; label: string }[]> = {
   ],
   ADMIN: [{ href: "/account", label: "个人中心" }, { href: "/admin", label: "管理中心" }],
   // 最高权限者显示所有中心信息：品牌看「商家管理」(/brands 全部入驻品牌)，
-  // 不再放「品牌方入驻」(/invite 是用户侧入驻落地页，SUPER 已入驻无需再看)
+  // 不再放「品牌方入驻」(/invite 是用户侧入驻落地页，SUPER 已入驻无需再看)。
+  // 购物车仅 USER 可用（cart.api requireRole CART_ROLES=["USER"]，SUPER 也 403），
+  // 故 SUPER 导航不显示购物车入口（无入口 + 无权限一致，避免点了报无权限）
   SUPER: [
-    { href: "/cart", label: "购物车" },
     { href: "/account", label: "个人中心" },
     { href: "/brands", label: "商家管理" },
     { href: "/service", label: "客服中心" },

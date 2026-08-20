@@ -1,9 +1,14 @@
-// 购物车 API Route Handlers（需登录）
+// 购物车 API Route Handlers（需登录 + 仅 USER 角色可购物）
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withValidation, apiError } from "@/shared/utils/api";
-import { authenticate } from "@/shared/api/auth";
+import { requireRole } from "@/shared/api/auth";
 import * as cartService from "./cart.service";
+
+// 购物车仅对普通用户（USER）开放：商家/客服/质检/管理员/SUPER 为工作人员账号，
+// 前端导航不显示购物车入口，若直接调 API 加购会「加进去但找不到」，故服务端一并
+// 守卫返回 403「无权限」（游客仍走 401 → 前端跳登录，标准电商行为）。
+const CART_ROLES = ["USER"] as const;
 
 // ── Schemas ──
 
@@ -30,7 +35,7 @@ const removeSchema = z.object({
 /** GET /api/cart */
 export async function getCart(req: Request) {
   try {
-    const userId = await authenticate(req);
+    const { userId } = await requireRole(req, CART_ROLES);
     const cart = await cartService.getCart(userId);
     return NextResponse.json(cart);
   } catch (error) {
@@ -42,7 +47,7 @@ export async function getCart(req: Request) {
 export const addToCart = withValidation(
   addSchema,
   async ({ productId, qty }, req) => {
-    const userId = await authenticate(req);
+    const { userId } = await requireRole(req, CART_ROLES);
     await cartService.addToCart(userId, productId, qty ?? 1);
     return NextResponse.json({ success: true });
   },
@@ -52,7 +57,7 @@ export const addToCart = withValidation(
 export const updateCart = withValidation(
   updateSchema,
   async ({ productId, qty }, req) => {
-    const userId = await authenticate(req);
+    const { userId } = await requireRole(req, CART_ROLES);
     await cartService.updateCartQty(userId, productId, qty);
     return NextResponse.json({ success: true });
   },
@@ -62,7 +67,7 @@ export const updateCart = withValidation(
 export const removeFromCart = withValidation(
   removeSchema,
   async ({ productId }, req) => {
-    const userId = await authenticate(req);
+    const { userId } = await requireRole(req, CART_ROLES);
     await cartService.removeFromCart(userId, productId);
     return NextResponse.json({ success: true });
   },

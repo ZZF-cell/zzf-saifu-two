@@ -394,6 +394,11 @@ export function ProductDetailPage({ id }: { id: string }) {
                       router.push("/login");
                       return;
                     }
+                    if (data.error === "FORBIDDEN") {
+                      // 非 USER 角色账号无购物车权限（服务端 requireRole 守卫）
+                      setAddError("当前账号无购物车权限，请联系管理员");
+                      return;
+                    }
                     // 其余失败（STOCK_CONFLICT 库存不足等）展示后端 message
                     setAddError(data.message || "加入购物车失败，请稍后重试");
                   })

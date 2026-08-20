@@ -135,7 +135,7 @@ npx prisma db seed                 # 重新填充种子数据
 | **商品生命周期** | ✅ 已完成 | 撤回待审 / 下架 / 重新上架 / 编辑（双方同状态机）+ 管理员完整审核详情 | `features/brand` 与 `features/admin` 同一套状态机（status 为 String 无需迁移）：`PENDING`→`WITHDRAWN`（品牌撤回）；`APPROVED`⇄`DELISTED`（品牌/管理员可做，重新上架不重质检）；编辑商品「基本信息变更→回 `PENDING` 重审、仅改运营信息（价格/库存）→直改」。**检测证书（`certificates`）属基本信息，仅改证书也会触发重审**。所有变更用 `updateMany` 状态守卫（含品牌侧 `brandId` 归属守卫，越权 403）+ `version:{increment:1}` + AuditLog（snapshot 存 before/after）；守卫 0 行二次 `findUnique` 区分 404/403/409。公开商品详情仅放行 `APPROVED`（DB 层过滤，下架/待审深链 404）。管理端 `GET /api/admin/products/[id]` 返回完整信息 + 品类质检清单 + 已提交证书，审核决策信息闭环 |
 | **微信支付** | ⏳ 待开发 | 接入微信支付 SDK | `shared/adapters/payment.adapter.ts` 定义 `PaymentAdapter` 接口，微信支付实现同一接口；回调幂等逻辑直接复用 `payment.callback.ts` 的 `updateMany` 模式 |
 | **实名认证** | ⏳ 适配器占位已就绪 | 对接实名认证服务 | `shared/adapters/realname.adapter.ts` 已定义 `RealNameAdapter` 接口 + 身份证二要素演示 provider（`REALNAME_MOCK=true`，格式预检 + 演示通过；未配置时安全降级拒绝，与支付适配器一致）。真实服务商接入时实现同一接口替换；用户表增加 `realNameVerified` 字段（待接服务商时落地），不影响现有登录流程 |
-| **角色体系（五级+质检员）** | ✅ 已完成 | SUPER（唯一 19968506071）> ADMIN > QUALITY_INSPECTOR > CUSTOMER_SERVICE > BRAND > USER | `shared/auth/middleware.ts` + `shared/api/auth.ts` 角色组常量（`ADMIN_ROLES`/`SERVICE_ROLES`/`INSPECT_ROLES`/`AFTERSALES_ROLES`）；`/admin`→ADMIN+SUPER、`/service`→客服+SUPER、`/inspect`→质检员+SUPER、`/brand`→BRAND；**登录后互不干扰**：SiteHeader 导航按角色收敛（USER 购物车+品牌方入驻；BRAND 品牌中心；客服 客服中心；质检员 质检中心；ADMIN 管理中心；SUPER 全部中心）；**SUPER 唯一、不可授予、不可被其他账号操作**（`admin.service` 非 SUPER 操作 SUPER 目标 403；注销 SUPER 被拒）；角色下拉不含 SUPER（只读标签），管理员可授予 QUALITY_INSPECTOR |
+| **角色体系（五级+质检员）** | ✅ 已完成 | SUPER（唯一 19968506071）> ADMIN > QUALITY_INSPECTOR > CUSTOMER_SERVICE > BRAND > USER | `shared/auth/middleware.ts` + `shared/api/auth.ts` 角色组常量（`ADMIN_ROLES`/`SERVICE_ROLES`/`INSPECT_ROLES`/`AFTERSALES_ROLES`）；`/admin`→ADMIN+SUPER、`/service`→客服+SUPER、`/inspect`→质检员+SUPER、`/brand`→BRAND；**登录后互不干扰**：SiteHeader 导航按角色收敛（USER 购物车+品牌方入驻；BRAND 品牌中心；客服 客服中心；质检员 质检中心；ADMIN 管理中心；SUPER 全部中心、**购物车除外**）；**SUPER 唯一、不可授予、不可被其他账号操作**（`admin.service` 非 SUPER 操作 SUPER 目标 403；注销 SUPER 被拒）；角色下拉不含 SUPER（只读标签），管理员可授予 QUALITY_INSPECTOR |
 | **咨询工单系统** | ✅ 已完成 | 用户端 `POST /api/tickets`（创建）/列表/详情/回复；客服端 `/service` 工作台筛选/对话/改状态 | `features/service/`：`ServiceTicket`+`ServiceTicketMessage`（消息带角色快照 + `isRead` 客服未读）；工单状态 `OPEN→PROCESSING→RESOLVED/CLOSED`（CLOSED 禁回复、RESOLVED 用户再回复自动重开）；**归属失败统一 404**（防工单号/订单号枚举）；客服回复置已读、打开详情即已读；注销时工单/消息 `userId`/`senderId` 置空匿名保留 |
 | **客服中心（订单售后）** | ✅ 已完成 | `/service` Tab2 订单售后：查询全部订单 + 发货/送达/完成/退款 | 复用 `GET /api/admin/orders` + 售后端点（`AFTERSALES_ROLES` 含客服），`features/service/` 独立工作台（`WorkbenchHeader` 仅品牌+工作台名+主页面/个人中心/退出，**不带主站购物车/入驻导航**）；退款回补库存与审计同事务（复用 `admin.service`） |
 | **质检中心** | ✅ 已完成 | `/inspect` 质检中心：Tab1 商品质检（待审审核通过/驳回，详情含品类质检清单 + 已提交证书「已交/缺」对照）+ Tab2 质检模板增删改 | `features/inspect/` 独立工作台（`WorkbenchHeader`）；商品/模板端点复用 `/api/admin/products*`、`/api/admin/audit-templates*`，守卫改为 `INSPECT_ROLES`（质检员+SUPER），与 `/admin` 职责彻底隔离；Tab 切换保留旧列表防抖动（`loadedOnce`+`refreshing`） |
@@ -437,6 +437,8 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | PATCH | `/api/cart` | 修改数量 |
 | DELETE | `/api/cart` | 删除商品 |
 
+> **权限**：购物车仅对普通用户（USER）开放，服务端 `requireRole(CART_ROLES=["USER"])` 守卫——商家/客服/质检/管理员/SUPER 等工作人员账号调用返回 403「无权限」（前端导航不显示购物车入口 + 加购按钮显示无权限提示）；游客未登录返回 401 → 前端跳登录页。
+
 ### 用户
 | 方法 | 路由 | 说明 |
 |------|------|------|
@@ -619,7 +621,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | ADMIN | 个人中心 + `/admin/*`（管理中心）+ `/brands`（商家管理） | 品牌审核/订单管理/用户管理（可授予 QUALITY_INSPECTOR 角色）/邀请码管理/数据看板/商家管理 |
 | SUPER | 全部中心 + `/brands` 商家管理（唯一 19968506071） | 全部权限；**不可被其他账号操作**（改角色/禁用/注销均被拒） |
 
-> **登录后互不干扰**：SiteHeader 导航按角色收敛——USER 购物车+品牌方入驻；BRAND 品牌中心；客服 客服中心；质检员 质检中心；ADMIN 管理中心；SUPER 全部中心（**商家管理** `/brands` 查看全部入驻品牌，替换原本的「品牌方入驻」入口）。路由保护由 `middleware.ts` 实现：`/admin/*` 要求 ADMIN+SUPER、`/service` 要求 CUSTOMER_SERVICE+SUPER、`/inspect` 要求 QUALITY_INSPECTOR+SUPER、`/brands` 要求 ADMIN+SUPER（**须置于 `/brand` 之前**，且 `/brand/*` 已改精确前缀，避免误伤 `/brands`）、`/brand/*` 要求登录且 BRAND 角色；API 层二次校验归属。角色组常量集中在 `shared/api/auth.ts`（`ADMIN_ROLES`/`SERVICE_ROLES`/`INSPECT_ROLES`/`AFTERSALES_ROLES`）。
+> **登录后互不干扰**：SiteHeader 导航按角色收敛——USER 购物车+品牌方入驻；BRAND 品牌中心；客服 客服中心；质检员 质检中心；ADMIN 管理中心；SUPER 全部中心（**商家管理** `/brands` 查看全部入驻品牌，替换原本的「品牌方入驻」入口；**购物车仅 USER 可用，SUPER 也无权限**）。路由保护由 `middleware.ts` 实现：`/admin/*` 要求 ADMIN+SUPER、`/service` 要求 CUSTOMER_SERVICE+SUPER、`/inspect` 要求 QUALITY_INSPECTOR+SUPER、`/brands` 要求 ADMIN+SUPER（**须置于 `/brand` 之前**，且 `/brand/*` 已改精确前缀，避免误伤 `/brands`）、`/brand/*` 要求登录且 BRAND 角色；API 层二次校验归属。角色组常量集中在 `shared/api/auth.ts`（`ADMIN_ROLES`/`SERVICE_ROLES`/`INSPECT_ROLES`/`AFTERSALES_ROLES`）。
 
 > **品牌入驻流程**：游客/USER 在 `/invite` 用管理员发放的邀请码激活品牌（激活只创建 PENDING 品牌，不升级角色）→ 管理员在 `/admin` 或 SUPER 在 `/brands` 商家管理页查看并审核 → **审核通过时**负责人才升级为 BRAND 角色。当前 access token 15min 内仍携带 USER 角色，需**重新登录**后才可进入 `/brand`。被拒绝的品牌不可再次提交入驻，需联系管理员重新发放邀请码。
 
