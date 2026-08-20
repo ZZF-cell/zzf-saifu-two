@@ -29,6 +29,7 @@ vi.mock("@/shared/adapters/payment.adapter", () => ({
 import { prisma } from "@/shared/db/client";
 import { paymentService } from "@/features/payment";
 import { createOrder } from "@/features/orders/orders.service";
+import { ERROR_CODES } from "@/shared/errors/errors";
 
 // ── 交互事务 mock：$transaction(fn) 以 tx 对象调用 fn ──
 
@@ -85,7 +86,7 @@ beforeEach(() => {
 describe("createOrder — 购物车子集校验（防回退全量误删）", () => {
   it("提交项含购物车中不存在的商品 → VALIDATION_ERROR，且不扣库存/不建单", async () => {
     // 购物车里只有 p1，用户提交 p1 + p2（p2 不在购物车）
-    tx.cartItem.findMany.mockResolvedValue([{ productId: "p1" }]);
+    tx.cartItem.findMany.mockResolvedValue([{ productId: "p1", qty: 999 }]);
 
     await expect(
       createOrder("u1", { ...baseInput, items: [{ productId: "p1", qty: 1 }, { productId: "p2", qty: 1 }] }),
@@ -98,8 +99,22 @@ describe("createOrder — 购物车子集校验（防回退全量误删）", () 
     expect(tx.cartItem.deleteMany).not.toHaveBeenCalled();
   });
 
+  it("下单数量超过购物车数量 → VALIDATION_ERROR，不扣库存/不建单（防改参超量下单）", async () => {
+    // 购物车只有 p1×2，提交 p1×3 → 拒绝
+    tx.cartItem.findMany.mockResolvedValue([{ productId: "p1", qty: 2 }]);
+
+    await expect(
+      createOrder("u1", { ...baseInput, items: [{ productId: "p1", qty: 3 }] }),
+    ).rejects.toMatchObject({
+      code: ERROR_CODES.VALIDATION_ERROR.code,
+    });
+
+    expect(tx.product.findUnique).not.toHaveBeenCalled();
+    expect(tx.order.create).not.toHaveBeenCalled();
+  });
+
   it("提交项全在购物车 → 正常下单，Step 4 按购买数量扣减购物车", async () => {
-    tx.cartItem.findMany.mockResolvedValue([{ productId: "p1" }, { productId: "p2" }]);
+    tx.cartItem.findMany.mockResolvedValue([{ productId: "p1", qty: 999 }, { productId: "p2", qty: 999 }]);
     // 购物车 p1×1、p2×1，下单各 1 → 购满 → 整行删除
     mockCartRows([{ productId: "p1", qty: 1 }, { productId: "p2", qty: 1 }]);
     tx.product.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
@@ -129,7 +144,7 @@ describe("createOrder — 购物车子集校验（防回退全量误删）", () 
   });
 
   it("F4 差额扣减：购物车 A×5 只买 A×2 → 保留剩余 3（update 而非整行删除）", async () => {
-    tx.cartItem.findMany.mockResolvedValue([{ productId: "p1" }]);
+    tx.cartItem.findMany.mockResolvedValue([{ productId: "p1", qty: 999 }]);
     mockCartRows([{ productId: "p1", qty: 5 }]);
     tx.product.findUnique.mockResolvedValue({
       id: "p1", name: "商品1", price: 19900, stock: 100, version: 1, status: "APPROVED",
@@ -148,7 +163,7 @@ describe("createOrder — 购物车子集校验（防回退全量误删）", () 
   });
 
   it("F5 privacy 白名单：input 注入额外字段（destroyed）→ 落库仅 anonymousPackaging/hideProductName", async () => {
-    tx.cartItem.findMany.mockResolvedValue([{ productId: "p1" }]);
+    tx.cartItem.findMany.mockResolvedValue([{ productId: "p1", qty: 999 }]);
     mockCartRows([{ productId: "p1", qty: 5 }]);
     tx.product.findUnique.mockResolvedValue({
       id: "p1", name: "商品1", price: 19900, stock: 100, version: 1, status: "APPROVED",
@@ -183,7 +198,7 @@ describe("createOrder — 购物车子集校验（防回退全量误删）", () 
 describe("createOrder — M2 去重 / M3 qty 上限 / E1 支付状态", () => {
   /** 事务内 happy path：购物车含 p1、商品可扣、建单成功 */
   function mockHappyPath(total = 19900) {
-    tx.cartItem.findMany.mockResolvedValue([{ productId: "p1" }]);
+    tx.cartItem.findMany.mockResolvedValue([{ productId: "p1", qty: 999 }]);
     tx.product.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
       Promise.resolve({
         id: where.id, name: "商品1", price: 19900, stock: 100, version: 1, status: "APPROVED",

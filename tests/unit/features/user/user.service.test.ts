@@ -48,6 +48,7 @@ type Tx = {
   serviceTicket: { updateMany: ReturnType<typeof vi.fn> };
   serviceTicketMessage: { updateMany: ReturnType<typeof vi.fn> };
   verificationCode: { deleteMany: ReturnType<typeof vi.fn> };
+  auditLog: { updateMany: ReturnType<typeof vi.fn> };
 };
 
 const tx: Tx = {
@@ -59,6 +60,7 @@ const tx: Tx = {
   serviceTicket: { updateMany: vi.fn() },
   serviceTicketMessage: { updateMany: vi.fn() },
   verificationCode: { deleteMany: vi.fn() },
+  auditLog: { updateMany: vi.fn() },
 };
 
 beforeEach(() => {
@@ -148,20 +150,24 @@ describe("changePhone — 换绑手机号（新号短信验证）", () => {
   });
 
   it("验证码错误 → INVALID_CREDENTIALS，不写库", async () => {
-    userFindUnique.mockResolvedValue({ phoneHash: "old-hash", status: "ACTIVE" });
+    const passwordHash = await hashPassword("pass-123456");
+    userFindUnique.mockResolvedValue({ phoneHash: "old-hash", status: "ACTIVE", passwordHash });
     verifyCode.mockResolvedValue(false);
 
-    await expect(changePhone(USER_ID, "13900000001", "000000")).rejects.toMatchObject({
+    await expect(
+      changePhone(USER_ID, "13900000001", "000000", "pass-123456"),
+    ).rejects.toMatchObject({
       code: ERROR_CODES.INVALID_CREDENTIALS.code,
     });
     expect(transaction).not.toHaveBeenCalled();
   });
 
-  it("验证码通过 → 事务更新 phoneHash + 清旧号验证码", async () => {
-    userFindUnique.mockResolvedValue({ phoneHash: "old-hash", status: "ACTIVE" });
+  it("有密码 + 旧密码正确 + 验证码通过 → 事务更新 phoneHash + 清旧号验证码 + 吊销会话", async () => {
+    const passwordHash = await hashPassword("pass-123456");
+    userFindUnique.mockResolvedValue({ phoneHash: "old-hash", status: "ACTIVE", passwordHash });
     const newHash = crypto.createHash("sha256").update("test-pepper" + "13900000001").digest("hex");
 
-    await changePhone(USER_ID, "13900000001", "123456");
+    await changePhone(USER_ID, "13900000001", "123456", "pass-123456");
 
     expect(verifyCode).toHaveBeenCalledWith("13900000001", "123456");
     expect(tx.user.update).toHaveBeenCalledWith({
@@ -171,15 +177,45 @@ describe("changePhone — 换绑手机号（新号短信验证）", () => {
     expect(tx.verificationCode.deleteMany).toHaveBeenCalledWith({
       where: { phoneHash: "old-hash" },
     });
+    expect(tx.refreshToken.deleteMany).toHaveBeenCalledWith({ where: { userId: USER_ID } });
+  });
+
+  it("纯短信用户（无密码）+ 旧号验证码正确 → 事务换绑", async () => {
+    userFindUnique.mockResolvedValue({ phoneHash: "old-hash", status: "ACTIVE", passwordHash: null });
+    const newHash = crypto.createHash("sha256").update("test-pepper" + "13900000001").digest("hex");
+
+    await changePhone(USER_ID, "13900000001", "123456", undefined, "13800000001", "654321");
+
+    // 旧号验证码复验 + 新号验证码均被消费
+    expect(verifyCode).toHaveBeenCalledWith("13800000001", "654321");
+    expect(verifyCode).toHaveBeenCalledWith("13900000001", "123456");
+    expect(tx.user.update).toHaveBeenCalledWith({
+      where: { id: USER_ID },
+      data: { phoneHash: newHash },
+    });
+  });
+
+  it("有密码但不提供旧密码 → INVALID_CREDENTIALS，不写库", async () => {
+    userFindUnique.mockResolvedValue({
+      phoneHash: "old-hash",
+      status: "ACTIVE",
+      passwordHash: "scrypt.salt.hash",
+    });
+
+    await expect(changePhone(USER_ID, "13900000001", "123456")).rejects.toMatchObject({
+      code: ERROR_CODES.INVALID_CREDENTIALS.code,
+    });
+    expect(transaction).not.toHaveBeenCalled();
   });
 
   it("新号唯一约束冲突（P2002）→ PHONE_ALREADY_EXISTS", async () => {
-    userFindUnique.mockResolvedValue({ phoneHash: "old-hash", status: "ACTIVE" });
+    const passwordHash = await hashPassword("pass-123456");
+    userFindUnique.mockResolvedValue({ phoneHash: "old-hash", status: "ACTIVE", passwordHash });
     const conflict = new Error("Unique constraint failed");
     (conflict as { code?: string }).code = "P2002";
     transaction.mockRejectedValue(conflict);
 
-    await expect(changePhone(USER_ID, "13900000001", "123456")).rejects.toMatchObject({
+    await expect(changePhone(USER_ID, "13900000001", "123456", "pass-123456")).rejects.toMatchObject({
       code: ERROR_CODES.PHONE_ALREADY_EXISTS.code,
     });
   });

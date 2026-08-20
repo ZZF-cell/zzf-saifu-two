@@ -70,8 +70,10 @@ export async function getProductList(
     ...(search
       ? {
           OR: [
-            { name: { contains: search } },
-            { description: { contains: search } },
+            // mode insensitive：Postgres contains 默认大小写敏感，用户搜「iPhone」
+            // 找不到「iphone」会误判无结果
+            { name: { contains: search, mode: "insensitive" } },
+            { description: { contains: search, mode: "insensitive" } },
           ],
         }
       : {}),

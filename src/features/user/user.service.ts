@@ -54,8 +54,10 @@ export async function updateAvatar(
 
 /**
  * 换绑手机号。
- * 流程：旧号不变 → 新号发验证码 → 校验新号验证码通过后，事务内更新 phoneHash + 清旧号验证码。
+ * 流程：旧凭证复验（有密码验旧密码；纯短信用户验旧号验证码）→ 新号验证码校验 →
+ * 事务内更新 phoneHash + 清旧号验证码 + 吊销全部会话。
  * - 新号与当前相同 → VALIDATION_ERROR（无意义换绑）
+ * - 旧凭证错误/缺失 → INVALID_CREDENTIALS（防会话被盗者换绑接管账号）
  * - 验证码错误/过期 → INVALID_CREDENTIALS（复用 auth 防爆破语义）
  * - phoneHash 唯一冲突（新号已被注册）→ 捕 P2002 → PHONE_ALREADY_EXISTS
  */
@@ -63,10 +65,13 @@ export async function changePhone(
   userId: string,
   newPhone: string,
   code: string,
+  oldPassword?: string,
+  oldPhone?: string,
+  oldCode?: string,
 ): Promise<void> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { phoneHash: true, status: true },
+    select: { phoneHash: true, status: true, passwordHash: true },
   });
   if (!user) throw new AppError(ERROR_CODES.UNAUTHORIZED, "用户不存在");
   if (user.status === "DISABLED") {
@@ -78,9 +83,30 @@ export async function changePhone(
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, "新手机号与当前手机号相同");
   }
 
+  // 换绑前复验旧凭证：换绑后登录凭证（手机号）即变更，仅凭新号验证码就能换绑，
+  // 会话被盗者（拿到 access 15min）可把账号换绑到自己手机号永久接管。
+  // 有密码 → 验旧密码；纯短信用户（无密码）→ 验旧号短信验证码。
+  if (user.passwordHash) {
+    if (!oldPassword) {
+      throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "请输入当前登录密码");
+    }
+    const ok = await verifyPassword(oldPassword, user.passwordHash);
+    if (!ok) {
+      throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "当前密码错误");
+    }
+  } else {
+    if (!oldPhone || !oldCode) {
+      throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "请输入旧手机号及验证码");
+    }
+    const oldValid = await authService.verifyAndConsumeCode(oldPhone, oldCode);
+    if (!oldValid) {
+      throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "旧手机号验证码错误或已过期");
+    }
+  }
+
   const valid = await authService.verifyAndConsumeCode(newPhone, code);
   if (!valid) {
-    throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "验证码错误或已过期");
+    throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, "新手机号验证码错误或已过期");
   }
 
   try {
@@ -93,6 +119,9 @@ export async function changePhone(
       await tx.verificationCode.deleteMany({
         where: { phoneHash: user.phoneHash },
       });
+      // 换绑后吊销全部会话：旧 access/refresh 立即失效，防止换绑操作后旧会话继续有效
+      // （攻击者换绑成功时，受害者的旧会话也不能再续期，收窄接管窗口）
+      await tx.refreshToken.deleteMany({ where: { userId } });
     });
   } catch (err) {
     // phoneHash 唯一约束冲突（并发场景下新号恰好被注册）
@@ -176,6 +205,11 @@ export async function deleteAccount(
     await tx.serviceTicketMessage.updateMany({
       where: { senderId: userId },
       data: { senderId: null },
+    });
+    // 审计日志操作人置空（operatorId 无 FK，遗留悬空引用污染回溯；注销后审计留痕匿名）
+    await tx.auditLog.updateMany({
+      where: { operatorId: userId },
+      data: { operatorId: null },
     });
     // 3. 删除验证码记录（按 phoneHash）+ 删除用户
     await tx.verificationCode.deleteMany({ where: { phoneHash: user.phoneHash } });

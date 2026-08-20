@@ -22,10 +22,18 @@ const updateProfileSchema = z
     message: "没有要更新的字段",
   });
 
-const changePhoneSchema = z.object({
-  newPhone: z.string().regex(/^1[3-9]\d{9}$/, "手机号格式不正确"),
-  code: z.string().length(6, "验证码为 6 位数字"),
-});
+// 换绑需旧凭证复验：有密码用户传 oldPassword；纯短信用户（无密码）传 oldPhone+oldCode
+const changePhoneSchema = z
+  .object({
+    newPhone: z.string().regex(/^1[3-9]\d{9}$/, "手机号格式不正确"),
+    code: z.string().length(6, "验证码为 6 位数字"),
+    oldPassword: z.string().min(6, "密码至少 6 位").optional(),
+    oldPhone: z.string().regex(/^1[3-9]\d{9}$/).optional(),
+    oldCode: z.string().length(6).optional(),
+  })
+  .refine((d) => Boolean(d.oldPassword) || Boolean(d.oldPhone && d.oldCode), {
+    message: "需提供旧密码或旧手机号验证码",
+  });
 
 const deactivateSchema = z.object({
   password: z.string().min(6, "密码至少 6 位").optional(),
@@ -62,12 +70,19 @@ export const updateProfileHandler = withValidation(
   },
 );
 
-/** POST /api/user/change-phone — 换绑手机号（新号短信验证） */
+/** POST /api/user/change-phone — 换绑手机号（旧凭证复验 + 新号短信验证） */
 export const changePhoneHandler = withValidation(
   changePhoneSchema,
   async (data, req) => {
     const userId = await authenticate(req);
-    await changePhone(userId, data.newPhone, data.code);
+    await changePhone(
+      userId,
+      data.newPhone,
+      data.code,
+      data.oldPassword,
+      data.oldPhone,
+      data.oldCode,
+    );
     return NextResponse.json({ success: true });
   },
 );

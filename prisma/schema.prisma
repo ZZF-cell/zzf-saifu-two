@@ -110,6 +110,14 @@ model Product {
   updatedAt   DateTime @updatedAt
 
   brand Brand    @relation(fields: [brandId], references: [id])
+
+  // M17：Product 此前无任何二级索引 —— 品牌工作台按 brandId 分页（brand.queries ×3）、
+  // 管理后台按 status 筛选（admin.queries）、商城按 category/stock 过滤（getProductList）
+  // 均为热查询，无索引时每次全表扫描。全部走单独列索引（filter 均为单列谓词）。
+  @@index([brandId])
+  @@index([status])
+  @@index([category])
+  @@index([stock])
 }
 
 // ═══════════════════════════════════

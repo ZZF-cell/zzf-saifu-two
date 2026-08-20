@@ -239,8 +239,8 @@ describe("checkPaymentStatus — 查询支付状态（真正查支付宝）", ()
     expect(result).toEqual({ status: "CANCELLED" });
     // 修复后：取消前确实查了支付（而非修复前直接取消）
     expect(queryTradeMock).toHaveBeenCalledWith("order-1");
-    // 取消成功后库存回补确实触发
-    expect(tx.product.updateMany).toHaveBeenCalledTimes(1);
+    // 取消成功后库存回补确实触发（单商品拆两次：库存回补 + 销量回减守卫）
+    expect(tx.product.updateMany).toHaveBeenCalledTimes(2);
   });
 
   it("已超时 PENDING 但支付宝已支付 → 标记 PAID，返回 PAID（不取消，防资损）", async () => {

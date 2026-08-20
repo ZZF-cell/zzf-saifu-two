@@ -1,6 +1,7 @@
 // 订单 API Route Handlers（需登录）
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { captureMessage } from "@sentry/nextjs";
 import { withValidation, apiError, parsePagination } from "@/shared/utils/api";
 import { authenticate } from "@/shared/api/auth";
 import { verifyNotifySignature } from "@/features/payment";
@@ -259,12 +260,22 @@ export async function paidCallback(
       console.error(`[orders] 回调缺少 out_trade_no: 订单 ${id}`);
       return new NextResponse("failure", { status: 200 });
     }
-    // out_trade_no 与订单号必须一致（pageExec 时 outTradeNo 即订单 id）
+    // out_trade_no 与订单号必须一致（pageExec 时 outTradeNo 即订单 id）。
+    // 不匹配说明回调 URL/订单错配——这是某笔真实支付的终态通知，静默 success 停止
+    // 重试会让该笔支付永远不被标记（资损隐患）：上报告警 + 返回 failure 让支付宝重试。
     if (outTradeNo !== id) {
       console.error(
         `[orders] 回调 out_trade_no 不匹配: 订单 ${id} out_trade_no=${outTradeNo}`,
       );
-      return new NextResponse("success", { status: 200 });
+      try {
+        captureMessage(
+          `[orders] 支付回调 out_trade_no 不匹配 orderId=${id} outTradeNo=${outTradeNo}`,
+          { level: "warning" },
+        );
+      } catch {
+        // Sentry 未初始化时静默（console.error 已兜底）
+      }
+      return new NextResponse("failure", { status: 200 });
     }
     // 支付宝真实交易流水号（区别于商户 out_trade_no），回调必备字段之一
     const alipayTradeNo = body.trade_no || body.tradeNo;

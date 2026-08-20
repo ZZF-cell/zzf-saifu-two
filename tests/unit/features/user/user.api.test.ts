@@ -111,13 +111,45 @@ describe("PATCH /api/user/profile — 昵称/头像", () => {
 });
 
 describe("POST /api/user/change-phone", () => {
-  it("合法参数 → 透传 userId/newPhone/code 到 changePhone", async () => {
+  it("有密码用户：带 oldPassword → 透传 userId/newPhone/code/oldPassword 到 changePhone", async () => {
+    const res = await changePhoneHandler(
+      makeRequest("http://localhost/api/user/change-phone", { newPhone: "13900000001", code: "123456", oldPassword: "pass-123456" }, "POST"),
+    );
+
+    expect(res.status).toBe(200);
+    expect(changePhoneMock).toHaveBeenCalledWith(
+      "user-1",
+      "13900000001",
+      "123456",
+      "pass-123456",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("纯短信用户：带 oldPhone+oldCode → 透传换绑参数", async () => {
+    const res = await changePhoneHandler(
+      makeRequest("http://localhost/api/user/change-phone", { newPhone: "13900000001", code: "123456", oldPhone: "13800000001", oldCode: "654321" }, "POST"),
+    );
+
+    expect(res.status).toBe(200);
+    expect(changePhoneMock).toHaveBeenCalledWith(
+      "user-1",
+      "13900000001",
+      "123456",
+      undefined,
+      "13800000001",
+      "654321",
+    );
+  });
+
+  it("缺旧凭证（无 oldPassword / 无 oldPhone+oldCode）→ 422，不调 service", async () => {
     const res = await changePhoneHandler(
       makeRequest("http://localhost/api/user/change-phone", { newPhone: "13900000001", code: "123456" }, "POST"),
     );
 
-    expect(res.status).toBe(200);
-    expect(changePhoneMock).toHaveBeenCalledWith("user-1", "13900000001", "123456");
+    expect(res.status).toBe(422);
+    expect(changePhoneMock).not.toHaveBeenCalled();
   });
 
   it("非法手机号 → 422，不调 service", async () => {

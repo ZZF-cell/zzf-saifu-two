@@ -445,6 +445,8 @@ function TicketsWorkbench({ active }: { active?: boolean }) {
   const loadedOnce = useRef(false);
   // 请求序号守卫：快速连点筛选时后发先回不覆盖错位数据
   const seqRef = useRef(0);
+  // 详情请求序号守卫：快速切换工单时，慢的旧工单响应不得覆盖新工单详情
+  const detailSeqRef = useRef(0);
 
   // 详情视图（选中工单后替换列表）
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -490,18 +492,22 @@ function TicketsWorkbench({ active }: { active?: boolean }) {
   }, [items, statusFilter, categoryFilter, keyword]);
 
   const openDetail = useCallback(async (id: string) => {
+    const seq = ++detailSeqRef.current;
     setSelectedId(id);
     setDetailLoading(true);
     setActionError("");
     setReply("");
     try {
       const data = await apiCall("GET", `/api/service/tickets/${id}`);
+      if (seq !== detailSeqRef.current) return; // 已切换到其他工单，丢弃旧响应
       setDetail(data);
       await fetchList(); // 打开即已读 → 刷新列表未读角标
     } catch (err: unknown) {
+      if (seq !== detailSeqRef.current) return;
       setActionError(err instanceof Error ? err.message : "工单加载失败");
       setSelectedId(null);
     } finally {
+      if (seq !== detailSeqRef.current) return;
       setDetailLoading(false);
     }
   }, [fetchList]);

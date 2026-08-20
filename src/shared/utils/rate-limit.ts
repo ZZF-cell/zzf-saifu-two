@@ -60,11 +60,19 @@ export const hashKey = (value: string): string => sha256(value);
 
 /**
  * 从请求头提取客户端 IP。
- * Vercel Serverless：x-forwarded-for 首段为真实客户端 IP（后续为代理链），
- * 无代理时退回 x-real-ip / unknown（unknown 同样参与限流，防伪造头绕过）。
+ * 安全：X-Forwarded-For 首段可被客户端伪造（Vercel 会把真实来源 IP 追加到链尾），
+ * 取首段 = 攻击者轮换该头即可绕过 IP 维度限流（短信轰炸）。因此：
+ * - 优先 x-vercel-forwarded-for（Vercel 边缘设置的真实来源 IP，客户端不可伪造）
+ * - 非 Vercel（本地 dev/自建）：x-forwarded-for 代理链取链尾（最接近真实来源）
+ * - 退回 x-real-ip / unknown（unknown 同样参与限流，防伪造头绕过）
  */
 export function clientIp(req: Request): string {
+  const vercelFf = req.headers.get("x-vercel-forwarded-for");
+  if (vercelFf) return vercelFf.split(",")[0].trim();
   const xff = req.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0].trim();
+  if (xff) {
+    const parts = xff.split(",").map((s) => s.trim()).filter(Boolean);
+    return parts[parts.length - 1] || "unknown";
+  }
   return req.headers.get("x-real-ip")?.trim() || "unknown";
 }

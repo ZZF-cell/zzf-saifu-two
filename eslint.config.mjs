@@ -120,6 +120,7 @@ const config = [
       ".next/**",
       "coverage/**",
       "postgres-data/**",
+      "tmp/**",
       "*.bak",
       "next-env.d.ts",
     ],

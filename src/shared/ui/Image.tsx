@@ -46,6 +46,9 @@ export function Image({
   const resolved = resolveImageSource(src);
   return (
     <ImageRenderBoundary
+      // key=src：src 变化时重挂边界，重置 failed 状态——否则某 URL 渲染失败后
+      // failed 恒为 true，用户换图/加载新 src 仍永远显示占位图
+      key={resolved.src}
       fallback={
         <NextImage
           src={PLACEHOLDER_IMAGE}

@@ -139,7 +139,7 @@ npx prisma db seed                 # 重新填充种子数据
 | **咨询工单系统** | ✅ 已完成 | 用户端 `POST /api/tickets`（创建）/列表/详情/回复；客服端 `/service` 工作台筛选/对话/改状态 | `features/service/`：`ServiceTicket`+`ServiceTicketMessage`（消息带角色快照 + `isRead` 客服未读）；工单状态 `OPEN→PROCESSING→RESOLVED/CLOSED`（CLOSED 禁回复、RESOLVED 用户再回复自动重开）；**归属失败统一 404**（防工单号/订单号枚举）；客服回复置已读、打开详情即已读；注销时工单/消息 `userId`/`senderId` 置空匿名保留 |
 | **客服中心（订单售后）** | ✅ 已完成 | `/service` Tab2 订单售后：查询全部订单 + 发货/送达/完成/退款 | 复用 `GET /api/admin/orders` + 售后端点（`AFTERSALES_ROLES` 含客服），`features/service/` 独立工作台（`WorkbenchHeader` 仅品牌+工作台名+主页面/个人中心/退出，**不带主站购物车/入驻导航**）；退款回补库存与审计同事务（复用 `admin.service`） |
 | **质检中心** | ✅ 已完成 | `/inspect` 质检中心：Tab1 商品质检（待审审核通过/驳回，详情含品类质检清单 + 已提交证书「已交/缺」对照）+ Tab2 质检模板增删改 | `features/inspect/` 独立工作台（`WorkbenchHeader`）；商品/模板端点复用 `/api/admin/products*`、`/api/admin/audit-templates*`，守卫改为 `INSPECT_ROLES`（质检员+SUPER），与 `/admin` 职责彻底隔离；Tab 切换保留旧列表防抖动（`loadedOnce`+`refreshing`） |
-| **账号信息栏功能** | ✅ 已完成 | 改手机号（新号短信验证）、自主注销（硬删除）、上传头像、设置/修改密码 | `features/user/`：`changePhone`（复用 `auth.verifyAndConsumeCode` + 捕 P2002 → PHONE_ALREADY_EXISTS + 清旧号验证码）；`deleteAccount`（SUPER 拦截 / 已入驻品牌 409 `ACCOUNT_HAS_BRAND` / 有密码验旧；事务内订单/邀请码/工单匿名化 + 删会话/购物车/验证码/User）；`updateAvatar`（`isOssUrlOwnedBy` 归属校验，`purpose=avatar`）；`changePassword`（无密码设首密 / 有密码验旧）；`getProfile` 回 `avatarUrl`+`hasPassword`（passwordHash 剥除不外泄） |
+| **账号信息栏功能** | ✅ 已完成 | 改手机号（新号短信验证）、自主注销（硬删除）、上传头像、设置/修改密码 | `features/user/`：`changePhone`（**旧凭证复验防会话接管**：有密码验旧密码 / 纯短信验旧号验证码，换绑成功吊销全部 refresh token；复用 `auth.verifyAndConsumeCode` + 捕 P2002 → PHONE_ALREADY_EXISTS + 清旧号验证码）；`deleteAccount`（SUPER 拦截 / 已入驻品牌 409 `ACCOUNT_HAS_BRAND` / 有密码验旧；事务内订单/邀请码/工单匿名化 + 审计 operatorId 置空 + 删会话/购物车/验证码/User）；`updateAvatar`（`isOssUrlOwnedBy` 归属校验，`purpose=avatar`）；`changePassword`（无密码设首密 / 有密码验旧）；`setPassword`（已有密码拒绝覆盖，只能走 change-password）；`getProfile` 回 `avatarUrl`+`hasPassword`（passwordHash 剥除不外泄） |
 
 > **技术债预警原则**：每个二期功能的 `features/` 模块是独立的，不跨模块修改，只通过现有 Public API 或新增 Adapter 扩展。如果某个功能需要修改现有模块的内部实现，说明边界设计需要调整。
 
@@ -410,7 +410,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | POST | `/api/auth/verify-code` | 验证码登录（新用户自动注册） |
 | POST | `/api/auth/login` | 密码登录 |
 | POST | `/api/auth/register` | 密码注册 |
-| POST | `/api/auth/set-password` | 短信登录后设置密码 |
+| POST | `/api/auth/set-password` | 短信登录后设置密码（**已有密码直接拒绝**，须走 change-password 验旧） |
 | POST | `/api/auth/change-password` | 设置/修改密码（已有密码须验旧 `oldPassword`；纯短信用户可省略直接设首密） |
 | GET | `/api/auth/me` | 当前登录用户信息（登录态导航/前端状态；安全字段，不含 phoneHash） |
 | POST | `/api/auth/refresh` | 刷新 Access Token（Rotation） |
@@ -442,7 +442,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 |------|------|------|
 | GET | `/api/user/profile` | 个人信息 + 订单统计（含 `avatarUrl`、`hasPassword`；**passwordHash 绝不回传**） |
 | PATCH | `/api/user/profile` | 修改昵称 / 头像（`nickname`/`avatarUrl` 可只传其一；avatarUrl 须本人上传的 OSS URL，空串清除） |
-| POST | `/api/user/change-phone` | 换绑手机号（新号短信验证；捕唯一冲突 409 `PHONE_ALREADY_EXISTS`；清旧号验证码） |
+| POST | `/api/user/change-phone` | 换绑手机号（新号短信验证；捕唯一冲突 409 `PHONE_ALREADY_EXISTS`；清旧号验证码）。**旧凭证复验防会话接管**：有密码 → 必传 `oldPassword`；纯短信用户 → 必传 `oldPhone`+`oldCode`；缺旧凭证 422；换绑成功吊销全部会话 |
 | POST | `/api/user/deactivate` | 自主注销（**硬删除不可逆**；`confirm:true` 必传；SUPER 403 / 已入驻品牌 409 `ACCOUNT_HAS_BRAND` / 有密码验旧；订单/邀请码/工单匿名化保留） |
 | POST | `/api/user/age-verify` | 年龄验证确认（服务端签发签名 cookie，绕过年龄门禁） |
 

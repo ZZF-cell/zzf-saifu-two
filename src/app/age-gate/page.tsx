@@ -20,7 +20,13 @@ function AgeGateContent() {
     // 一行 JS 即可伪造绕过门禁；现在客户端不写任何可伪造的 age_verified。
     // 同步失败 → fail-closed 停留门禁，不给无签名入口。
     try {
-      await fetch("/api/user/age-verify", { method: "POST", credentials: "include" });
+      const res = await fetch("/api/user/age-verify", {
+        method: "POST",
+        credentials: "include",
+      });
+      // 非 2xx：签名 cookie 未签发，跳转后中间件会再拦回门禁（白跳一次）。
+      // fail-closed 停留门禁，不给无签名入口。
+      if (!res.ok) return;
     } catch {
       return;
     }

@@ -417,18 +417,29 @@ export async function loginWithPassword(
   return issueTokens(user);
 }
 
-/** 为短信登录用户设置密码（被禁用用户禁止：access token 15min 内仍有效，禁用门禁必须下沉到写入口） */
+/**
+ * 为短信登录用户设置密码（被禁用用户禁止：access token 15min 内仍有效，禁用门禁必须下沉到写入口）
+ *
+ * 安全门禁：本端点仅供「纯短信用户设首密」。已有密码的用户必须走 change-password
+ * （验旧密码）——否则会话被盗者可无条件覆盖密码，绕过验旧门禁接管账号。
+ */
 export async function setPassword(
   userId: string,
   password: string,
 ): Promise<void> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { status: true },
+    select: { status: true, passwordHash: true },
   });
   if (!user) throw new AppError(ERROR_CODES.UNAUTHORIZED, "用户不存在");
   if (user.status === "DISABLED") {
     throw new AppError(ERROR_CODES.USER_DISABLED, "账号已被禁用，请联系管理员");
+  }
+  if (user.passwordHash) {
+    throw new AppError(
+      ERROR_CODES.INVALID_CREDENTIALS,
+      "账号已设置密码，请使用「修改密码」功能",
+    );
   }
   const passwordHash = await hashPassword(password);
   await prisma.user.update({
@@ -514,7 +525,13 @@ export async function refreshAccessToken(
       where: { userId: decoded.userId, tokenHash: expectedHash },
     });
     if (prior?.revokedAt) {
-      await prisma.refreshToken.deleteMany({ where: { userId: decoded.userId } });
+      // 只吊销命中的该 token 行，不吊销用户全部会话：攻击者重放的是旧 token，
+      // 吊销该行即无法再用；受害者其余会话（含刚轮换签发的新 token）不受影响。
+      // 全量吊销在多 Tab 并发刷新场景是可用性缺陷——多个 Tab 各带同一旧 refresh
+      // 同时刷新时，先轮换成功者命中此分支会把其余 Tab 的新会话一并吊销（自锁登出）。
+      await prisma.refreshToken.deleteMany({
+        where: { userId: decoded.userId, tokenHash: expectedHash },
+      });
       console.error(`[auth] Refresh token 重用检测: userId=${decoded.userId}`);
       try {
         captureMessage(`[auth] Refresh token 重用检测 userId=${decoded.userId}`, {

@@ -68,6 +68,12 @@ export function ChangePhoneForm() {
   const [countdown, setCountdown] = useState(0);
   const [pending, setPending] = useState(false);
   const [err, setErr] = useState("");
+  // 旧凭证复验：有密码 → 旧密码；纯短信用户（无密码）→ 旧手机号验证码
+  const [oldPassword, setOldPassword] = useState("");
+  const [oldPhone, setOldPhone] = useState("");
+  const [oldCode, setOldCode] = useState("");
+  const [oldDemoCode, setOldDemoCode] = useState<string | null>(null);
+  const [oldCountdown, setOldCountdown] = useState(0);
   const [success, setSuccess] = useState("");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -104,20 +110,68 @@ export function ChangePhoneForm() {
     }
   };
 
+  // 纯短信用户（无密码）：向旧手机号发送验证码用于复验
+  const handleOldSendCode = async () => {
+    if (!/^1[3-9]\d{9}$/.test(oldPhone)) {
+      setErr("请输入正确的旧手机号");
+      return;
+    }
+    setErr("");
+    try {
+      const data = await apiCall("POST", "/api/auth/send-code", { phone: oldPhone });
+      const demo = (data.demoCode as string | undefined) ?? null;
+      if (demo) setOldDemoCode(demo);
+      setOldCountdown(60);
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = setInterval(() => {
+        setOldCountdown((c) => {
+          if (c <= 1) {
+            if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+            return 0;
+          }
+          return c - 1;
+        });
+      }, 1000);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "发送失败");
+    }
+  };
+
   const handleSubmit = async () => {
     if (code.length !== 6) {
       setErr("请输入 6 位验证码");
+      return;
+    }
+    const needsOldPassword = Boolean(profile?.hasPassword);
+    if (needsOldPassword) {
+      if (oldPassword.length < 6) {
+        setErr("请输入当前登录密码");
+        return;
+      }
+    } else if (oldCode.length !== 6) {
+      setErr("请输入旧手机号验证码");
       return;
     }
     setPending(true);
     setErr("");
     setSuccess("");
     try {
-      await apiCall("POST", "/api/user/change-phone", { newPhone, code });
+      const body: Record<string, unknown> = { newPhone, code };
+      if (needsOldPassword) {
+        body.oldPassword = oldPassword;
+      } else {
+        body.oldPhone = oldPhone;
+        body.oldCode = oldCode;
+      }
+      await apiCall("POST", "/api/user/change-phone", body);
       setSuccess("手机号已更换，下次登录请使用新手机号");
       setNewPhone("");
       setCode("");
       setDemoCode(null);
+      setOldPassword("");
+      setOldPhone("");
+      setOldCode("");
+      setOldDemoCode(null);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : "更换失败");
     } finally {
@@ -139,6 +193,59 @@ export function ChangePhoneForm() {
         <p className="mb-4 mt-0.5 text-xs text-gray-400">
           更换后需用新手机号验证，旧手机号不可再登录；验证码 5 分钟内有效
         </p>
+        {/* 旧凭证复验：换绑后登录凭证即变更，须先证明是账号本人（有密码验密码/纯短信验旧号） */}
+        {profile?.hasPassword ? (
+          <div className="mb-4">
+            <p className="mb-2 text-xs text-gray-500">验证当前身份（换绑后旧手机号不可再登录）</p>
+            <input
+              type="password"
+              maxLength={128}
+              value={oldPassword}
+              onChange={(e) => setOldPassword(e.target.value)}
+              placeholder="当前登录密码"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+            />
+          </div>
+        ) : (
+          <div className="mb-4">
+            <p className="mb-2 text-xs text-gray-500">验证旧手机号（换绑后旧手机号不可再登录）</p>
+            <div className="flex gap-2">
+              <input
+                type="tel"
+                maxLength={11}
+                value={oldPhone}
+                onChange={(e) => setOldPhone(e.target.value.replace(/\D/g, ""))}
+                placeholder="旧手机号"
+                className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              />
+              <button
+                type="button"
+                onClick={handleOldSendCode}
+                disabled={oldCountdown > 0 || pending || oldPhone.length !== 11}
+                className="whitespace-nowrap rounded-lg bg-gray-100 px-4 py-2 text-sm text-gray-600 transition hover:bg-gray-200 disabled:opacity-50"
+              >
+                {oldCountdown > 0 ? `${oldCountdown}s` : "获取验证码"}
+              </button>
+            </div>
+            {oldCountdown > 0 && (
+              <input
+                type="text"
+                maxLength={6}
+                inputMode="numeric"
+                value={oldCode}
+                onChange={(e) => setOldCode(e.target.value.replace(/\D/g, ""))}
+                placeholder="旧手机号验证码"
+                className="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              />
+            )}
+            {oldDemoCode && (
+              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                演示模式验证码：
+                <span className="font-mono font-bold">{oldDemoCode}</span>
+              </p>
+            )}
+          </div>
+        )}
         <div className="flex gap-2">
           <input
             type="tel"

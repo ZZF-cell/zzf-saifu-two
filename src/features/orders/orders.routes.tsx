@@ -118,12 +118,19 @@ function PayQrModal({
 function usePayQr() {
   const router = useRouter();
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 3 分钟自动停轮询的 timeout 也存 ref：不存 ref 的话旧会话的 timeout 到点会
+  // 清掉新会话的轮询（关 A 开 B 后，A 的 3 分钟定时器触发 stopPolling 清掉 B 的轮询）
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [payTarget, setPayTarget] = useState<PayTarget | null>(null);
 
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current !== null) {
       clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
+    }
+    if (pollTimeoutRef.current !== null) {
+      clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
     }
   }, []);
 
@@ -166,8 +173,9 @@ function usePayQr() {
             // 网络抖动忽略，下轮重试
           });
       }, 3000);
-      setTimeout(() => {
-        if (pollTimerRef.current) stopPolling();
+      // 最长轮询 3 分钟自动停（stopPolling 同时清 interval + timeout，新会话先清旧定时器）
+      pollTimeoutRef.current = setTimeout(() => {
+        stopPolling();
       }, 3 * 60 * 1000);
     },
     [handlePaid, stopPolling],

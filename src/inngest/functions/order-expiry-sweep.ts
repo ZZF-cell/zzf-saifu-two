@@ -28,6 +28,9 @@ export const orderExpirySweep = inngest.createFunction(
           createdAt: { lt: cutoff },
         },
         select: { id: true },
+        // 最老先处理：无 orderBy 时每次取任意 50 单，若过期单持续涌入，老单可能永远排在
+        // 批次之外被饿死（一直滞留 PENDING 不回补库存）
+        orderBy: { createdAt: "asc" },
         take: SWEEP_BATCH,
       });
 

@@ -152,14 +152,22 @@ export async function createOrder(
     // 整张购物车、以及恶意提交任意商品组合；当前唯一结算入口是购物车勾选）
     const cartRows = await tx.cartItem.findMany({
       where: { userId },
-      select: { productId: true },
+      select: { productId: true, qty: true },
     });
-    const cartProductIds = new Set(cartRows.map((c) => c.productId));
-    const notInCart = items.find((i) => !cartProductIds.has(i.productId));
+    const cartQtyMap = new Map(cartRows.map((c) => [c.productId, c.qty]));
+    const notInCart = items.find((i) => !cartQtyMap.has(i.productId));
     if (notInCart) {
       throw new AppError(
         ERROR_CODES.VALIDATION_ERROR,
         `商品「${notInCart.productId}」不在购物车中，请先加购后再结算`,
+      );
+    }
+    // 下单数量不得超过购物车数量（购物车为唯一结算入口）——防恶意改参超量下单
+    const overQty = items.find((i) => (cartQtyMap.get(i.productId) ?? 0) < i.qty);
+    if (overQty) {
+      throw new AppError(
+        ERROR_CODES.VALIDATION_ERROR,
+        `商品「${overQty.productId}」下单数量超过购物车数量，请先调整购物车`,
       );
     }
 
@@ -305,12 +313,17 @@ export async function restoreStock(
 ): Promise<void> {
   for (const item of items) {
     if (!item.productId) continue;
+    // 库存必须回补（少了会实际损失可售库存）；销量回减带守卫——
+    // 正常流程下单时 sales 已 increment qty，此处必然 ≥ qty；异常脏数据
+    // （如历史订单 sales 记录缺失）不允许把销量减成负数（展示口径污染）。
+    // 两个 update 在同一事务内，整体原子提交。
     await tx.product.updateMany({
       where: { id: item.productId },
-      data: {
-        stock: { increment: item.qty },
-        sales: { decrement: item.qty },
-      },
+      data: { stock: { increment: item.qty } },
+    });
+    await tx.product.updateMany({
+      where: { id: item.productId, sales: { gte: item.qty } },
+      data: { sales: { decrement: item.qty } },
     });
   }
 }
@@ -323,7 +336,13 @@ export async function cancelOrder(
 ): Promise<void> {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
-    select: { id: true, userId: true, status: true, items: { select: { productId: true, qty: true } } },
+    select: {
+      id: true,
+      userId: true,
+      status: true,
+      total: true,
+      items: { select: { productId: true, qty: true } },
+    },
   });
 
   if (!order) throw new AppError(ERROR_CODES.ORDER_NOT_FOUND, "订单不存在");
@@ -338,6 +357,48 @@ export async function cancelOrder(
         ? "已支付订单不能直接取消，请使用「申请退款」"
         : `订单状态「${currentStatus}」不允许取消（仅未支付的 PENDING 订单可取消）`,
     );
+  }
+
+  // 取消前先向支付宝确认交易未完成（与 cancelExpiredOrder 同源防护）：
+  // 用户可能已真实付款但异步通知丢失（notifyUrl 未到/沙箱环境），此时订单仍是
+  // PENDING，直接取消 = 「钱已扣、订单已取消」资损。先 query 终态：
+  // - 未配置支付宝（开发环境）→ 无支付可能，直接进入取消
+  // - 已配置且查询明确未支付 → 进入取消
+  // - 已支付（金额与快照一致）→ 幂等标记 PAID，拒绝取消（提示走退款）
+  // - 已支付但金额不符 / 查询失败 → 支付状态未知，绝不取消（保持 PENDING 人工介入）
+  if (paymentService.isPaymentConfigured()) {
+    const query = await paymentService.queryAlipayTrade(orderId);
+    if (!query.success || query.code !== "10000") {
+      throw new AppError(
+        ERROR_CODES.ORDER_STATUS_INVALID,
+        "支付状态确认中，请稍后重试（订单可能已支付）",
+      );
+    }
+    const terminalSuccess =
+      query.tradeStatus === "TRADE_SUCCESS" || query.tradeStatus === "TRADE_FINISHED";
+    if (terminalSuccess) {
+      const paidFen = query.totalAmountFen;
+      if (paidFen !== null && paidFen === order.total) {
+        const result = await markOrderPaid(
+          orderId,
+          query.outTradeNo ?? orderId,
+          paidFen,
+          query.alipayTradeNo,
+        );
+        if (result.success) {
+          throw new AppError(
+            ERROR_CODES.ORDER_STATUS_INVALID,
+            "订单已支付，无法取消，请使用「申请退款」",
+          );
+        }
+      }
+      // 金额不符 / 标记冲突：不取消，保持 PENDING（人工介入）
+      throw new AppError(
+        ERROR_CODES.ORDER_STATUS_INVALID,
+        "订单支付状态异常，暂无法取消，请联系客服",
+      );
+    }
+    // code=10000 且非终态（TRADE_NOT_EXIST/WAIT_BUYER_PAY/TRADE_CLOSED）→ 确认未支付，进入取消
   }
 
   // 仅 PENDING 可取消：回补库存/回减销量 + 置 CANCELLED。
@@ -731,7 +792,10 @@ export async function checkPaymentStatus(
   const expiresAt = new Date(order.createdAt.getTime() + ORDER_PAYMENT_TIMEOUT_MS);
   if (order.status === ORDER_STATUS.PENDING && expiresAt.getTime() <= Date.now()) {
     const result = await cancelExpiredOrder(orderId);
-    return { status: result.status };
+    // 只回传合法业务状态，不透出内部枚举（NOT_FOUND/ALREADY_CHANGED）
+    if (result.cancelled) return { status: ORDER_STATUS.CANCELLED };
+    if (result.status === ORDER_STATUS.PAID) return { status: ORDER_STATUS.PAID };
+    return { status: ORDER_STATUS.PENDING };
   }
 
   // 非 PENDING → 无支付可查，直接返回当前状态

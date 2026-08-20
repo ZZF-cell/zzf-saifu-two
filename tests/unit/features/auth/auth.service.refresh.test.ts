@@ -147,7 +147,7 @@ describe("refreshAccessToken — Refresh Rotation + 禁用门禁", () => {
     expect(tx.refreshToken.create).not.toHaveBeenCalled();
   });
 
-  it("已轮换的旧 token 被重放（命中已吊销记录）→ 吊销全部会话 + TOKEN_EXPIRED（失窃信号）", async () => {
+  it("已轮换的旧 token 被重放（命中已吊销记录）→ 只吊销该 token 行 + TOKEN_EXPIRED（失窃信号）", async () => {
     const rawToken = makeRawToken("user-1");
     // 第一次 findFirst（有效未吊销）→ null；第二次（prior 查询命中已吊销记录）
     vi.mocked(prisma.refreshToken.findFirst)
@@ -158,15 +158,16 @@ describe("refreshAccessToken — Refresh Rotation + 禁用门禁", () => {
         expiresAt: new Date(Date.now() + 3600_000),
         revokedAt: new Date(),
       } as never);
-    // 失窃响应的全部会话吊销（顶层 deleteMany）
+    // 失窃响应的该行吊销（顶层 deleteMany）
     vi.mocked(prisma.refreshToken.deleteMany).mockResolvedValue({ count: 1 });
 
     await expect(refreshAccessToken(rawToken)).rejects.toMatchObject({
       code: ERROR_CODES.TOKEN_EXPIRED.code,
     });
-    // 整个 token 家族被吊销：受害者重新登录即可夺回
+    // 只吊销命中的该 token 行：攻击者无法再重放；受害者其余会话（含新签发 token）
+    // 不受影响——多 Tab 并发刷新自锁（全量吊销）已消除
     expect(prisma.refreshToken.deleteMany).toHaveBeenCalledWith({
-      where: { userId: "user-1" },
+      where: { userId: "user-1", tokenHash: sha256(rawToken) },
     });
     expect(transactionMock).not.toHaveBeenCalled();
   });

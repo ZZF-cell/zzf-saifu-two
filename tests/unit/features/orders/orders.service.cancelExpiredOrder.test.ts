@@ -100,11 +100,16 @@ describe("cancelExpiredOrder — 支付超时自动取消", () => {
       where: { id: "order-1", status: "PENDING" },
       data: { status: "CANCELLED", cancelledAt: expect.any(Date) },
     });
-    // 回补库存：productId=null 的项跳过，仅回补 p1（stock +2 / sales -2）
-    expect(tx.product.updateMany).toHaveBeenCalledTimes(1);
-    expect(tx.product.updateMany).toHaveBeenCalledWith({
+    // 回补库存：productId=null 的项跳过，仅回补 p1；
+    // 每项拆两次 updateMany —— 库存回补（无守卫）+ 销量回减（sales ≥ qty 守卫，防脏数据减成负数）
+    expect(tx.product.updateMany).toHaveBeenCalledTimes(2);
+    expect(tx.product.updateMany).toHaveBeenNthCalledWith(1, {
       where: { id: "p1" },
-      data: { stock: { increment: 2 }, sales: { decrement: 2 } },
+      data: { stock: { increment: 2 } },
+    });
+    expect(tx.product.updateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: "p1", sales: { gte: 2 } },
+      data: { sales: { decrement: 2 } },
     });
   });
 
@@ -171,14 +176,23 @@ describe("cancelExpiredOrder — 支付超时自动取消", () => {
 
     await cancelExpiredOrder("order-1");
 
-    expect(tx.product.updateMany).toHaveBeenCalledTimes(2);
+    // 每个商品拆两次 updateMany：先回补库存（无守卫）、再回减销量（sales ≥ qty 守卫）
+    expect(tx.product.updateMany).toHaveBeenCalledTimes(4);
     expect(tx.product.updateMany).toHaveBeenNthCalledWith(1, {
       where: { id: "p1" },
-      data: { stock: { increment: 1 }, sales: { decrement: 1 } },
+      data: { stock: { increment: 1 } },
     });
     expect(tx.product.updateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: "p1", sales: { gte: 1 } },
+      data: { sales: { decrement: 1 } },
+    });
+    expect(tx.product.updateMany).toHaveBeenNthCalledWith(3, {
       where: { id: "p2" },
-      data: { stock: { increment: 3 }, sales: { decrement: 3 } },
+      data: { stock: { increment: 3 } },
+    });
+    expect(tx.product.updateMany).toHaveBeenNthCalledWith(4, {
+      where: { id: "p2", sales: { gte: 3 } },
+      data: { sales: { decrement: 3 } },
     });
   });
 
