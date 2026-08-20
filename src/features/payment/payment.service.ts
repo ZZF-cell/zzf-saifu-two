@@ -45,8 +45,22 @@ export async function createPayment(
   // 过期时间 = 下单 createdAt + ORDER_PAYMENT_TIMEOUT_MS（不落库列，与下单/取消口径一致）
   const expiresAt = new Date(order.createdAt.getTime() + ORDER_PAYMENT_TIMEOUT_MS);
   if (expiresAt.getTime() <= Date.now()) {
-    await cancelExpiredOrder(orderId);
-    throw new AppError(ERROR_CODES.ORDER_STATUS_INVALID, "订单已超时未支付，已自动取消，请重新下单");
+    const result = await cancelExpiredOrder(orderId);
+    // 不能无视返回值谎报「已自动取消」：cancelExpiredOrder 在支付宝已配置但网关查询
+    // 失败（或已支付金额不符）时保持 PENDING 不取消（防「钱已扣、订单已取消」资损）。
+    // 此时订单仍是 PENDING，「取消订单/查询支付」会如实提示确认中——去支付的消息必须一致，
+    // 否则同一笔订单两个入口给出矛盾反馈（曾致用户困惑：一边说已取消、一边说确认中）。
+    if (result.cancelled) {
+      throw new AppError(ERROR_CODES.ORDER_STATUS_INVALID, "订单已超时未支付，已自动取消，请重新下单");
+    }
+    // 未取消：支付宝确认已支付 → 引导走退款，不再提示重下；其余（查询失败/状态变更）→ 确认中
+    if (result.status === ORDER_STATUS.PAID) {
+      throw new AppError(ERROR_CODES.ORDER_STATUS_INVALID, "订单已支付，无需再次支付");
+    }
+    throw new AppError(
+      ERROR_CODES.ORDER_STATUS_INVALID,
+      "订单已超时，支付状态确认中，请稍后重试（订单可能已支付）",
+    );
   }
 
   // 支付宝 timeoutExpress 从支付页拉起起算，而订单自动取消从创建起算：

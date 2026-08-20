@@ -127,6 +127,50 @@ describe("createPayment — 订单校验与支付创建", () => {
     expect(adapterCreateMock).not.toHaveBeenCalled();
   });
 
+  it("超时但 cancelExpiredOrder 未取消（支付宝查询失败保持 PENDING）→ 如实提示「确认中」，不谎报已自动取消", async () => {
+    // 回归护栏：曾把返回值丢弃，无论取消成功与否都抛「已自动取消」，与「取消订单」的
+    // 「支付状态确认中」矛盾（订单实际仍是 PENDING）。现在必须按真实结果分派提示。
+    cancelExpiredMock.mockResolvedValue({ cancelled: false, status: "PENDING" });
+    findUniqueMock.mockResolvedValue(
+      pendingOrder({ createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000) }),
+    );
+
+    const err = await createPayment("user-1", "order-1").catch((e) => e);
+
+    expect(err.code).toBe("ORDER_STATUS_INVALID");
+    expect(err.message).toContain("支付状态确认中");
+    expect(err.message).not.toContain("已自动取消");
+    expect(adapterCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("超时且支付宝确认已支付（cancelExpiredOrder 已标记 PAID）→ 提示已支付走退款，不提示重下", async () => {
+    cancelExpiredMock.mockResolvedValue({ cancelled: false, status: "PAID" });
+    findUniqueMock.mockResolvedValue(
+      pendingOrder({ createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000) }),
+    );
+
+    const err = await createPayment("user-1", "order-1").catch((e) => e);
+
+    expect(err.code).toBe("ORDER_STATUS_INVALID");
+    expect(err.message).toContain("已支付");
+    expect(err.message).not.toContain("已自动取消");
+    expect(adapterCreateMock).not.toHaveBeenCalled();
+  });
+
+  it("超时且状态并发变更（ALREADY_CHANGED）→ 提示确认中，不谎报已取消", async () => {
+    cancelExpiredMock.mockResolvedValue({ cancelled: false, status: "ALREADY_CHANGED" });
+    findUniqueMock.mockResolvedValue(
+      pendingOrder({ createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000) }),
+    );
+
+    const err = await createPayment("user-1", "order-1").catch((e) => e);
+
+    expect(err.code).toBe("ORDER_STATUS_INVALID");
+    expect(err.message).toContain("支付状态确认中");
+    expect(err.message).not.toContain("已自动取消");
+    expect(adapterCreateMock).not.toHaveBeenCalled();
+  });
+
   it("订单即将超时（剩余 < 1 分钟）→ 拒付，不创建支付", async () => {
     // createdAt 距今 29.5min → expiresAt(createdAt+30min) 距今仅 30s < 1min
     findUniqueMock.mockResolvedValue(
