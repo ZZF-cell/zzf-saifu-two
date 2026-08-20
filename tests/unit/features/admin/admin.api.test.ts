@@ -22,16 +22,22 @@ vi.mock("@/features/admin/admin.service", () => ({
   clearAgeVerification: vi.fn(),
 }));
 
-import { patchUser } from "@/features/admin/admin.api";
+vi.mock("@/features/admin/admin.queries", () => ({
+  getAdminOrders: vi.fn(),
+}));
+
+import { patchUser, getOrders } from "@/features/admin/admin.api";
 import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import * as auth from "@/shared/api/auth";
 import * as adminService from "@/features/admin/admin.service";
+import * as adminQueries from "@/features/admin/admin.queries";
 
 const requireRoleMock = vi.mocked(auth.requireRole);
 const setUserRoleMock = vi.mocked(adminService.setUserRole);
 const setUserStatusMock = vi.mocked(adminService.setUserStatus);
 const resetPasswordMock = vi.mocked(adminService.resetPassword);
 const clearAgeMock = vi.mocked(adminService.clearAgeVerification);
+const getAdminOrdersMock = vi.mocked(adminQueries.getAdminOrders);
 
 function makeRequest(body: unknown): Request {
   return new Request("http://localhost/api/admin/users/user-1", {
@@ -116,5 +122,70 @@ describe("PATCH /api/admin/users/[id] — 参数与 action 耦合", () => {
 
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ error: ERROR_CODES.FORBIDDEN.code });
+  });
+});
+
+// ── GET /api/admin/orders — 已销毁订单按需查询参数解析 ──
+
+describe("GET /api/admin/orders — orderId/destroyed 查询参数", () => {
+  beforeEach(() => {
+    getAdminOrdersMock.mockResolvedValue({
+      orders: [],
+      total: 0,
+      page: 1,
+      pageSize: 20,
+    } as never);
+  });
+
+  it("无参数 → orderId/destroyed 均为 undefined 透传（默认隐藏已销毁）", async () => {
+    const req = new Request("http://localhost/api/admin/orders");
+
+    await getOrders(req);
+
+    expect(getAdminOrdersMock).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: undefined, destroyed: undefined }),
+    );
+  });
+
+  it("orderId=xxx → 透传 orderId（按订单号精确查单笔含已销毁）", async () => {
+    const req = new Request("http://localhost/api/admin/orders?orderId=ord-1");
+
+    await getOrders(req);
+
+    expect(getAdminOrdersMock).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: "ord-1" }),
+    );
+  });
+
+  it("destroyed=only → 透传 destroyed=only（只看已销毁订单）", async () => {
+    const req = new Request("http://localhost/api/admin/orders?destroyed=only");
+
+    await getOrders(req);
+
+    expect(getAdminOrdersMock).toHaveBeenCalledWith(
+      expect.objectContaining({ destroyed: "only" }),
+    );
+  });
+
+  it("destroyed=其他值 → 不解析为 only（undefined，防脏值混入）", async () => {
+    const req = new Request("http://localhost/api/admin/orders?destroyed=yes");
+
+    await getOrders(req);
+
+    expect(getAdminOrdersMock).toHaveBeenCalledWith(
+      expect.objectContaining({ destroyed: undefined }),
+    );
+  });
+
+  it("非售后角色 → 403 透传 requireRole 错误，不调 queries", async () => {
+    requireRoleMock.mockRejectedValue(
+      new AppError(ERROR_CODES.FORBIDDEN, "无权限执行此操作"),
+    );
+    const req = new Request("http://localhost/api/admin/orders");
+
+    const res = await getOrders(req);
+
+    expect(res.status).toBe(403);
+    expect(getAdminOrdersMock).not.toHaveBeenCalled();
   });
 });

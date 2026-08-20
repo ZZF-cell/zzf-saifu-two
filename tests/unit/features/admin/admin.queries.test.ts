@@ -19,6 +19,11 @@ vi.mock("@/shared/db/client", () => ({
   },
 }));
 
+// 地址解密桩：返回原文（测试关注地址解析/脱敏逻辑，不依赖真实加解密）
+vi.mock("@/shared/utils/crypto", () => ({
+  decrypt: (s: string) => s,
+}));
+
 vi.mock("@/features/orders", () => ({
   ORDER_STATUS: {
     PENDING: "PENDING",
@@ -33,7 +38,7 @@ vi.mock("@/features/orders", () => ({
 }));
 
 import { prisma } from "@/shared/db/client";
-import { getDashboardStats, getAdminInviteCodes } from "@/features/admin/admin.queries";
+import { getDashboardStats, getAdminInviteCodes, getAdminOrders } from "@/features/admin/admin.queries";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -140,5 +145,131 @@ describe("getAdminInviteCodes — 邀请码列表（DISABLED 作废态）", () =
     expect(prisma.inviteCode.count).toHaveBeenCalledWith(
       expect.objectContaining({ where: { status: "DISABLED" } }),
     );
+  });
+});
+
+// ── 订单查询（默认隐藏已销毁 / 按订单号查已销毁 / destroyed=only 筛选） ──
+
+describe("getAdminOrders — 订单查询（已销毁按需查询）", () => {
+  it("默认排除已销毁订单：where.destroyedAt = null（隐私严谨，已销毁需按需查询）", async () => {
+    vi.mocked(prisma.order.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.order.count).mockResolvedValue(0);
+
+    await getAdminOrders({ page: 1, pageSize: 20 });
+
+    expect(prisma.order.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { destroyedAt: null } }),
+    );
+    expect(prisma.order.count).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { destroyedAt: null } }),
+    );
+  });
+
+  it('destroyed="only" → 只看已销毁：where.destroyedAt = { not: null }', async () => {
+    vi.mocked(prisma.order.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.order.count).mockResolvedValue(0);
+
+    await getAdminOrders({ page: 1, pageSize: 20, destroyed: "only" });
+
+    expect(prisma.order.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { destroyedAt: { not: null } } }),
+    );
+  });
+
+  it("orderId 优先：where 只含 id 精确匹配，忽略 status/destroyed（查已销毁订单入口）", async () => {
+    vi.mocked(prisma.order.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.order.count).mockResolvedValue(0);
+
+    await getAdminOrders({
+      page: 1,
+      pageSize: 20,
+      orderId: "ord-1",
+      status: "COMPLETED",
+      destroyed: "only",
+    });
+
+    expect(prisma.order.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "ord-1" } }),
+    );
+    // where 只含 id：不混入 destroyedAt/status（避免破坏精确查单笔的语义）
+    const callWhere = (prisma.order.findMany as Mock).mock.calls[0]![0]!.where;
+    expect(Object.keys(callWhere)).toEqual(["id"]);
+  });
+
+  it('status="TO_SHIP" → 排除已销毁 + status in [PAID, SHIPPED]（与看板待发货同口径）', async () => {
+    vi.mocked(prisma.order.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.order.count).mockResolvedValue(0);
+
+    await getAdminOrders({ page: 1, pageSize: 20, status: "TO_SHIP" });
+
+    expect(prisma.order.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { destroyedAt: null, status: { in: ["PAID", "SHIPPED"] } },
+      }),
+    );
+  });
+
+  it("返回行透出原始信息：items/privacy/destroyedAt；已销毁订单地址擦除 → recipient=null", async () => {
+    vi.mocked(prisma.order.findMany).mockResolvedValue([
+      {
+        id: "ord-1",
+        userId: "u-1",
+        total: 9900,
+        status: "COMPLETED",
+        createdAt: new Date("2026-08-01T00:00:00Z"),
+        paidAt: new Date("2026-08-01T00:00:00Z"),
+        destroyedAt: new Date("2026-08-02T00:00:00Z"),
+        privacy: { anonymousPackaging: true, hideProductName: false, destroyed: true },
+        shippingAddress: "[DESTROYED]",
+        user: { nickname: "alice" },
+        items: [
+          { productName: "商品A", qty: 2, price: 3000 },
+          { productName: "商品B", qty: 1, price: 3900 },
+        ],
+      },
+    ] as never);
+    vi.mocked(prisma.order.count).mockResolvedValue(1);
+
+    const result = await getAdminOrders({ page: 1, pageSize: 20, destroyed: "only" });
+    const row = result.orders[0];
+
+    expect(row.isDestroyed).toBe(true);
+    expect(row.destroyedAt).toBeInstanceOf(Date);
+    expect(row.recipient).toBeNull(); // [DESTROYED] 无法解析 → 地址已擦除（隐私承诺）
+    expect(row.items).toEqual([
+      { productName: "商品A", qty: 2, price: 3000 },
+      { productName: "商品B", qty: 1, price: 3900 },
+    ]);
+    expect(row.privacy?.anonymousPackaging).toBe(true);
+    expect(row.privacy?.destroyed).toBe(true);
+    expect(row.firstItemName).toBe("商品A");
+    expect(row.itemCount).toBe(3); // qty 累加 2+1
+  });
+
+  it("正常订单：地址解密取收货人 + 手机号脱敏展示", async () => {
+    vi.mocked(prisma.order.findMany).mockResolvedValue([
+      {
+        id: "ord-2",
+        userId: "u-2",
+        total: 5000,
+        status: "PAID",
+        createdAt: new Date("2026-08-01T00:00:00Z"),
+        paidAt: null,
+        destroyedAt: null,
+        privacy: null,
+        shippingAddress: JSON.stringify({ name: "张三", phone: "13800138000", city: "北京" }),
+        user: { nickname: "bob" },
+        items: [{ productName: "商品C", qty: 1, price: 5000 }],
+      },
+    ] as never);
+    vi.mocked(prisma.order.count).mockResolvedValue(1);
+
+    const result = await getAdminOrders({ page: 1, pageSize: 20 });
+    const row = result.orders[0];
+
+    expect(row.isDestroyed).toBe(false);
+    expect(row.destroyedAt).toBeNull();
+    expect(row.recipient).toEqual({ name: "张三", phone: "138****8000", city: "北京" });
+    expect(row.privacy).toBeNull();
   });
 });

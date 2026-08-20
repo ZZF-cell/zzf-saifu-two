@@ -211,7 +211,10 @@ export async function getOrders(req: Request) {
     const url = new URL(req.url);
     const { page, pageSize } = parsePagination(url);
     const status = url.searchParams.get("status") || undefined;
-    const result = await adminQueries.getAdminOrders({ page, pageSize, status });
+    // orderId：按订单号精确查单笔（含已销毁）；destroyed=only：只看已销毁订单
+    const orderId = url.searchParams.get("orderId") || undefined;
+    const destroyed = url.searchParams.get("destroyed") === "only" ? "only" : undefined;
+    const result = await adminQueries.getAdminOrders({ page, pageSize, status, orderId, destroyed });
     return NextResponse.json(result);
   } catch (error) {
     return apiError(error);

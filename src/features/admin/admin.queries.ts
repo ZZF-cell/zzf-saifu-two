@@ -320,6 +320,12 @@ export interface AdminOrderRow {
   firstItemName: string;
   itemCount: number;
   isDestroyed: boolean;
+  /** 商品明细行（查看已销毁订单原始信息用；OrderItem 销毁时保留，仅地址擦除） */
+  items: { productName: string; qty: number; price: number }[];
+  /** 隐私选项原值（销毁时合并保留 anonymousPackaging/hideProductName + destroyed 标记） */
+  privacy: { anonymousPackaging?: boolean; hideProductName?: boolean; destroyed?: boolean } | null;
+  /** 销毁时间（非空 = 已销毁，用户/品牌侧不可见） */
+  destroyedAt: Date | null;
 }
 
 export interface AdminOrderListResult {
@@ -333,16 +339,26 @@ export async function getAdminOrders(params: {
   page: number;
   pageSize: number;
   status?: string;
+  /** 按订单号精确查单笔（含已销毁订单，专用于「查已销毁订单」入口）；指定时忽略 status/destroyed */
+  orderId?: string;
+  /** destroyed="only" 只看已销毁；默认排除已销毁订单（隐私严谨，已销毁需按需查询） */
+  destroyed?: "only";
 }): Promise<AdminOrderListResult> {
-  const { page, pageSize, status } = params;
+  const { page, pageSize, status, orderId, destroyed } = params;
+  // 默认排除已销毁订单（destroyedAt IS NULL 才对工作人员工作列表可见）；
+  // 按订单号查询 / destroyed=only 时放开，供专门入口查询已销毁订单原始信息。
   // TO_SHIP 是看板「待发货」组合筛选（PAID + SHIPPED），非真实订单状态；
-  // 与看板待发货卡口径（PAID+SHIPPED 汇总）一致，杜绝卡片跳转后列表对不上数字
-  const where: Prisma.OrderWhereInput =
-    status === "TO_SHIP"
-      ? { status: { in: [ORDER_STATUS.PAID, ORDER_STATUS.SHIPPED] } }
-      : status
-        ? { status }
-        : {};
+  // 与看板待发货卡口径（PAID+SHIPPED 汇总）一致，杜绝卡片跳转后列表对不上数字。
+  const where: Prisma.OrderWhereInput = orderId
+    ? { id: orderId }
+    : {
+        destroyedAt: destroyed === "only" ? { not: null } : null,
+        ...(status === "TO_SHIP"
+          ? { status: { in: [ORDER_STATUS.PAID, ORDER_STATUS.SHIPPED] } }
+          : status
+            ? { status }
+            : {}),
+      };
 
   const [orders, total] = await Promise.all([
     prisma.order.findMany({
@@ -354,10 +370,11 @@ export async function getAdminOrders(params: {
         status: true,
         createdAt: true,
         paidAt: true,
+        destroyedAt: true,
         privacy: true,
         shippingAddress: true,
         user: { select: { nickname: true } },
-        items: { select: { productName: true, qty: true }, orderBy: { id: "asc" } },
+        items: { select: { productName: true, qty: true, price: true }, orderBy: { id: "asc" } },
       },
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * pageSize,
@@ -368,8 +385,9 @@ export async function getAdminOrders(params: {
 
   return {
     orders: orders.map((o) => {
-      const privacy = o.privacy as { destroyed?: boolean } | null;
-      // 收货人信息：地址解密后取姓名/手机号/城市（手机号脱敏展示）
+      const privacy = o.privacy as AdminOrderRow["privacy"];
+      // 收货人信息：地址解密后取姓名/手机号/城市（手机号脱敏展示）；
+      // 已销毁订单地址被 [DESTROYED] 擦除 → 解密/解析失败 → recipient=null，前端显示「已擦除」
       let recipient: AdminOrderRow["recipient"] = null;
       try {
         const addr = JSON.parse(decryptAddress(o.shippingAddress)) as {
@@ -400,6 +418,9 @@ export async function getAdminOrders(params: {
         // 件数 = 各明细数量之和（qty 累加，非明细行数）
         itemCount: o.items.reduce((sum, i) => sum + i.qty, 0),
         isDestroyed: !!(privacy && privacy.destroyed),
+        items: o.items.map((i) => ({ productName: i.productName, qty: i.qty, price: i.price })),
+        privacy,
+        destroyedAt: o.destroyedAt,
       };
     }),
     total,

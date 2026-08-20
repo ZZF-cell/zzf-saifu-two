@@ -71,6 +71,9 @@ interface AdminOrder {
   firstItemName: string;
   itemCount: number;
   isDestroyed: boolean;
+  items: { productName: string; qty: number; price: number }[];
+  privacy: { anonymousPackaging?: boolean; hideProductName?: boolean; destroyed?: boolean } | null;
+  destroyedAt: string | null;
 }
 
 interface AdminUser {
@@ -457,21 +460,39 @@ function OrdersTab({
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
   const [error, setError] = useState("");
+  // 查询模式：default=常规列表（默认排除已销毁）+ 客户端状态过滤；destroyed=只看已销毁（服务端拉取）
+  const [mode, setMode] = useState<"default" | "destroyed">("default");
+  // 按订单号查询（已销毁订单也可查）：searchInput 是输入框即时值，searchId 是已提交触发的查询
+  const [searchInput, setSearchInput] = useState("");
+  const [searchId, setSearchId] = useState("");
+  // 展开的订单明细（查看原始信息）
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   // 客户端过滤：首载一次拉全量，之后切状态药丸即时过滤，零网络往返、零延迟
   const loadedOnce = useRef(false);
+  // 请求序号守卫：模式/搜索切换时后发先回不覆盖错位数据
+  const seqRef = useRef(0);
 
   const fetchOrders = useCallback(async () => {
     if (!loadedOnce.current) setLoading(true);
+    const seq = ++seqRef.current;
     try {
-      // 筛选由客户端完成：一次拉全量（含 TO_SHIP=PAID+SHIPPED 合并口径在客户端重算）
-      const data = await apiCall("GET", "/api/admin/orders?pageSize=100");
+      // 搜索优先：按订单号精确查单笔（含已销毁）；否则按模式拉取——
+      // destroyed=only 由服务端过滤已销毁，default 默认排除已销毁（客户端状态过滤）
+      const base = searchId
+        ? `/api/admin/orders?orderId=${encodeURIComponent(searchId)}`
+        : mode === "destroyed"
+          ? "/api/admin/orders?destroyed=only&pageSize=100"
+          : "/api/admin/orders?pageSize=100";
+      const data = await apiCall("GET", base);
+      if (seq !== seqRef.current) return;
       setOrders(data.orders || []);
-    } catch { /* 静默 */ } finally {
+    } catch { if (seq !== seqRef.current) return; /* 静默 */ } finally {
+      if (seq !== seqRef.current) return;
       loadedOnce.current = true;
       setLoading(false);
     }
-  }, []);
+  }, [mode, searchId]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
   // 切回本 Tab 时静默刷新（已加载过不重建骨架）
@@ -479,12 +500,23 @@ function OrdersTab({
     if (active && loadedOnce.current) void fetchOrders();
   }, [active, fetchOrders]);
 
-  // 客户端过滤：TO_SHIP = PAID + SHIPPED（与服务端 getAdminOrders 同口径），其余精确匹配
+  // 提交搜索：输入订单号 → 服务端精确查询（含已销毁订单）；清空 → 回到当前模式全量
+  const submitSearch = () => {
+    const id = searchInput.trim();
+    setSearchId(id);
+    setExpandedId(null);
+    onStatusFilterChange("");
+    if (id) setMode("default");
+  };
+
+  // 客户端过滤：TO_SHIP = PAID + SHIPPED（与服务端 getAdminOrders 同口径），其余精确匹配。
+  // 已销毁/搜索模式数据已由服务端按需拉取，不再套客户端状态过滤。
   const filteredOrders = useMemo(() => {
+    if (searchId || mode === "destroyed") return orders;
     if (!statusFilter) return orders;
     if (statusFilter === "TO_SHIP") return orders.filter((o) => o.status === "PAID" || o.status === "SHIPPED");
     return orders.filter((o) => o.status === statusFilter);
-  }, [orders, statusFilter]);
+  }, [orders, statusFilter, mode, searchId]);
 
   // 动作成功 → 本地更新订单状态（发货/送达/完成/退款），列表即时重算，无需重拉全量
   const applyStatus = (orderId: string, next: string) => {
@@ -507,11 +539,32 @@ function OrdersTab({
 
   return (
     <div className="space-y-3">
-      <div className="flex gap-2 overflow-x-auto pb-1">
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        <input
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") submitSearch(); }}
+          placeholder="按订单号查询（含已销毁）"
+          className="w-44 shrink-0 rounded-full border border-gray-200 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+        />
+        <button
+          onClick={submitSearch}
+          className="shrink-0 rounded-full bg-gray-900 px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
+        >
+          查询
+        </button>
+        {searchId && (
+          <button
+            onClick={() => { setSearchId(""); setSearchInput(""); setExpandedId(null); }}
+            className="shrink-0 rounded-full bg-gray-100 px-3 py-2 text-sm text-gray-600 transition hover:bg-gray-200"
+          >
+            清除搜索
+          </button>
+        )}
         {["", "TO_SHIP", "PENDING", "PAID", "SHIPPED", "DELIVERED", "REFUND_REQUESTED", "REFUNDED", "COMPLETED", "CANCELLED"].map((s) => (
           <button
             key={s}
-            onClick={() => onStatusFilterChange(s)}
+            onClick={() => { setMode("default"); setSearchId(""); setSearchInput(""); setExpandedId(null); onStatusFilterChange(s); }}
             className={`shrink-0 rounded-full px-4 py-2 text-sm transition ${
               statusFilter === s
                 ? "bg-primary text-white"
@@ -521,6 +574,26 @@ function OrdersTab({
             {STATUS_LABEL[s] || "全部"}
           </button>
         ))}
+        <button
+          onClick={() => {
+            setExpandedId(null);
+            if (mode === "destroyed") {
+              setMode("default");
+            } else {
+              setMode("destroyed");
+              setSearchId("");
+              setSearchInput("");
+              onStatusFilterChange("");
+            }
+          }}
+          className={`shrink-0 rounded-full px-4 py-2 text-sm transition ${
+            mode === "destroyed"
+              ? "bg-red-500 text-white"
+              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+          }`}
+        >
+          已销毁
+        </button>
       </div>
       {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
       {/* 列表固定高度 + 内部滚动：切状态药丸时页面永不重排 */}
@@ -529,7 +602,13 @@ function OrdersTab({
         <div className="h-32 animate-pulse rounded-xl bg-gray-100" />
       ) : filteredOrders.length === 0 ? (
         <div className="flex min-h-[40vh] items-center justify-center text-center text-gray-400">
-          {statusFilter ? "该状态下暂无订单" : "暂无订单"}
+          {searchId
+            ? "未找到该订单号（或无权查看）"
+            : mode === "destroyed"
+              ? "暂无已销毁订单"
+              : statusFilter
+                ? "该状态下暂无订单"
+                : "暂无订单"}
         </div>
       ) : (
         <div className="space-y-3">
@@ -564,7 +643,53 @@ function OrdersTab({
                   {o.recipient.city && <span>{o.recipient.city}</span>}
                 </>
               )}
+              {o.isDestroyed && (
+                <span className="text-red-400">收货地址已擦除（隐私承诺）</span>
+              )}
+              <button
+                onClick={() => setExpandedId(expandedId === o.id ? null : o.id)}
+                className="ml-auto shrink-0 text-sm font-medium text-primary transition hover:underline"
+              >
+                {expandedId === o.id ? "收起明细" : "查看明细"}
+              </button>
             </div>
+            {expandedId === o.id && (
+              <div className="mt-3 space-y-2 rounded-xl bg-gray-50 p-4 text-sm text-gray-700">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">商品明细</p>
+                {o.items.length === 0 ? (
+                  <p className="text-gray-400">无商品明细</p>
+                ) : (
+                  <div className="space-y-1">
+                    {o.items.map((i, idx) => (
+                      <div key={idx} className="flex items-center justify-between gap-3">
+                        <span className="min-w-0 flex-1 truncate">
+                          {i.productName} <span className="text-gray-400">×{i.qty}</span>
+                        </span>
+                        <span className="shrink-0 font-mono">¥{fenToYuan(i.price)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {o.privacy?.anonymousPackaging || o.privacy?.hideProductName ? (
+                  <p className="text-gray-500">
+                    隐私选项：
+                    {[
+                      o.privacy.anonymousPackaging && "匿名包装",
+                      o.privacy.hideProductName && "隐藏品名",
+                    ].filter(Boolean).join(" / ")}
+                  </p>
+                ) : null}
+                {o.isDestroyed && (
+                  <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-red-600">
+                    <p>
+                      订单已销毁
+                      {o.destroyedAt && `（${new Date(o.destroyedAt).toLocaleString("zh-CN", { hour12: false })}）`}
+                    </p>
+                    <p className="mt-0.5 text-xs">收货地址已擦除（隐私承诺），无法恢复。</p>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="mt-3 flex flex-wrap gap-2">
               {o.status === "PAID" && (
                 <button

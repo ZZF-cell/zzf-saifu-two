@@ -125,7 +125,7 @@ npx prisma db seed                 # 重新填充种子数据
 
 | 模块 | 状态 | 功能 | 技术实现 |
 |------|------|------|---------|
-| **管理后台** | ✅ 已完成 | 数据看板（统计卡可跳转 + 近 7 天销售/状态分布/品类分布图表；**商品数=在售口径仅 APPROVED**，下架/拒绝/撤回不计入，已下架独立卡片）、品牌审核（待审/已拒绝状态筛选，可重审通过或删除）、订单管理（发货/送达/完成/退款，行展示买家/收货人脱敏/件数）、用户管理（改角色/禁用启用/解锁/重置密码/清除年龄验证）、邀请码管理 | `features/admin/`；**商品质检/质检模板已按职责移入 `/inspect` 质检中心（守卫 INSPECT_ROLES），管理后台不再含质检 Tab**；所有状态变更用 `updateMany` 状态守卫（防并发重复操作），与审计日志在同一 `$transaction`（审计失败整体回滚，不留「状态已变但无审计」的账）；重复审核返回 409 区分「不存在」404；用户管理禁止操作自己（403）；看板品类商品数分布图与「在售商品」卡同口径（仅 APPROVED），图卡不矛盾 |
+| **管理后台** | ✅ 已完成 | 数据看板（统计卡可跳转 + 近 7 天销售/状态分布/品类分布图表；**商品数=在售口径仅 APPROVED**，下架/拒绝/撤回不计入，已下架独立卡片）、品牌审核（待审/已拒绝状态筛选，可重审通过或删除）、订单管理（发货/送达/完成/退款，行展示买家/收货人脱敏/件数；**默认隐藏已销毁订单，按订单号搜索或「已销毁」筛选可查已销毁订单，卡片展开看原始信息**）、用户管理（改角色/禁用启用/解锁/重置密码/清除年龄验证）、邀请码管理 | `features/admin/`；**商品质检/质检模板已按职责移入 `/inspect` 质检中心（守卫 INSPECT_ROLES），管理后台不再含质检 Tab**；所有状态变更用 `updateMany` 状态守卫（防并发重复操作），与审计日志在同一 `$transaction`（审计失败整体回滚，不留「状态已变但无审计」的账）；重复审核返回 409 区分「不存在」404；用户管理禁止操作自己（403）；看板品类商品数分布图与「在售商品」卡同口径（仅 APPROVED），图卡不矛盾 |
 | **品牌方后台** | ✅ 已完成 | 品牌概览、提交新商品（随附检测证书）、商品列表、订单查看、品牌资料 | `features/brand/`；品牌订单/销售额只聚合本品牌商品行（`OrderItem.price` 行总额之和，**price 已含 ×qty 不可再乘**），混合品牌订单不整单全额重复计入；品牌无商品时直接返回零统计，绝不查询全平台数据（防跨租户泄漏）；**概览订单数/销售额与个人中心订单统计同口径过滤已销毁订单**（`destroyedAt IS NULL`，已销毁订单用户/品牌侧均不可见不计数）；提交/编辑商品按品类 `CategoryAuditTemplate.requiredDocs` 展示必交材料清单，可上传证书（图片/PDF）随商品提交 |
 | **订单超时自动取消** | ✅ 已完成 | 下单 30 分钟未支付自动取消并回补库存 | `inngest/functions/order-timeout-cancel.ts`：`order/created` 事件 → `step.sleep(30min)` → `cancelExpiredOrder`（**updateMany 状态守卫先于回补库存**，防并发双重回补）；下单时用 `next/server` 的 `after()` 保证 serverless 中事件投递完成 |
 | **确认收货 + 7 天自动确认** | ✅ 已完成 | 用户确认收货（DELIVERED→COMPLETED）后订单可一键销毁；送达 7 天未确认由系统自动完成 | `confirmReceipt`（归属校验 + `updateMany` 带 `status=DELIVERED` 守卫，与后台 `completeOrder`/自动确认并发只命中一次）+ `inngest/functions/order-delivery-complete-sweep.ts`（每天 3 点 cron 扫 `deliveredAt < now-7d` 的 DELIVERED 订单，`autoCompleteDeliveredOrder` 非 DELIVERED 静默 no-op）；三入口共用 `AUTO_CONFIRM_RECEIPT_MS`=7 天窗口 |
@@ -137,7 +137,7 @@ npx prisma db seed                 # 重新填充种子数据
 | **实名认证** | ⏳ 适配器占位已就绪 | 对接实名认证服务 | `shared/adapters/realname.adapter.ts` 已定义 `RealNameAdapter` 接口 + 身份证二要素演示 provider（`REALNAME_MOCK=true`，格式预检 + 演示通过；未配置时安全降级拒绝，与支付适配器一致）。真实服务商接入时实现同一接口替换；用户表增加 `realNameVerified` 字段（待接服务商时落地），不影响现有登录流程 |
 | **角色体系（五级+质检员）** | ✅ 已完成 | SUPER（唯一 19968506071）> ADMIN > QUALITY_INSPECTOR > CUSTOMER_SERVICE > BRAND > USER | `shared/auth/middleware.ts` + `shared/api/auth.ts` 角色组常量（`ADMIN_ROLES`/`SERVICE_ROLES`/`INSPECT_ROLES`/`AFTERSALES_ROLES`）；`/admin`→ADMIN+SUPER、`/service`→客服+SUPER、`/inspect`→质检员+SUPER、`/brand`→BRAND；**登录后互不干扰**：SiteHeader 导航按角色收敛（USER 购物车+品牌方入驻；BRAND 品牌中心；客服 客服中心；质检员 质检中心；ADMIN 管理中心；SUPER 全部中心、**购物车除外**）；**SUPER 唯一、不可授予、不可被其他账号操作**（`admin.service` 非 SUPER 操作 SUPER 目标 403；注销 SUPER 被拒）；角色下拉不含 SUPER（只读标签），管理员可授予 QUALITY_INSPECTOR |
 | **咨询工单系统** | ✅ 已完成 | 用户端 `POST /api/tickets`（创建）/列表/详情/回复；客服端 `/service` 工作台筛选/对话/改状态 | `features/service/`：`ServiceTicket`+`ServiceTicketMessage`（消息带角色快照 + `isRead` 客服未读）；工单状态 `OPEN→PROCESSING→RESOLVED/CLOSED`（CLOSED 禁回复、RESOLVED 用户再回复自动重开）；**归属失败统一 404**（防工单号/订单号枚举）；客服回复置已读、打开详情即已读；注销时工单/消息 `userId`/`senderId` 置空匿名保留 |
-| **客服中心（订单售后）** | ✅ 已完成 | `/service` Tab2 订单售后：查询全部订单 + 发货/送达/完成/退款 | 复用 `GET /api/admin/orders` + 售后端点（`AFTERSALES_ROLES` 含客服），`features/service/` 独立工作台（`WorkbenchHeader` 仅品牌+工作台名+主页面/个人中心/退出，**不带主站购物车/入驻导航**）；退款回补库存与审计同事务（复用 `admin.service`） |
+| **客服中心（订单售后）** | ✅ 已完成 | `/service` Tab2 订单售后：查询全部订单 + 发货/送达/完成/退款；**默认隐藏已销毁订单，按订单号查询或「已销毁」筛选可查已销毁订单并展开看原始信息（商品明细/隐私选项/销毁时间，收货地址已擦除）** | 复用 `GET /api/admin/orders`（`orderId`/`destroyed=only` 参数）+ 售后端点（`AFTERSALES_ROLES` 含客服），`features/service/` 独立工作台（`WorkbenchHeader` 仅品牌+工作台名+主页面/个人中心/退出，**不带主站购物车/入驻导航**）；退款回补库存与审计同事务（复用 `admin.service`） |
 | **质检中心** | ✅ 已完成 | `/inspect` 质检中心：Tab1 商品质检（待审审核通过/驳回，详情含品类质检清单 + 已提交证书「已交/缺」对照）+ Tab2 质检模板增删改 | `features/inspect/` 独立工作台（`WorkbenchHeader`）；商品/模板端点复用 `/api/admin/products*`、`/api/admin/audit-templates*`，守卫改为 `INSPECT_ROLES`（质检员+SUPER），与 `/admin` 职责彻底隔离；Tab 切换保留旧列表防抖动（`loadedOnce`+`refreshing`） |
 | **账号信息栏功能** | ✅ 已完成 | 改手机号（新号短信验证）、自主注销（硬删除）、上传头像、设置/修改密码 | `features/user/`：`changePhone`（**旧凭证复验防会话接管**：有密码验旧密码 / 纯短信验旧号验证码，换绑成功吊销全部 refresh token；复用 `auth.verifyAndConsumeCode` + 捕 P2002 → PHONE_ALREADY_EXISTS + 清旧号验证码）；`deleteAccount`（SUPER 拦截 / 已入驻品牌 409 `ACCOUNT_HAS_BRAND` / 有密码验旧；事务内订单/邀请码/工单匿名化 + 审计 operatorId 置空 + 删会话/购物车/验证码/User）；`updateAvatar`（`isOssUrlOwnedBy` 归属校验，`purpose=avatar`）；`changePassword`（无密码设首密 / 有密码验旧）；`setPassword`（已有密码拒绝覆盖，只能走 change-password）；`getProfile` 回 `avatarUrl`+`hasPassword`（passwordHash 剥除不外泄） |
 
@@ -387,7 +387,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 
 > **超时自动取消**：下单 30 分钟（`ORDER_PAYMENT_TIMEOUT_MS`）未支付，由 Inngest `order-timeout-cancel` 自动将 PENDING 订单置为 CANCELLED 并回补库存（`updateMany` 状态守卫先于回补，防与手动取消/支付回调并发冲突）。
 
-> **销毁（destroy）不改变 status**，而是写入 `destroyedAt` 列（非空 = 已销毁）：用户/品牌侧查询层按 `destroyedAt IS NULL` 过滤，销毁后订单在用户与品牌方列表中消失、详情返回 404（视为不存在）；平台管理后台保留全部数据（仍读 `privacy.destroyed` 显示「已销毁」标记）供审计与退款核验。故不在状态图中。
+> **销毁（destroy）不改变 status**，而是写入 `destroyedAt` 列（非空 = 已销毁）：用户/品牌侧查询层按 `destroyedAt IS NULL` 过滤，销毁后订单在用户与品牌方列表中消失、详情返回 404（视为不存在）；平台管理后台保留全部数据（仍读 `privacy.destroyed` 显示「已销毁」标记）供审计与退款核验。故不在状态图中。**管理后台/客服默认列表也排除已销毁订单**（`getAdminOrders` 默认 `destroyedAt IS NULL`，隐私严谨）；管理人员与客服可按订单号搜索（`orderId`）或「已销毁」筛选（`destroyed=only`）按需查询，卡片展开可见商品明细/隐私选项/销毁时间等原始信息——**收货地址已被物理擦除为 `[DESTROYED]`，无法恢复**（隐私承诺，审计也不回存 PII）。
 
 ## 同步 vs 异步策略
 
@@ -463,7 +463,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | GET | `/api/service/tickets/[id]` | 工单详情（打开即置已读） |
 | PATCH | `/api/service/tickets/[id]` | 变更工单状态（OPEN→PROCESSING→RESOLVED/CLOSED，`updateMany` 守卫） |
 | POST | `/api/service/tickets/[id]/messages` | 客服回复（角色快照 + 用户未读清零） |
-| GET | `/api/admin/orders` | 订单售后列表（客服可查） |
+| GET | `/api/admin/orders` | 订单售后列表（客服可查；默认排除已销毁订单，`orderId` 可按订单号查已销毁原始信息、`destroyed=only` 只看已销毁） |
 
 ### 质检中心（QUALITY_INSPECTOR/SUPER）
 > 商品质检与质检模板已按职责移入 `/inspect` 质检中心；端点路径沿用 `/api/admin/*`，守卫为 `INSPECT_ROLES`（质检员+SUPER），管理员不可再访问——职责彻底隔离
@@ -498,7 +498,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 | GET | `/api/admin/brands` | 品牌列表 |
 | POST | `/api/admin/brands/[id]/review` | 品牌审核（PENDING → APPROVED/REJECTED，重复审核 409） |
 | DELETE | `/api/admin/brands/[id]` | 删除品牌（仅 REJECTED 可删，其余状态 409 `BRAND_NOT_DELETABLE`；删除后可用新邀请码重新入驻） |
-| GET | `/api/admin/orders` | 订单列表（可按 status 筛选；行含买家昵称/收货人脱敏/件数） |
+| GET | `/api/admin/orders` | 订单列表（可按 status 筛选；**默认排除已销毁订单**；`orderId` 按订单号精确查单笔（含已销毁）；`destroyed=only` 只看已销毁；行含买家昵称/收货人脱敏/件数 + 商品明细 items/隐私选项/销毁时间） |
 | POST | `/api/admin/orders/[id]/ship` | 发货（PAID → SHIPPED） |
 | POST | `/api/admin/orders/[id]/deliver` | 标记送达（SHIPPED → DELIVERED） |
 | POST | `/api/admin/orders/[id]/complete` | 标记完成（DELIVERED → COMPLETED） |
