@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { fenToYuan } from "@/shared/utils/money";
+import { getRemainingMs, formatCountdown } from "./orders.constants";
 
 // ── 状态标签 ──
 
@@ -25,6 +27,53 @@ export function OrderStatusBadge({ status }: { status: string }) {
   );
 }
 
+// ── 支付剩余时间倒计时（待支付订单） ──
+
+interface PaymentCountdownProps {
+  /** 支付截止时间（ISO 字符串，后端 = createdAt + ORDER_PAYMENT_TIMEOUT_MS，唯一真相源） */
+  expiresAt: string;
+  /** 倒计时归零触发一次（父组件主动 check-paid 惰性取消并刷新状态） */
+  onExpired?: () => void;
+}
+
+/**
+ * 支付剩余时间倒计时 — 每秒 tick 实时刷新；最后 60 秒警示样式。
+ * 用 expiresAt 绝对时间差计算（非累计计时）：刷新页面 / 后台标签冻结切回后时间仍准确。
+ * 归零后 onExpired 只触发一次（firedRef 在 await 前同步置位，防 fetch 期间重复 POST）。
+ */
+export function PaymentCountdown({ expiresAt, onExpired }: PaymentCountdownProps) {
+  const [now, setNow] = useState(() => Date.now());
+  const firedRef = useRef(false);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const msLeft = getRemainingMs(expiresAt, now);
+
+  // 挂载即做一次超期检查：已过期的旧订单打开即触发惰性取消（不等下一次 tick）。
+  // onExpired 每次渲染可能是新引用（父组件 inline），effect 会重跑，firedRef 保证只 fire 一次。
+  useEffect(() => {
+    if (msLeft <= 0 && !firedRef.current) {
+      firedRef.current = true;
+      onExpired?.();
+    }
+  }, [msLeft, onExpired]);
+
+  if (msLeft <= 0) {
+    return <span className="text-xs text-red-500">支付已超时</span>;
+  }
+  const { text, urgent } = formatCountdown(msLeft);
+  return (
+    <span
+      className={`text-xs ${urgent ? "font-medium text-red-500" : "text-gray-500"}`}
+    >
+      {text}
+    </span>
+  );
+}
+
 // ── 订单卡片（列表用） ──
 
 interface OrderCardProps {
@@ -33,9 +82,20 @@ interface OrderCardProps {
   status: string;
   firstItemName: string;
   createdAt: Date;
+  expiresAt: string;
+  /** 倒计时归零时触发（父组件刷新列表，订单移出待付款） */
+  onExpired?: () => void;
 }
 
-export function OrderCard({ id, total, status, firstItemName, createdAt }: OrderCardProps) {
+export function OrderCard({
+  id,
+  total,
+  status,
+  firstItemName,
+  createdAt,
+  expiresAt,
+  onExpired,
+}: OrderCardProps) {
   return (
     <Link
       href={`/orders/${id}`}
@@ -47,6 +107,11 @@ export function OrderCard({ id, total, status, firstItemName, createdAt }: Order
           <p className="mt-0.5 text-xs text-gray-400">
             {new Date(createdAt).toLocaleDateString("zh-CN")}
           </p>
+          {status === "PENDING" && (
+            <p className="mt-1">
+              <PaymentCountdown expiresAt={expiresAt} onExpired={onExpired} />
+            </p>
+          )}
         </div>
         <div className="ml-3 flex flex-col items-end gap-1.5">
           <OrderStatusBadge status={status} />

@@ -18,9 +18,11 @@ import { paymentService } from "@/features/payment";
 import { captureMessage } from "@sentry/nextjs";
 import type { Prisma } from "@prisma/client";
 import type { CreateOrderInput, CreateOrderResult } from "./orders.types";
+import { ORDER_PAYMENT_TIMEOUT_MS } from "./orders.constants";
 
-/** 支付超时时间（30 分钟）— 下单 expiresAt 与 Inngest 超时取消共用，防止展示倒计时与实际取消时机不一致 */
-export const ORDER_PAYMENT_TIMEOUT_MS = 30 * 60 * 1000;
+// 常量源迁至 orders.constants（零依赖，orders.queries 也要算 expiresAt），
+// re-export 保持 index.ts / inngest / payment 现有引用链不变
+export { ORDER_PAYMENT_TIMEOUT_MS } from "./orders.constants";
 
 /**
  * 送达后自动确认收货窗口（7 天）— 用户侧 confirmReceipt 与 Inngest

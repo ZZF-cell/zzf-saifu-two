@@ -127,7 +127,7 @@ npx prisma db seed                 # 重新填充种子数据
 |------|------|------|---------|
 | **管理后台** | ✅ 已完成 | 数据看板（统计卡可跳转 + 近 7 天销售/状态分布/品类分布图表；**商品数=在售口径仅 APPROVED**，下架/拒绝/撤回不计入，已下架独立卡片）、品牌审核（待审/已拒绝状态筛选，可重审通过或删除）、订单管理（发货/送达/完成/退款，行展示买家/收货人脱敏/件数；**默认隐藏已销毁订单，按订单号搜索或「已销毁」筛选可查已销毁订单，卡片展开看原始信息**）、用户管理（改角色/禁用启用/解锁/重置密码/清除年龄验证）、邀请码管理 | `features/admin/`；**商品质检/质检模板已按职责移入 `/inspect` 质检中心（守卫 INSPECT_ROLES），管理后台不再含质检 Tab**；所有状态变更用 `updateMany` 状态守卫（防并发重复操作），与审计日志在同一 `$transaction`（审计失败整体回滚，不留「状态已变但无审计」的账）；重复审核返回 409 区分「不存在」404；用户管理禁止操作自己（403）；看板品类商品数分布图与「在售商品」卡同口径（仅 APPROVED），图卡不矛盾 |
 | **品牌方后台** | ✅ 已完成 | 品牌概览、提交新商品（随附检测证书）、商品列表、订单查看、品牌资料 | `features/brand/`；品牌订单/销售额只聚合本品牌商品行（`OrderItem.price` 行总额之和，**price 已含 ×qty 不可再乘**），混合品牌订单不整单全额重复计入；品牌无商品时直接返回零统计，绝不查询全平台数据（防跨租户泄漏）；**概览订单数/销售额与个人中心订单统计同口径过滤已销毁订单**（`destroyedAt IS NULL`，已销毁订单用户/品牌侧均不可见不计数）；提交/编辑商品按品类 `CategoryAuditTemplate.requiredDocs` 展示必交材料清单，可上传证书（图片/PDF）随商品提交 |
-| **订单超时自动取消** | ✅ 已完成 | 下单 30 分钟未支付自动取消并回补库存 | `inngest/functions/order-timeout-cancel.ts`：`order/created` 事件 → `step.sleep(30min)` → `cancelExpiredOrder`（**updateMany 状态守卫先于回补库存**，防并发双重回补）；下单时用 `next/server` 的 `after()` 保证 serverless 中事件投递完成 |
+| **订单超时自动取消** | ✅ 已完成 | 下单 30 分钟未支付自动取消并回补库存；**待支付订单显示支付剩余倒计时（实时刷新，最后 60 秒红色警示），倒计时归零前端主动 `check-paid` 惰性取消并刷新为「已取消」** | `inngest/functions/order-timeout-cancel.ts`：`order/created` 事件 → `step.sleep(30min)` → `cancelExpiredOrder`（**updateMany 状态守卫先于回补库存**，防并发双重回补）；下单时用 `next/server` 的 `after()` 保证 serverless 中事件投递完成。**前端**：`orders.constants.ts` 纯函数（`getExpiresAt`/`getRemainingMs`/`formatCountdown`）+ `PaymentCountdown` 组件（expiresAt 绝对时间差计算，后台标签冻结后切回仍准）；列表卡片与详情页均展示倒计时，归零触发 `POST /api/orders/[id]/check-paid`（`checkPaymentStatus` 超时兜底惰性取消，`cancelExpiredOrder` 幂等）→ 重新拉取 → 详情显示已取消 |
 | **确认收货 + 7 天自动确认** | ✅ 已完成 | 用户确认收货（DELIVERED→COMPLETED）后订单可一键销毁；送达 7 天未确认由系统自动完成 | `confirmReceipt`（归属校验 + `updateMany` 带 `status=DELIVERED` 守卫，与后台 `completeOrder`/自动确认并发只命中一次）+ `inngest/functions/order-delivery-complete-sweep.ts`（每天 3 点 cron 扫 `deliveredAt < now-7d` 的 DELIVERED 订单，`autoCompleteDeliveredOrder` 非 DELIVERED 静默 no-op）；三入口共用 `AUTO_CONFIRM_RECEIPT_MS`=7 天窗口 |
 | **品牌入驻** | ✅ 已完成 | 管理员生成邀请码 → 品牌方激活 → 提交资料 → 审核 | `features/invite/`：激活=单事务原子消耗邀请码（`updateMany` 状态守卫含过期判断）+ 创建 PENDING 品牌；管理员审核通过时同事务将负责人升级为 BRAND 角色（品牌已过但角色未升是笔错账）；邀请码列表 EXPIRED 由 `expiresAt` 即时推导不落库；**管理端可作废邀请码**（`POST /api/admin/invite-codes/[code]/revoke`，置 DISABLED，仅 UNUSED 码可作废，已使用/已作废 409；作废码激活时报「已作废」409）。**REJECTED 非死胡同**：品牌审核状态筛选含「已拒绝」，管理员可**重审通过**（改判错杀，`reviewBrand` 守卫放行 `PENDING`/`REJECTED` 的 APPROVED，但 REJECTED 不可再拒 409）或**删除品牌**（`DELETE /api/admin/brands/[id]`，仅 REJECTED 可删，其余状态 409 `BRAND_NOT_DELETABLE`）；删除后商家可用新邀请码重新入驻 |
 | **OSS 图片上传** | ✅ 已完成 | 商品/品牌图片 + 检测证书 + **用户头像** 上传至阿里云 OSS（后端中转） | `features/upload/`：POST `/api/upload`（multipart + MIME 白名单 + **魔数校验**，`purpose` 枚举 `product`/`brand`/`cert`/`avatar`；图片 ≤4MB、证书 PDF 代码阈值 10MB；未配置 OSS 返回 503）。`purpose=product`/`brand`/`avatar` 只收图片，`purpose=cert` 收图片 + PDF 且**仅 BRAND 角色**（USER 传证 403）。**每日配额**：单用户 24h 窗口 100 次（复用 RateLimitBucket 原子桶 `upload:daily`，超限 429）。**魔数加强**：JPEG 除 `FF D8 FF` 头外校验 SOF 帧段标记（`FF C0-CF`），PDF 要求 `%PDF-` 严格开头 + `obj` 结构 + `%%EOF` 结束标记（拒 HTML/JS 伪装与截断伪 PDF）。**证书 PDF 以 `Content-Disposition: attachment` 输出**（浏览器不内联渲染）。**消费侧 URL 白名单**：`ossImageUrlSchema` 校验 key 须为本站上传结构 `<folder>/<userId>/<yyyymmdd>/<文件>.<扩展名>`，入驻 logo 额外校验归属当前用户。`shared/adapters/oss.adapter.ts` 仿 payment 懒初始化 + 纯函数；`shared/ui/Image` 双源（OSS URL + base64）+ 统一占位图。**平台实际请求体上限约 4.5MB**（Vercel Node Serverless）：PDF 代码阈值 10MB 属预留，超 4.5MB 的证书会被平台层 413 拦截——大文件直传依赖三期 OSS 预签名方案 |
@@ -385,7 +385,7 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 
 > **确认收货（DELIVERED → COMPLETED）三入口**：① 用户侧「确认收货」（`POST /api/orders/[id]/confirm-receipt`，仅 DELIVERED 可确认）；② 管理后台「完成」按钮（兜底）；③ 送达 7 天自动确认（Inngest `order-delivery-complete-sweep` cron，每天凌晨 3 点扫描 `deliveredAt < now-7d` 的 DELIVERED 订单）。三入口共用 `updateMany` 带 `status=DELIVERED` 状态守卫，并发只命中一次。确认收货后订单进入 COMPLETED 终态，即可一键销毁（隐私保护闭环）。
 
-> **超时自动取消**：下单 30 分钟（`ORDER_PAYMENT_TIMEOUT_MS`）未支付，由 Inngest `order-timeout-cancel` 自动将 PENDING 订单置为 CANCELLED 并回补库存（`updateMany` 状态守卫先于回补，防与手动取消/支付回调并发冲突）。
+> **超时自动取消**：下单 30 分钟（`ORDER_PAYMENT_TIMEOUT_MS`）未支付，由 Inngest `order-timeout-cancel` 自动将 PENDING 订单置为 CANCELLED 并回补库存（`updateMany` 状态守卫先于回补，防与手动取消/支付回调并发冲突）。**前端体验**：待支付订单（列表卡片 + 详情页）显示支付剩余时间倒计时（后端返回 `expiresAt` = `createdAt + 30min`，唯一真相源，前端不硬编码），每秒实时刷新、最后 60 秒红色警示；**倒计时归零前端主动调用 `check-paid`**（`checkPaymentStatus` 对超时 PENDING 订单调 `cancelExpiredOrder` 惰性取消，Inngest sweep 之外的即时兜底）并重新拉取，订单立即置为「已取消」（详情页操作区消失、时间线「完成」节点显示取消时间）；后台标签冻结期间倒计时暂停，切回后按绝对时间差恢复，归零仍触发取消。
 
 > **销毁（destroy）不改变 status**，而是写入 `destroyedAt` 列（非空 = 已销毁）：用户/品牌侧查询层按 `destroyedAt IS NULL` 过滤，销毁后订单在用户与品牌方列表中消失、详情返回 404（视为不存在）；平台管理后台保留全部数据（仍读 `privacy.destroyed` 显示「已销毁」标记）供审计与退款核验。故不在状态图中。**管理后台/客服默认列表也排除已销毁订单**（`getAdminOrders` 默认 `destroyedAt IS NULL`，隐私严谨）；管理人员与客服可按订单号搜索（`orderId`）或「已销毁」筛选（`destroyed=only`）按需查询，卡片展开可见商品明细/隐私选项/销毁时间等原始信息——**收货地址已被物理擦除为 `[DESTROYED]`，无法恢复**（隐私承诺，审计也不回存 PII）。
 
@@ -419,9 +419,9 @@ REFUND_REQUESTED ←── PAID（用户申请退款）
 ### 订单
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| GET | `/api/orders` | 我的订单列表 |
+| GET | `/api/orders` | 我的订单列表（行含 `expiresAt` 支付截止时间 = `createdAt + 30min`，前端倒计时唯一真相源） |
 | POST | `/api/orders` | 创建订单（乐观锁防超卖；**items 必须来自当前用户购物车**——服务端校验，防"结算页回退全量"误删整张购物车/恶意提交任意商品组合） |
-| GET | `/api/orders/[id]` | 订单详情 |
+| GET | `/api/orders/[id]` | 订单详情（含 `expiresAt` 支付截止时间） |
 | POST | `/api/orders/[id]/check-paid` | 查询支付状态 |
 | POST | `/api/orders/[id]/cancel` | 取消订单（仅 PENDING） |
 | POST | `/api/orders/[id]/refund` | 申请退款（仅 PAID） |

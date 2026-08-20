@@ -4,7 +4,13 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { QRCodeSVG } from "qrcode.react";
-import { OrderCard, OrderStatusBadge, OrderTimeline, AddressForm } from "./orders.components";
+import {
+  OrderCard,
+  OrderStatusBadge,
+  OrderTimeline,
+  AddressForm,
+  PaymentCountdown,
+} from "./orders.components";
 // H：DTO 类型收拢到 orders.types（client-safe，零 server 依赖）；常量经 components seam 再导出
 import type { OrderSummary, OrderDetail } from "./orders.types";
 import { ORDER_STATUS_GROUPS } from "./orders.components";
@@ -695,7 +701,7 @@ export function OrderListPage() {
             ) : (
               <div className="space-y-3">
                 {filteredOrders.map((order) => (
-                  <OrderCard key={order.id} {...order} />
+                  <OrderCard key={order.id} {...order} onExpired={fetchOrders} />
                 ))}
               </div>
             )}
@@ -781,6 +787,17 @@ export function OrderDetailPage({ id }: { id: string }) {
       setError(err instanceof Error ? err.message : "发起支付失败");
     } finally {
       setActing(false);
+    }
+  };
+
+  // 支付倒计时归零：主动向服务端确认超时（check-paid 惰性取消，不等 Inngest sweep 立即生效）
+  // 并重新拉取详情 → 订单自动置已取消：操作区消失、徽章「已取消」、时间线「完成」节点显示取消时间。
+  // 请求失败静默：保留「支付已超时」提示，用户仍可手动点「查询支付」。
+  const handleExpired = async () => {
+    try {
+      await apiCall("POST", `/api/orders/${id}/check-paid`).catch(() => null);
+    } finally {
+      await fetchOrder();
     }
   };
 
@@ -893,6 +910,9 @@ export function OrderDetailPage({ id }: { id: string }) {
         <div className="space-y-2">
           {order.status === "PENDING" && (
             <div className="space-y-2">
+              <div className="text-center">
+                <PaymentCountdown expiresAt={order.expiresAt} onExpired={handleExpired} />
+              </div>
               <button
                 onClick={handlePay}
                 disabled={acting}

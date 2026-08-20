@@ -21,6 +21,8 @@ export interface OrderSummary {
   itemCount: number;
   firstItemName: string;
   createdAt: Date;
+  /** 支付截止时间（ISO，= createdAt + ORDER_PAYMENT_TIMEOUT_MS）— 前端倒计时唯一真相源 */
+  expiresAt: string;
   paidAt: Date | null;
 }
 
@@ -38,6 +40,8 @@ export interface OrderDetail {
   cancelledAt: Date | null;
   refundedAt: Date | null;
   createdAt: Date;
+  /** 支付截止时间（ISO，= createdAt + ORDER_PAYMENT_TIMEOUT_MS）— 前端倒计时唯一真相源 */
+  expiresAt: string;
   items: {
     id: string;
     productName: string;

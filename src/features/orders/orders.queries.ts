@@ -4,6 +4,7 @@ import { AppError, ERROR_CODES } from "@/shared/errors/errors";
 import { decrypt } from "@/shared/utils/crypto";
 import type { Prisma } from "@prisma/client";
 import type { OrderListResult, OrderDetail, BrandOrderListResult } from "./orders.types";
+import { getExpiresAt } from "./orders.constants";
 
 function decryptAddress(shippingAddress: string): string {
   if (!process.env.ENCRYPTION_KEYS) return shippingAddress; // 开发环境明文
@@ -62,6 +63,7 @@ async function queryOrderSummaries(
       itemCount: o._count.items,
       firstItemName: maskProductName(o.privacy, o.items[0]?.productName || "商品"),
       createdAt: o.createdAt,
+      expiresAt: getExpiresAt(o.createdAt),
       paidAt: o.paidAt,
     })),
     total,
@@ -212,6 +214,7 @@ export async function getOrderDetail(
     cancelledAt: order.cancelledAt,
     refundedAt: order.refundedAt,
     createdAt: order.createdAt,
+    expiresAt: getExpiresAt(order.createdAt),
     // M12：hideProductName=true 时逐行掩码商品名（用户侧详情；商家后台独立查询不受影响）
     items: order.items.map((i) => ({
       ...i,

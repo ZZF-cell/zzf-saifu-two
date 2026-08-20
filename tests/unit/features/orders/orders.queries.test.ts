@@ -103,7 +103,7 @@ describe("getOrderDetail — 销毁消失", () => {
       completedAt: null,
       cancelledAt: null,
       refundedAt: null,
-      createdAt: new Date(),
+      createdAt: new Date("2026-08-01T10:00:00.000Z"),
       items: [
         { id: "i2", productName: "硅胶产品", price: 8800, qty: 1, productId: "p2" },
       ],
@@ -114,6 +114,8 @@ describe("getOrderDetail — 销毁消失", () => {
     expect(detail.total).toBe(8800);
     expect(detail.outTradeNo).toBe("order-2");
     expect(detail.items).toHaveLength(1);
+    // 支付截止时间 = createdAt + ORDER_PAYMENT_TIMEOUT_MS(30min) 的 ISO（前端倒计时唯一真相源）
+    expect(detail.expiresAt).toBe("2026-08-01T10:30:00.000Z");
   });
 });
 
@@ -146,7 +148,7 @@ describe("getOrderList — 销毁消失", () => {
         total: 8800,
         status: "PAID",
         privacy: { anonymousPackaging: true },
-        createdAt: new Date(),
+        createdAt: new Date("2026-08-01T10:00:00.000Z"),
         paidAt: new Date(),
         _count: { items: 1 },
         items: [{ productName: "硅胶产品" }],
@@ -159,6 +161,8 @@ describe("getOrderList — 销毁消失", () => {
     expect(result.orders[0].total).toBe(8800);
     expect(result.orders[0].firstItemName).toBe("硅胶产品");
     expect(result.orders[0].itemCount).toBe(1);
+    // 支付截止时间 = createdAt + ORDER_PAYMENT_TIMEOUT_MS(30min) 的 ISO
+    expect(result.orders[0].expiresAt).toBe("2026-08-01T10:30:00.000Z");
   });
 });
 
