@@ -570,16 +570,17 @@ function TicketsWorkbench({ active }: { active?: boolean }) {
             {/* 对话线程 */}
             <section className="space-y-3">
               {detail.messages.map((m) => {
+                // 客服工作台视角：客服（自己）消息在右侧，用户消息在左侧
                 const staff = isStaffMessage(m.senderRole);
                 return (
-                  <div key={m.id} className={`flex ${staff ? "justify-start" : "justify-end"}`}>
+                  <div key={m.id} className={`flex ${staff ? "justify-end" : "justify-start"}`}>
                     <div
                       className={`max-w-[80%] rounded-xl px-3 py-2 text-sm ${
-                        staff ? "bg-gray-100 text-gray-800" : "bg-primary text-white"
+                        staff ? "bg-primary text-white" : "bg-gray-100 text-gray-800"
                       }`}
                     >
                       <p className="whitespace-pre-wrap break-words">{m.content}</p>
-                      <p className={`mt-1 text-[10px] ${staff ? "text-gray-400" : "text-white/70"}`}>
+                      <p className={`mt-1 text-[10px] ${staff ? "text-white/70" : "text-gray-400"}`}>
                         {staff ? "客服" : "客户"} · {fmt(m.createdAt)}
                       </p>
                     </div>
