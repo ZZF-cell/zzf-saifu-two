@@ -343,7 +343,6 @@ export async function cancelOrder(
       userId: true,
       status: true,
       total: true,
-      createdAt: true,
       items: { select: { productId: true, qty: true } },
     },
   });
@@ -368,20 +367,17 @@ export async function cancelOrder(
   // - 未配置支付宝（开发环境）→ 无支付可能，直接进入取消
   // - 已配置且查询明确未支付 → 进入取消
   // - 已支付（金额与快照一致）→ 幂等标记 PAID，拒绝取消（提示走退款）
-  // - 已支付但金额不符 / 查询失败 → 支付状态未知，绝不取消（保持 PENDING 人工介入）
+  // - 已支付但金额不符 → 支付状态未知，不取消（保持 PENDING 人工介入）
+  // - 查询失败（网关瞬时故障/网络异常）→ 放行取消：用户主动点「取消订单」= 放弃支付的
+  //   明确意图，不再阻塞（曾按是否超时区分——未超时保守保持 PENDING → 用户点取消永远报
+  //   「支付状态确认中，请稍后重试」取消不了，体验死局；用户报障要求点击即已取消）。
+  //   资损防护仍保留：只有查询成功确认已支付才拒绝取消，查询失败时无「已付款」证据。
   if (paymentService.isPaymentConfigured()) {
     const query = await paymentService.queryAlipayTrade(orderId);
     if (!query.success || query.code !== "10000") {
-      // 已超时 → 支付宝允许支付窗口已随订单关闭（createPayment 将 timeoutExpress 钳制到
-      // ≤ 订单剩余时间），收款不可能新发生，查询失败放行取消（解除「取消不了」死锁）；
-      // 未超时 → 用户可能已付款但通知丢失，必须保守保持 PENDING，提示稍后重试
-      const expiresAt = new Date(order.createdAt.getTime() + ORDER_PAYMENT_TIMEOUT_MS);
-      if (expiresAt.getTime() > Date.now()) {
-        throw new AppError(
-          ERROR_CODES.ORDER_STATUS_INVALID,
-          "支付状态确认中，请稍后重试",
-        );
-      }
+      console.error(
+        `[orders] 手动取消前支付宝查询失败(放行取消) 订单=${orderId} success=${query.success} code=${query.code}`,
+      );
     } else {
       const terminalSuccess =
         query.tradeStatus === "TRADE_SUCCESS" || query.tradeStatus === "TRADE_FINISHED";

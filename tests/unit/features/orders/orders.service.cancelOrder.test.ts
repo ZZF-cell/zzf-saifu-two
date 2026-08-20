@@ -1,11 +1,11 @@
-// cancelOrder 单元测试 — 手动取消（超时/未超时 × 支付宝查询失败/成功 分派）
+// cancelOrder 单元测试 — 手动取消（支付宝查询失败/成功分派）
 // mock 系统边界：prisma $transaction + paymentAdapter（支付宝查询）
 // 只测公共 seam：orders.service.cancelOrder
 //
-// 关键回归：此前支付宝查询失败一律拒绝取消 → 超时订单永远取消不了（死锁，用户报障
-// 「完全没支付也取消不了」）。修复：已超时（D1 保证支付宝允许支付窗口已随订单关闭，
-// 收款不可能再发生）→ 查询失败放行取消；未超时 → 用户可能正付款，保守保持 PENDING。
-// 能查到已支付时仍走 markOrderPaid「标记 PAID 不取消」防护（防资损）。
+// 关键回归：查询失败一律放行取消（不再区分是否超时）——用户主动点「取消订单」= 放弃支付
+// 的明确意图，查询失败阻塞会让用户永远点不了取消（曾报「支付状态确认中」死局，用户连续报障
+// 「点击取消应该显示已取消」）。资损防护仍保留：仅「查询成功确认已支付（金额一致）」
+// 才走 markOrderPaid「标记 PAID 不取消」（防「钱已扣、订单已取消」）；查询失败无已付款证据。
 
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from "vitest";
 
@@ -99,19 +99,21 @@ afterEach(() => {
 // ── cancelOrder：手动取消 ──
 
 describe("cancelOrder — 手动取消（超时/未超时 × 查询失败分派）", () => {
-  it("未超时 + 支付宝查询失败 → 抛「支付状态确认中」，不取消/不回补库存（用户可能正付款，保守）", async () => {
+  it("未超时 + 支付宝查询失败 → 放行取消（用户主动点取消=放弃支付，不再报「确认中」死局）", async () => {
     tx.order.findUnique.mockResolvedValue(orderSnapshot()); // createdAt = now（未超时）
+    tx.order.updateMany.mockResolvedValue({ count: 1 });
     vi.mocked(paymentAdapter.queryPayment).mockResolvedValue({ success: false, error: "网络超时" });
 
-    await expect(cancelOrder("user-1", "order-1")).rejects.toMatchObject({
-      code: "ORDER_STATUS_INVALID",
-      message: expect.stringContaining("支付状态确认中"),
+    await cancelOrder("user-1", "order-1");
+
+    expect(tx.order.updateMany).toHaveBeenCalledWith({
+      where: { id: "order-1", status: "PENDING" },
+      data: { status: "CANCELLED", cancelledAt: expect.any(Date) },
     });
-    expect(tx.order.updateMany).not.toHaveBeenCalled();
-    expect(tx.product.updateMany).not.toHaveBeenCalled();
+    expect(tx.product.updateMany).toHaveBeenCalled();
   });
 
-  it("已超时 + 支付宝查询失败 → 放行取消（D1 窗口已关闭，收款不可能再发生）", async () => {
+  it("已超时 + 支付宝查询失败 → 放行取消（无论是否超时查询失败都不阻塞取消）", async () => {
     tx.order.findUnique.mockResolvedValue(
       orderSnapshot({ createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000) }),
     );
