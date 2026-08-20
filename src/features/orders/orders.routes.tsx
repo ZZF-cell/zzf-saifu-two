@@ -639,6 +639,17 @@ export function OrderListPage() {
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
+  // 倒计时归零：先主动 check-paid 触发惰性取消（订单变 CANCELLED 后从列表消失、不再归零），
+  // 再刷新列表。仅刷新不取消会导致无限循环：已超时 PENDING 卡片每次刷新被重建
+  // （PaymentCountdown 的 firedRef 重置）→ 倒计时又归零 → 又刷新 → 页面一直闪烁。
+  const handleCardExpired = useCallback(
+    async (orderId: string) => {
+      await apiCall("POST", `/api/orders/${orderId}/check-paid`).catch(() => null);
+      await fetchOrders();
+    },
+    [fetchOrders],
+  );
+
   // 客户端过滤：与 TAB_TO_GROUP / ORDER_STATUS_GROUPS 同口径，undefined=全部
   const filteredOrders = useMemo(() => {
     const group = TAB_TO_GROUP[activeKey];
@@ -701,7 +712,11 @@ export function OrderListPage() {
             ) : (
               <div className="space-y-3">
                 {filteredOrders.map((order) => (
-                  <OrderCard key={order.id} {...order} onExpired={fetchOrders} />
+                  <OrderCard
+                    key={order.id}
+                    {...order}
+                    onExpired={() => handleCardExpired(order.id)}
+                  />
                 ))}
               </div>
             )}
